@@ -1,0 +1,15 @@
+.opencode/
+opencode.json
+*.exe
+node_modules/
+dist/
+coverage/
+# Original GameHouse dictionaries are copyrighted: import locally, never commit.
+public/data/*.tree
+!public/data/sample-common.tree
+!public/data/sample-full.tree
+# Open (license-clean) dictionaries are committed.
+!public/data/open-common.tree
+!public/data/open-full.tree
+# Raw word-list downloads for scripts/build-open-dictionary.sh (cache only).
+data-src/
