@@ -1,15 +1,63 @@
+# Build outputs
+build/
+build-*/
+cmake-build-*/
+out/
+*.o
+*.obj
+*.exe
+*.so
+*.dylib
+*.a
+*.lib
+*.pdb
+*.ilk
+*.exp
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps
+
+# Generated dictionaries from data-src/ (committed open-* files are
+# fine; these are the build outputs of running the .sh builder).
+data/*.tree
+!data/open-common.tree
+!data/open-full.tree
+
+# GameHouse original dictionaries (copyrighted, never committed).
+data/common.tree
+data/full.tree
+data/sample-*.tree
+
+# Original executable (never committed; the symlink target is the
+# user's responsibility).
+Text Twist 2.exe
+Text*.exe
+*.exe.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.vite/
+*.swp
+*.swo
+*~
+.cache/
+.ccache/
+
+# Local AI / dev tooling state
 .opencode/
 opencode.json
-*.exe
-node_modules/
-dist/
-coverage/
-# Original GameHouse dictionaries are copyrighted: import locally, never commit.
-public/data/*.tree
-!public/data/sample-common.tree
-!public/data/sample-full.tree
-# Open (license-clean) dictionaries are committed.
-!public/data/open-common.tree
-!public/data/open-full.tree
-# Raw word-list downloads for scripts/build-open-dictionary.sh (cache only).
-data-src/
+*.tmp
+*.bak
+
+# Imported original-game assets (opt-in, end-user's legal liability)
+imported-assets/
+

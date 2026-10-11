@@ -1,0 +1,272 @@
+#pragma once
+
+// Board (the on-screen word slots) and the AnagramTable that holds
+// both dictionaries and the sub-anagram lists.
+//
+// CONFIRMED (0x43d7b0 / 0x432330 / 0x432b20): the board is the
+// **sub-anagrams of the rack in the common list, length 3..8**, capped
+// at ~48 slots by length-bucket quotas. Each bucket gets
+//   max(1, trunc(count * 48 / total))
+// slots. The two-letter and one-letter words are never used because
+// the cap starts at 3.
+
+#include <array>
+#include <cstdint>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "tt2/word_tree.hpp"
+
+namespace tt2 {
+
+// Hard cap on the total slot count (CONFIRMED at 0x4324b6 / 0x4324c9:
+// `cmp esi, 0x30` → 48; `48.0 / total`).
+inline constexpr std::size_t BOARD_SLOT_CAP = 48;
+
+class Board {
+public:
+    using Slots = std::array<std::vector<std::string>, 9>;  // index = length
+
+    // Build the board for `rack` using the common-list sub-anagrams.
+    // CONFIRMED: 0x43dcb0 (collect) → 0x432330 (cap) → 0x432b20 (place).
+    // `per_length_cap` is an extra hard cap applied to every length
+    // bucket (WOTD uses 5; Classic leaves it 0).
+    static Board build(const std::string& rack, const WordTree& common,
+                       std::size_t per_length_cap = 0) {
+        Board b;
+        b.rack_ = rack;
+        b.all_  = common.sub_anagrams(rack);
+        b.cap(b.slots_);
+        if (per_length_cap > 0) {
+            for (std::size_t l = 3; l <= 8; ++l) {
+                auto& s = b.mutable_slots(l);
+                if (s.size() > per_length_cap) s.resize(per_length_cap);
+            }
+        }
+        return b;
+    }
+
+    // All sub-anagrams the original enumerator would have found, in
+    // DFS order. Two-letter words are still in the list; the slot
+    // cap is what hides them from the player.
+    const std::vector<std::string>& all() const noexcept { return all_; }
+
+    // The slot list for one length. Lengths 1..8 are valid; index 0
+    // is empty.
+    const std::vector<std::string>& slots(std::size_t length) const {
+        return length < slots_.size() ? slots_[length] : empty_;
+    }
+
+    // Mutable slot list. Used by the round state to apply the WOTD
+    // 5-per-length cap after `build`.
+    std::vector<std::string>& mutable_slots(std::size_t length) {
+        return length < slots_.size() ? slots_[length] : empty_mutable();
+    }
+
+    const std::string& rack() const noexcept { return rack_; }
+
+    std::size_t filled_count() const noexcept {
+        std::size_t n = 0;
+        for (const auto& s : slots_) n += s.size();
+        return n;
+    }
+
+    std::size_t slot_count() const noexcept {
+        std::size_t n = 0;
+        for (const auto& s : slots_) n += s.size();
+        return n;
+    }
+
+    // True when `word` is the rack word itself (bingo: uses every
+    // letter).
+    bool is_bingo(const std::string& word) const noexcept {
+        return word.size() == rack_.size() && is_anagram_of_rack(word);
+    }
+
+    bool is_anagram_of_rack(std::string word) const {
+        if (word.size() > rack_.size()) return false;
+        std::array<int, 26> need{};
+        for (char c : rack_) ++need[static_cast<std::uint8_t>(c - 'a')];
+        for (char c : word) {
+            if (--need[static_cast<std::uint8_t>(c - 'a')] < 0) return false;
+        }
+        return true;
+    }
+
+private:
+    std::string rack_;
+    std::vector<std::string> all_;
+    Slots slots_{};
+    static inline const std::vector<std::string> empty_{};
+    static std::vector<std::string>& empty_mutable() {
+        static std::vector<std::string> e;
+        return e;
+    }
+
+    void cap(Slots& slots) {
+        std::array<std::size_t, 9> count{};
+        for (const auto& w : all_) {
+            if (w.size() >= 1 && w.size() <= 8) ++count[w.size()];
+        }
+        std::size_t total = 0;
+        for (std::size_t l = 3; l <= 8; ++l) total += count[l];
+        if (total == 0) return;
+
+        const double factor =
+            static_cast<double>(BOARD_SLOT_CAP) / static_cast<double>(total);
+        std::array<std::size_t, 9> quota{};
+        for (std::size_t l = 3; l <= 8; ++l) {
+            const std::size_t q = count[l] == 0
+                ? 0
+                : std::max<std::size_t>(1, static_cast<std::size_t>(count[l] * factor));
+            quota[l] = q;
+        }
+
+        std::array<std::size_t, 9> placed{};
+        for (const auto& w : all_) {
+            const std::size_t l = w.size();
+            if (l < 3 || l > 8) continue;
+            if (placed[l] >= quota[l]) continue;
+            slots[l].push_back(w);
+            ++placed[l];
+        }
+    }
+};
+
+// Guess-check results. Mirrors the four return codes at 0x432850.
+//
+//   0 = NotAWord       (not in either dictionary)
+//   1 = Duplicate      (already sitting in a filled slot)
+//   2 = NoRoom         (in the full list, but no free slot of that length)
+//   3 = Uncommon       (placed in a free slot, but not in the common list)
+//   4 = Accepted       (placed in a free slot of the same length)
+enum class GuessStatus {
+    NotAWord   = 0,
+    Duplicate  = 1,
+    NoRoom     = 2,
+    Uncommon   = 3,
+    Accepted   = 4,
+};
+
+struct GuessOutcome {
+    GuessStatus status = GuessStatus::NotAWord;
+    int  points        = 0;
+    bool filled_last   = false;
+    bool bingo         = false;
+    bool newly_uncommon = false;
+    std::size_t slot_index = static_cast<std::size_t>(-1);
+};
+
+// A `Board` augmented with per-slot occupancy. The original game
+// tracks this with a parallel byte-array of "found" flags. Here we
+// keep the flag in a parallel `std::vector<bool>`.
+class FilledBoard {
+public:
+    explicit FilledBoard(Board b) : board_(std::move(b)) {
+        const std::size_t n = board_.slot_count();
+        filled_.resize(n, false);
+    }
+
+    const Board& board() const noexcept { return board_; }
+    std::size_t slot_count() const noexcept { return board_.slot_count(); }
+    std::size_t filled_count() const noexcept {
+        std::size_t n = 0;
+        for (bool f : filled_) if (f) ++n;
+        return n;
+    }
+    bool is_filled(std::size_t i) const {
+        return i < filled_.size() && filled_[i];
+    }
+
+    void mark_filled(std::size_t i) {
+        if (i < filled_.size()) filled_[i] = true;
+    }
+
+    // The flat slot list, parallel to `filled_`. Index 0..slot_count().
+    std::vector<std::string> flat_slots() const {
+        std::vector<std::string> out;
+        out.reserve(board_.slot_count());
+        for (std::size_t l = 3; l <= 8; ++l) {
+            for (const auto& w : board_.slots(l)) out.push_back(w);
+        }
+        return out;
+    }
+
+private:
+    Board board_;
+    std::vector<bool> filled_;
+};
+
+class GuessProcessor {
+public:
+    GuessProcessor(FilledBoard& board, const WordTree& common,
+                   const WordTree& full)
+        : board_(board), common_(&common), full_(&full) {}
+
+    const FilledBoard& board() const noexcept { return board_; }
+
+    // Apply a guess. The slot is **not** marked as filled here — the
+    // caller does that once it has updated the round state.
+    // `slot_index` in the returned `GuessOutcome` is the index to mark.
+    GuessOutcome apply(const std::string& raw_word) {
+        const std::string word = lower(raw_word);
+        GuessOutcome o;
+
+        if (!full_->contains(word)) {
+            o.status = GuessStatus::NotAWord;
+            return o;
+        }
+
+        const auto slots = board_.board().slots(word.size());
+        for (std::size_t k = 0; k < slots.size(); ++k) {
+            if (slots[k] != word) continue;
+            const std::size_t flat = flat_index_of(word);
+            if (flat == static_cast<std::size_t>(-1)) {
+                o.status = GuessStatus::Duplicate;
+                return o;
+            }
+            if (board_.is_filled(flat)) {
+                o.status = GuessStatus::Duplicate;
+                return o;
+            }
+            const bool is_common = common_->contains(word);
+            o.newly_uncommon = !is_common;
+            o.slot_index     = flat;
+            o.status         = is_common ? GuessStatus::Accepted
+                                         : GuessStatus::Uncommon;
+            o.points = 10 * static_cast<int>(word.size())
+                          * static_cast<int>(word.size());
+            o.bingo = board_.board().is_bingo(word);
+            o.filled_last = (board_.filled_count() + 1) == board_.slot_count();
+            return o;
+        }
+
+        o.status = GuessStatus::NoRoom;
+        return o;
+    }
+
+    static std::string lower(std::string s) {
+        for (char& c : s)
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        return s;
+    }
+
+private:
+    std::size_t flat_index_of(const std::string& word) const {
+        std::size_t i = 0;
+        for (std::size_t l = 3; l <= 8; ++l) {
+            for (const auto& w : board_.board().slots(l)) {
+                if (w == word) return i;
+                ++i;
+            }
+        }
+        return static_cast<std::size_t>(-1);
+    }
+
+    FilledBoard& board_;
+    const WordTree* common_;
+    const WordTree* full_;
+};
+
+}  // namespace tt2
