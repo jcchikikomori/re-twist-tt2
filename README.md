@@ -12,6 +12,16 @@ replaceable with no engine change.
 The whole thing builds with CMake and runs on Linux, macOS and Windows.
 There is no web layer, no JavaScript, no Capacitor.
 
+## Work in progress: the boot sequence
+
+![Boot sequence: GameHouse splash, loading screen, main menu](docs/media/boot-sequence.gif)
+
+Splash, loading screen and main menu rebuilt 1:1 from the decompiled
+original (timings in `docs/reverse-engineering/welcome-flow.md`),
+recorded with `tt2 --dump-frames` at 4x speed. The art shown comes from
+a legitimately owned copy imported with `scripts/import-original.sh`;
+the repository ships only procedural placeholders.
+
 ## Quick start
 
 ```bash
@@ -99,6 +109,8 @@ dictionaries are public-domain or CC BY-SA 4.0. The original GameHouse
   unit-tested.
 - Dictionary: open `.tree` files committed and verified round-trip
   byte-identical against the build pipeline.
-- UI: not started.
-- Crossword: scoring formula in `scoring.hpp`; the grid + placement
-  loop are not yet in the engine.
+- UI: SDL2 front end boots splash → loading → main menu with the
+  original timings (`ui/`). Menu buttons react but no mode starts yet;
+  the player-name label needs the bitmap-font renderer.
+- Crossword: grid, placement loop and scoring in
+  `round_crossword.hpp`, reconstructed from confirmed decompilation.

@@ -6,9 +6,11 @@
 // `TT2_ASSETS`). Anything missing is replaced by a procedurally drawn
 // placeholder of the same size, so the flow always boots.
 //
-// Usage: tt2 [--assets DIR] [--speed N] [--exit-after MS]
-//   --speed N        run the clock N times faster (debugging)
-//   --exit-after MS  quit after MS simulated milliseconds (smoke tests)
+// Usage: tt2 [--assets DIR] [--speed N] [--exit-after MS] [--dump-frames DIR] [--fps N]
+//   --speed N          run the clock N times faster (debugging)
+//   --exit-after MS    quit after MS simulated milliseconds (smoke tests)
+//   --dump-frames DIR  write frame_NNNN.bmp at N fps of simulated time
+//                      (headless with SDL_VIDEODRIVER=dummy; feeds the README GIF)
 
 #include <SDL.h>
 #include <SDL_image.h>
@@ -144,8 +146,14 @@ public:
             const std::string path = dir_ + "/" + f->second;
             if (file_exists(path)) {
                 img.surface = IMG_Load(path.c_str());
-                if (img.surface) img.placeholder = false;
-                else std::fprintf(stderr, "IMG_Load(%s): %s\n", path.c_str(), IMG_GetError());
+                if (img.surface) {
+                    img.placeholder = false;
+                    if (img.surface->w != spec.sheet_w() || img.surface->h != spec.sheet_h())
+                        std::fprintf(stderr, "warning: %s is %dx%d, sheet spec says %dx%d\n", path.c_str(),
+                                     img.surface->w, img.surface->h, spec.sheet_w(), spec.sheet_h());
+                } else {
+                    std::fprintf(stderr, "IMG_Load(%s): %s\n", path.c_str(), IMG_GetError());
+                }
             }
         }
         if (!img.surface) img.surface = make_placeholder(spec);
@@ -260,10 +268,14 @@ int main(int argc, char** argv) {
     if (const char* env = std::getenv("TT2_ASSETS")) assets_dir = env;
     int speed = 1;
     long exit_after_ms = -1;
+    std::string dump_dir;      // --dump-frames DIR: write BMP frames (for the README GIF)
+    int dump_fps = 12;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--speed") && i + 1 < argc) speed = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--exit-after") && i + 1 < argc) exit_after_ms = std::atol(argv[++i]);
+        else if (!std::strcmp(argv[i], "--dump-frames") && i + 1 < argc) dump_dir = argv[++i];
+        else if (!std::strcmp(argv[i], "--fps") && i + 1 < argc) dump_fps = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--help")) {
             std::printf("usage: tt2 [--assets DIR] [--speed N] [--exit-after MS]\n");
             return 0;
@@ -318,6 +330,8 @@ int main(int argc, char** argv) {
 
     Uint32 last = SDL_GetTicks();
     long simulated_ms = 0;
+    int dump_accum_ms = 0;
+    int dump_index = 0;
     SceneId last_scene = flow.current();
     while (running) {
         SDL_Event e;
@@ -354,6 +368,20 @@ int main(int argc, char** argv) {
             SDL_SetRenderDrawColor(ren, 0, 0, 0, static_cast<Uint8>(black * 255));
             SDL_Rect all{0, 0, SCREEN_W, SCREEN_H};
             SDL_RenderFillRect(ren, &all);
+        }
+        if (!dump_dir.empty()) {
+            dump_accum_ms += dt;
+            const int period = 1000 / (dump_fps > 0 ? dump_fps : 12);
+            if (dump_accum_ms >= period) {
+                dump_accum_ms -= period;
+                SDL_Surface* shot = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_W, SCREEN_H, 24, SDL_PIXELFORMAT_RGB24);
+                if (shot && SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGB24, shot->pixels, shot->pitch) == 0) {
+                    char name[64];
+                    std::snprintf(name, sizeof name, "/frame_%04d.bmp", dump_index++);
+                    SDL_SaveBMP(shot, (dump_dir + name).c_str());
+                }
+                if (shot) SDL_FreeSurface(shot);
+            }
         }
         SDL_RenderPresent(ren);
     }

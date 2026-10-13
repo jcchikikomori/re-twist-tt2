@@ -386,6 +386,9 @@ TEST(selection_button_layout_matches_dialogs_xml) {
     ASSERT_EQ(timed->hit_threshold, 75);
     auto* untimed = menu.button("BUTTON_PLAY_UNTIMED");
     ASSERT_EQ(untimed->hit_threshold, 0);
+    auto* rename = menu.button("BUTTON_CHANGENAME");   // change_name.png is 155x52, four 13 px rows
+    ASSERT_EQ(rename->sprite.sheet.frame_w, 155);
+    ASSERT_EQ(rename->sprite.sheet.frame_h, 13);
 }
 
 TEST(selection_hover_press_release_fires_action) {

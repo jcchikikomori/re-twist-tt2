@@ -294,7 +294,7 @@ public:
             b.hit_threshold = threshold;
             buttons_.push_back(b);
         };
-        add("BUTTON_CHANGENAME", "BUTTON_CHANGENAME", 155, 208, 324, 49, 0);
+        add("BUTTON_CHANGENAME", "BUTTON_CHANGENAME", 155, 52, 324, 49, 0);   // 4 rows of 13 px
         add("BUTTON_PLAY_UNTIMED", "IMAGE_BUTTON_UNTIMED", 160, 536, 200, 290, 0);
         add("BUTTON_PLAY", "IMAGE_BUTTON_TIMED", 134, 536, 451, 290, 75);
         add("BUTTON_PLAY_WOD", "IMAGE_BUTTON_WOTD", 157, 596, 85, 378, 75);
