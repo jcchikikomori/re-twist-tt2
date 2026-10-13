@@ -67,10 +67,10 @@ ctest --test-dir build --output-on-failure
   UI layer (SDL2 + SDL2_ttf + SDL2_mixer) on top of the existing
   engine.
 - It is not a complete port. The Crossword scene (`CrisscrossScene`),
-  high-score persistence, the trophy system, the player manager, the
-  settings dialogs are not in this drop. The dictionary file, the LCG,
-  the bag and the per-mode scoring are the parts that change with the
-  dictionary; the rest is a thin VCL window wrapper.
+  the trophy _conditions_ and the settings dialogs are not in this drop.
+  The dictionary file, the LCG, the bag and the per-mode scoring are the
+  parts that change with the dictionary; the rest is a thin VCL window
+  wrapper.
 
 ## Layout
 
@@ -114,3 +114,9 @@ dictionaries are public-domain or CC BY-SA 4.0. The original GameHouse
   the player-name label needs the bitmap-font renderer.
 - Crossword: grid, placement loop and scoring in
   `round_crossword.hpp`, reconstructed from confirmed decompilation.
+- Profiles: player list (5 max, 15-char names, exact-duplicate check),
+  per-player progression (bag seed/index, WOTD day, max length, 24
+  trophy slots, counters) and the five high-score tables with the
+  original insert/trim and default-fill rules, in `profile.hpp`;
+  plain-text save files in `profile_store.hpp`. Spec:
+  `docs/reverse-engineering/profiles.md`. Not wired to the UI yet.

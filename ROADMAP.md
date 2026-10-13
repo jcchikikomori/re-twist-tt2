@@ -31,6 +31,10 @@ This document describes the current status and the upcoming milestones of this p
   and layout: `docs/reverse-engineering/welcome-flow.md`.
 - First playable UI layer (`ui/`): SDL2 front end that boots splash, loading and the main menu 1:1
   with the original timings, using the user's own imported assets or procedural placeholders.
+- Profile & progression system decoded and implemented in the engine (`profile.hpp`,
+  `profile_store.hpp`): player manager rules, per-player progression fields, the five high-score
+  tables with the original ordering/trim/default-fill logic, and plain-text persistence. Spec:
+  `docs/reverse-engineering/profiles.md`. Trophy unlock conditions and the UI dialogs are next.
 
 ## Future Goals
 

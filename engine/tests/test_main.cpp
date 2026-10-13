@@ -13,6 +13,8 @@
 #include "tt2/round_classic.hpp"
 #include "tt2/round_lightning.hpp"
 #include "tt2/round_crossword.hpp"
+#include "tt2/profile.hpp"
+#include "tt2/profile_store.hpp"
 
 TEST(sanity) {
     ASSERT_EQ(1 + 1, 2);
