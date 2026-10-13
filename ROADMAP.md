@@ -30,3 +30,4 @@ To the LLM, populate this as unordered list
 
 1. Widescreen support
 2. User will be able to use custom dictionaries, for fun!
+3. Automatically make a build for Linux using GitHub Actions
