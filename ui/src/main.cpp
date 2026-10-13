@@ -23,6 +23,8 @@
 #include <SDL_image.h>
 #include <SDL_mixer.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,12 +37,17 @@
 
 #include "tt2/profile.hpp"
 #include "tt2/profile_store.hpp"
+#include "tt2/word_tree.hpp"
 #include "tt2ui/bitmap_font.hpp"
+#include "tt2ui/game_scene.hpp"
 #include "tt2ui/profile_dialogs.hpp"
 #include "tt2ui/welcome_flow.hpp"
 
 #ifndef TT2_IMPORTED_ASSETS_DIR
 #define TT2_IMPORTED_ASSETS_DIR "imported-assets"
+#endif
+#ifndef TT2_DATA_DIR
+#define TT2_DATA_DIR "data"
 #endif
 
 namespace {
@@ -88,6 +95,31 @@ const std::map<std::string, std::string> kImageFiles = {
     {"BORDER_BOTTOM_CENTER", "images/gui/dialogdefault/bottom.png"},
     {"BORDER_BOTTOM_RIGHT", "images/gui/dialogdefault/bottom_right.png"},
     {"BORDER_CENTER", "images/gui/background.png"},
+    // Game scene (resources.xml section "gamescene").
+    {"gamescene/BACKGROUND", "images/gamescene/background.png"},
+    {"gamescene/BACKGROUND_TIMED", "images/gamescene/background_timed.png"},
+    {"IMAGE_UI_BAR", "images/gamescene/ui_bar.png"},
+    {"BUTTON_MENU", "images/gamescene/button_menu.png"},
+    {"BUTTON_Twist", "images/gamescene/button_twist.png"},
+    {"BUTTON_Enter", "images/gamescene/button_enter.png"},
+    {"BUTTON_LastWord", "images/gamescene/button_lastword.png"},
+    {"BUTTON_Clear", "images/gamescene/button_clear.png"},
+    {"BUTTON_NextRound", "images/gamescene/button_nextround.png"},
+    {"BUTTON_GiveUp", "images/gamescene/button_giveup.png"},
+    {"COMMENTS", "images/gamescene/tt_commentary.png"},
+    {"GAME_OVER", "images/gamescene/tt_gameover.PNG"},
+    {"IMAGE_POPUP_BINGO", "images/gamescene/popup_bingo.png"},
+    {"IMAGE_POPUP_ALLWORDS", "images/gamescene/popup_allwords.png"},
+    {"ANAGRAM_TILE", "images/gamescene/anagramTile.png"},
+    {"SMALL_LETTERS", "images/gamescene/anagram_text.png"},
+    {"SMALL_LETTERS_UNGUESSED", "images/gamescene/anagram_letters_revealed.png"},
+    {"IMAGE_LETTERBALL_ANIM", "images/gamescene/letterball_anim.png"},
+    {"IMAGE_PANEL_BG", "images/gamescene/panel_bg.png"},
+    {"IMAGE_PANEL_BOTTOM", "images/gamescene/panel_bottom.png"},
+    {"IMAGE_PANEL_CORNERL", "images/gamescene/panel_cornerL.png"},
+    {"IMAGE_PANEL_CORNERR", "images/gamescene/panel_cornerR.png"},
+    {"IMAGE_PANEL_SIDEL", "images/gamescene/panel_sideL.png"},
+    {"IMAGE_PANEL_SIDER", "images/gamescene/panel_sideR.png"},
     {"BUTTON_OK", "images/gui/button_ok.png"},
     {"BUTTON_CANCEL", "images/gui/button_cancel.png"},
     {"BUTTON_ADD", "images/gui/button_add.png"},
@@ -107,6 +139,8 @@ const std::map<std::string, FontFile> kFontFiles = {
     {"FONT_FONT_UIBAR", {"fonts/font_uibar.xml", 4}},
     {"FONT_SETTINGSTEXT", {"fonts/font_settingstext.xml", 3}},
     {"FONT_DIALOG_HEADERS2", {"fonts/font_dialog_headers2.xml", 4}},
+    {"FONT_UI_LABELS", {"fonts/font_uibar_labels.xml", 2}},
+    {"FONT_UI_NUMBERS", {"fonts/font_uibar_numbers.xml", 3}},
 };
 
 const std::map<SoundId, std::string> kSoundFiles = {
@@ -118,6 +152,22 @@ const std::map<SoundId, std::string> kSoundFiles = {
     {SoundId::Button, "sound/button.ogg"},
     {SoundId::ButtonRollover, "sound/button_rollover.ogg"},
     {SoundId::ButtonWordOfTheDay, "sound/button_wordoftheday.ogg"},
+    {SoundId::LetterPlace, "sound/letter_place.ogg"},
+    {SoundId::LetterClear, "sound/letter_clear.ogg"},
+    {SoundId::LetterLoad, "sound/letter_load.ogg"},
+    {SoundId::WordCorrect, "sound/word_correct.ogg"},
+    {SoundId::WordReject, "sound/word_reject.ogg"},
+    {SoundId::WordBingo, "sound/word_bingo.ogg"},
+    {SoundId::WordLast, "sound/word_last.ogg"},
+    {SoundId::WordTwist, "sound/word_twist.ogg"},
+    {SoundId::WordPassReveal, "sound/word_pass_reveal.ogg"},
+    {SoundId::AllWords, "sound/game_all_words_submitted.ogg"},
+    {SoundId::ClockCountdown, "sound/game_clock_countdown.ogg"},
+    {SoundId::ClockTimeUp, "sound/game_clock_timeup.ogg"},
+    {SoundId::LoseLife, "sound/game_lose_life.ogg"},
+    {SoundId::NextRoundAchieved, "sound/game_next_round_acheived.ogg"},
+    {SoundId::HighScoreAchieved, "sound/game_high_score_acheived.ogg"},
+    {SoundId::MusicInGame1, "music/music_in-game_1.ogg"},
 };
 
 // DEFAULT_PAINTER (dialogs.xml): corner / edge sizes of the 9-slice.
@@ -164,15 +214,25 @@ SDL_Surface* make_placeholder(const SheetSpec& spec) {
     else if (spec.image_id == "INPUT_BOX") { r = g = b = 0xf0; }
     else if (spec.image_id == "CURSOR") { r = g = b = 0x10; }
     else if (spec.image_id == "PLAYER_BORDER") { r = 0xf3; g = 0xa8; b = 0x04; }
+    else if (spec.image_id == "ANAGRAM_TILE") { r = g = b = 0xf4; }
+    else if (spec.image_id == "IMAGE_LETTERBALL_ANIM") { r = g = b = 0xf8; }
+    else if (spec.image_id.rfind("IMAGE_PANEL", 0) == 0) { r = 0x7f; g = 0x9a; b = 0xdc; }
+    else if (spec.image_id == "IMAGE_UI_BAR") { r = 0x02; g = 0x2e; b = 0xa8; }
+    else if (spec.image_id == "COMMENTS" || spec.image_id == "GAME_OVER" ||
+             spec.image_id.rfind("IMAGE_POPUP", 0) == 0) { r = 0x16; g = 0x9c; b = 0xd8; }
 
     for (int f = 0; f < spec.frames; ++f) {
         SDL_Rect cell{spec.frame_x(f), spec.frame_y(f), spec.frame_w, spec.frame_h};
         const int shade = spec.frames > 1 ? (f * 40) / spec.frames : 0;
         Uint8 a = full_screen ? 255 : (spec.image_id == "ANI_CIRCLES" || spec.image_id == "IMAGE_SPRING" ? 60 : 255);
         if (spec.image_id == "PLAYER_BORDER") a = 0;   // only the border below
+        if (spec.image_id == "SMALL_LETTERS" || spec.image_id == "SMALL_LETTERS_UNGUESSED") a = 0;   // text drawn instead
+        if (spec.image_id == "ANAGRAM_TILE" && f == 1) { r = 0xf7; g = 0xde; b = 0x2b; }           // found = yellow
         auto clamp = [](int v) { return static_cast<Uint8>(v > 255 ? 255 : (v < 0 ? 0 : v)); };
         SDL_FillRect(s, &cell, SDL_MapRGBA(s->format, clamp(r + shade), clamp(g + shade), clamp(b + shade), a));
-        if (!full_screen) {
+        const bool bordered = !full_screen && a != 0 && spec.frame_w > 4 && spec.frame_h > 4 &&
+                              spec.image_id.rfind("IMAGE_PANEL", 0) != 0;
+        if (bordered) {
             // 2 px gold border so the frame edges are visible.
             SDL_Rect edge[4] = {{cell.x, cell.y, cell.w, 2}, {cell.x, cell.y + cell.h - 2, cell.w, 2},
                                 {cell.x, cell.y, 2, cell.h}, {cell.x + cell.w - 2, cell.y, 2, cell.h}};
@@ -257,7 +317,8 @@ public:
         if (it != fonts_.end()) return it->second;
         Font f;
         auto spec = kFontFiles.find(id);
-        const int scale = spec != kFontFiles.end() ? spec->second.placeholder_scale : 3;
+        int scale = spec != kFontFiles.end() ? spec->second.placeholder_scale : 3;
+        if (id.rfind("PLACEHOLDER_", 0) == 0) scale = std::max(1, std::atoi(id.c_str() + 12));
         std::string xml;
         if (spec != kFontFiles.end() && read_text(dir_ + "/" + spec->second.xml, xml) &&
             BitmapFont::parse(xml, f.font)) {
@@ -497,6 +558,162 @@ void draw_dialog(SDL_Renderer* ren, Assets& assets, const ProfileFlow& flow) {
     }
 }
 
+// tt_commentary.png rows, for the placeholder build (the sheet carries the text).
+const char* kCommentText[9] = {
+    "SORRY, THAT'S\nNOT ONE OF THE\nLISTED WORDS", "CONGRATULATIONS!\nYOU GOT\nALL THE WORDS!",
+    "YOU GOT THE\nLONGEST WORD!\nYOU QUALIFY FOR\nTHE NEXT ROUND!", "YOU'VE ALREADY\nGUESSED\nTHAT WORD!",
+    "SORRY, YOU'VE ALREADY\nUSED THAT LETTER IN THE\nINTERSECTION WORD.", "YOU ALREADY HAVE\nENOUGH WORDS OF\nTHAT LENGTH!",
+    "CORRECT!!\nYOU'VE EARNED EXTRA TIME!", "SORRY, ONLY THE\nHINTED LETTER WORKS\nIN THIS SPACE",
+    "YOU DONT NEED\nANY WORDS OF\nTHAT LENGTH",
+};
+
+// Stretch one image over a rectangle (the panel strips are 1 px sheets).
+void draw_stretched(SDL_Renderer* ren, Assets& assets, const char* id, int w, int h, SDL_Rect dst) {
+    if (dst.w <= 0 || dst.h <= 0) return;
+    Image& img = assets.image(sheet(id, w, h));
+    if (!img.texture) return;
+    SDL_SetTextureAlphaMod(img.texture, 255);
+    SDL_RenderCopy(ren, img.texture, nullptr, &dst);
+}
+
+void draw_text_lines(SDL_Renderer* ren, Assets& assets, const std::string& font_id, const std::string& text,
+                     float cx, float cy, int line_h) {
+    std::vector<std::string> lines;
+    std::string cur;
+    for (char c : text) { if (c == '\n') { lines.push_back(cur); cur.clear(); } else cur.push_back(c); }
+    lines.push_back(cur);
+    float y = cy - static_cast<float>(line_h) * static_cast<float>(lines.size() - 1) * 0.5f;
+    for (const auto& l : lines) {
+        draw_text(ren, assets, font_id, l, cx, y, TextAlign::Center, Anchor::Center, -1);
+        y += static_cast<float>(line_h);
+    }
+}
+
+// A sheet sprite that may be a placeholder: then `label` is drawn over it.
+void draw_sprite_or_label(SDL_Renderer* ren, Assets& assets, const SpriteState& sp, const std::string& label,
+                          const std::string& font_id, int line_h) {
+    draw_sprite(ren, assets, sp);
+    if (!sp.visible || sp.alpha <= 0.0f) return;
+    if (assets.image(sp.sheet).placeholder && !label.empty())
+        draw_text_lines(ren, assets, font_id, label, sp.left() + sp.sheet.frame_w * 0.5f,
+                        sp.top() + sp.sheet.frame_h * 0.5f, line_h);
+}
+
+void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
+    draw_sprite(ren, assets, sprite("BACKGROUND", sheet(g.background_id(), SCREEN_W, SCREEN_H), 0, 0));
+
+    // Panel around the word grid (0x426360: every piece follows the table rect).
+    const int tx = static_cast<int>(g.table_x()), ty = static_cast<int>(g.table_y());
+    const int tw = g.table().width, bottom = ty + g.table().height;
+    draw_stretched(ren, assets, "IMAGE_PANEL_BG", 800, 195, SDL_Rect{tx, 0, tw, bottom});
+    draw_stretched(ren, assets, "IMAGE_PANEL_SIDEL", 10, 1, SDL_Rect{tx - 10, 0, 10, bottom});
+    draw_stretched(ren, assets, "IMAGE_PANEL_SIDER", 10, 1, SDL_Rect{tx + tw, 0, 10, bottom});
+    draw_stretched(ren, assets, "IMAGE_PANEL_BOTTOM", 1, 10, SDL_Rect{tx, bottom, tw, 10});
+    draw_stretched(ren, assets, "IMAGE_PANEL_CORNERL", 10, 10, SDL_Rect{tx - 10, bottom, 10, 10});
+    draw_stretched(ren, assets, "IMAGE_PANEL_CORNERR", 10, 10, SDL_Rect{tx + tw, bottom, 10, 10});
+
+    // Word grid: ANAGRAM_TILE (frame 1 = found) + SMALL_LETTERS per letter;
+    // unguessed words revealed with SMALL_LETTERS_UNGUESSED.
+    const SheetSpec tile = sheet("ANAGRAM_TILE", 20, 40, 1, 2, 2);
+    const SheetSpec letters = sheet("SMALL_LETTERS", 180, 60, 9, 3, 27);
+    const SheetSpec revealed = sheet("SMALL_LETTERS_UNGUESSED", 180, 60, 9, 3, 27);
+    const bool letters_placeholder = assets.image(letters).placeholder;
+    for (const auto& slot : g.slots()) {
+        for (std::size_t j = 0; j < slot.word.size(); ++j) {
+            const float x = static_cast<float>(slot.x + static_cast<int>(j) * ANAGRAM_TILE_W);
+            const float y = static_cast<float>(slot.y);
+            const int frame = slot.word[j] - 'a' + 1;
+            if (slot.found || !slot.revealed) {
+                SpriteState t = sprite("TILE", tile, x, y);
+                t.frame = slot.found ? 1 : 0;
+                draw_sprite(ren, assets, t);
+            }
+            if (slot.found) {
+                SpriteState l = sprite("LETTER", letters, x, y);
+                l.frame = frame;
+                draw_sprite(ren, assets, l);
+            } else if (slot.revealed) {
+                SpriteState l = sprite("LETTER", revealed, x, y);
+                l.frame = frame;
+                draw_sprite(ren, assets, l);
+            }
+            if (letters_placeholder && (slot.found || slot.revealed)) {
+                const std::string ch(1, static_cast<char>(slot.word[j] - 'a' + 'A'));
+                draw_text(ren, assets, "PLACEHOLDER_2", ch, x + 10, y + 10, TextAlign::Center, Anchor::Center, -1);
+            }
+        }
+    }
+
+    // Letter chicklets: IMAGE_LETTERBALL_ANIM row = letter, last frame = resting tile.
+    const SheetSpec balls = sheet("IMAGE_LETTERBALL_ANIM", 1020, 1560, 17, 26, 442);
+    const bool balls_placeholder = assets.image(balls).placeholder;
+    for (const auto& b : g.balls()) {
+        SpriteState sp = sprite("BALL", balls, b.x, b.y);
+        sp.anchor = Anchor::Center;
+        sp.frame = (b.letter - 'a') * BALL_FRAMES_PER_LETTER + BALL_IDLE_FRAME;
+        draw_sprite(ren, assets, sp);
+        if (balls_placeholder) {
+            const std::string ch(1, static_cast<char>(b.letter - 'a' + 'A'));
+            draw_text(ren, assets, "PLACEHOLDER_5", ch, b.x, b.y, TextAlign::Center, Anchor::Center, -1);
+        }
+    }
+
+    // UI bar and its labels (dialogs.xml SCENE_GAME, y = 574).
+    draw_sprite(ren, assets, sprite("UI_BAR", sheet("IMAGE_UI_BAR", 800, 54), 0, 547));
+    draw_text(ren, assets, "FONT_UI_LABELS", "SCORE:", 244, 574, TextAlign::Right, Anchor::Center, -1);
+    draw_text(ren, assets, "FONT_UI_NUMBERS", g.score_text(), 251, 574, TextAlign::Left, Anchor::Center, -1);
+    draw_text(ren, assets, "FONT_UI_LABELS", "ROUND:", 537, 574, TextAlign::Right, Anchor::Center, -1);
+    draw_text(ren, assets, "FONT_UI_NUMBERS", g.round_text(), 541, 574, TextAlign::Left, Anchor::Center, -1);
+    if (g.timed()) {   // INFERRED: the clock is hidden in Untimed
+        draw_text(ren, assets, "FONT_UI_LABELS", "TIME:", 707, 574, TextAlign::Right, Anchor::Center, -1);
+        draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_minutes_text(), 749, 574, TextAlign::Right, Anchor::Center, -1);
+        draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_seconds_text(), 752, 574, TextAlign::Left, Anchor::Center, -1);
+    }
+
+    for (const MenuButton& b : g.buttons()) {
+        draw_sprite(ren, assets, b.sprite);
+        if (b.sprite.visible && assets.image(b.sprite.sheet).placeholder) {
+            std::string label = b.sprite.name.substr(7);
+            for (auto& c : label) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            draw_text(ren, assets, "PLACEHOLDER_2", label, b.sprite.left() + b.sprite.sheet.frame_w * 0.5f,
+                      b.sprite.top() + b.sprite.sheet.frame_h * 0.5f, TextAlign::Center, Anchor::Center, -1);
+        }
+    }
+
+    const SpriteState& c = g.commentary();
+    draw_sprite_or_label(ren, assets, c, kCommentText[c.frame % 9], "PLACEHOLDER_2", 12);
+    draw_sprite_or_label(ren, assets, g.popup_bingo(), "BINGO!\nNEXT ROUND!", "PLACEHOLDER_3", 20);
+    draw_sprite_or_label(ren, assets, g.popup_all_words(), "ALL WORDS!", "PLACEHOLDER_3", 20);
+    draw_sprite_or_label(ren, assets, g.game_over_sprite(), "GAME OVER", "PLACEHOLDER_4", 24);
+}
+
+// Prefer the user's own common.tree / full.tree (symlinks to the original
+// install, gitignored); fall back to the open-license dictionaries.
+bool load_tree(const std::string& dir, const char* original, const char* open, tt2::WordTree& out) {
+    for (const char* name : {original, open}) {
+        const std::string path = dir + "/" + name;
+        std::string bytes;
+        if (!read_text(path, bytes)) continue;
+        try {
+            out = tt2::WordTree::parse(bytes);
+            std::printf("dictionary: %s (%zu words)\n", path.c_str(), out.size());
+            return true;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "%s: %s\n", path.c_str(), e.what());
+        }
+    }
+    return false;
+}
+
+// CTEXT_HIGHSCORE_NAMES (commontext.xml): the default-table fill names.
+const std::vector<std::string> kHighScoreNames = {
+    "Susan", "Karen", "Linda", "Julie", "Helen", "Sarah", "Carol", "Jane", "Janet", "Sandra", "Angela", "Ann",
+    "Sharon", "Lisa", "Alison", "Sue", "Anne", "Mary", "Tracey", "Barbara", "Amanda", "Wendy", "Claire", "Emma",
+    "Joanne", "Donna", "Nicola", "Diane", "Elaine", "Tracy", "Joan", "Pauline", "Debbie", "Fiona", "Denise",
+    "Jackie", "Tina", "Shirley", "Louise", "Sally", "Sheila", "Judith", "Kim", "Maureen", "Brenda", "Rachel",
+    "Laura", "Marie", "Dawn", "Yvonne", "Teresa",
+};
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -508,6 +725,10 @@ int main(int argc, char** argv) {
     std::string dump_dir;      // --dump-frames DIR: write BMP frames (for the README GIF)
     int dump_fps = 12;
     std::string debug_player;
+    std::string data_dir = TT2_DATA_DIR;
+    std::string auto_play;     // --play untimed|timed: start a game as soon as the menu is up
+    std::string auto_type;     // --type "word\nword": feed keystrokes into the game (smoke tests)
+    long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--save-dir") && i + 1 < argc) save_dir = argv[++i];
@@ -516,8 +737,13 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--dump-frames") && i + 1 < argc) dump_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--fps") && i + 1 < argc) dump_fps = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--player") && i + 1 < argc) debug_player = argv[++i];
+        else if (!std::strcmp(argv[i], "--data-dir") && i + 1 < argc) data_dir = argv[++i];
+        else if (!std::strcmp(argv[i], "--play") && i + 1 < argc) auto_play = argv[++i];
+        else if (!std::strcmp(argv[i], "--type") && i + 1 < argc) auto_type = argv[++i];
+        else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc) debug_seed = std::atol(argv[++i]);
         else if (!std::strcmp(argv[i], "--help")) {
-            std::printf("usage: tt2 [--assets DIR] [--save-dir DIR] [--speed N] [--exit-after MS]\n");
+            std::printf("usage: tt2 [--assets DIR] [--data-dir DIR] [--save-dir DIR] [--player NAME]\n"
+                        "           [--play untimed|timed] [--speed N] [--exit-after MS]\n");
             return 0;
         }
     }
@@ -535,10 +761,24 @@ int main(int argc, char** argv) {
             if (r != tt2::AddPlayerResult::Added)
                 std::fprintf(stderr, "warning: --player %s: %s\n", debug_player.c_str(), tt2::to_string(r));
         }
+        if (debug_seed >= 0 && players.current()) players.current()->bag = tt2::BagState{static_cast<std::uint32_t>(debug_seed), 0};
         if (!save_dir.empty()) store.save(players);
     }
     std::printf("profiles: %s (%d player%s)\n", save_dir.empty() ? "(none)" : store.profiles_path().string().c_str(),
                 players.count(), players.count() == 1 ? "" : "s");
+
+    // Dictionaries: the trees must outlive every round (non-owning pointers).
+    tt2::WordTree common_tree, full_tree;
+    if (!load_tree(data_dir, "common.tree", "open-common.tree", common_tree) ||
+        !load_tree(data_dir, "full.tree", "open-full.tree", full_tree)) {
+        std::fprintf(stderr, "no dictionaries in %s (need open-common.tree + open-full.tree)\n", data_dir.c_str());
+        return 1;
+    }
+    tt2::Random highscore_rng(static_cast<std::int64_t>(SDL_GetTicks()) + 17);
+    tt2::HighScoreManager highscores(kHighScoreNames, highscore_rng);
+    if (!save_dir.empty() && !store.load(highscores))
+        std::fprintf(stderr, "warning: %s is unreadable; starting with default high scores\n",
+                     store.highscores_path().string().c_str());
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) != 0) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
@@ -565,8 +805,11 @@ int main(int argc, char** argv) {
     ProfileFlow::Services pservices;
     pservices.play_sound = [&](SoundId id) { assets.play_sound(id); };
     pservices.on_change = [&] {
-        if (!save_dir.empty() && !store.save(players))
+        if (save_dir.empty()) return;
+        if (!store.save(players))
             std::fprintf(stderr, "warning: could not write %s\n", store.profiles_path().string().c_str());
+        if (!store.save(highscores))
+            std::fprintf(stderr, "warning: could not write %s\n", store.highscores_path().string().c_str());
     };
     pservices.seed_millis = [] { return static_cast<std::uint32_t>(SDL_GetTicks()); };   // timeGetTime()
     ProfileFlow profile(players, pservices);
@@ -581,12 +824,37 @@ int main(int argc, char** argv) {
     services.loader_done = [] { return true; };
     services.loader_progress = [] { return 1.0f; };
     services.preloading_done = [] { return true; };
+    // Game scene and the fade-to-black around entering / leaving it
+    // (TRANSITION_DEFAULT: 500 ms, half out, half in).
+    std::unique_ptr<GameScene> game;
+    constexpr int GAME_FADE_HALF_MS = 250;
+    int game_fade_out = 0, game_fade_in = 0;
+    bool pending_start = false, pending_timed = false, pending_exit = false;
+    auto request_game = [&](bool timed) {
+        if (!players.current()) { profile.open_player_select(); return; }
+        pending_start = true;
+        pending_timed = timed;
+        game_fade_out = GAME_FADE_HALF_MS;
+    };
     services.menu_action = [&](const std::string& name) {
         if (name == "BUTTON_QUIT") running = false;
         else if (name == "BUTTON_CHANGENAME") profile.open_player_select();
+        else if (name == "BUTTON_PLAY_UNTIMED") request_game(false);
+        else if (name == "BUTTON_PLAY") request_game(true);
         else std::printf("menu: %s (not implemented yet)\n", name.c_str());
     };
     WelcomeFlow flow(services, static_cast<std::uint32_t>(SDL_GetTicks() + 1));
+    auto start_game = [&] {
+        GameScene::Services gs;
+        gs.play_sound = [&](SoundId id) { assets.play_sound(id); };
+        gs.on_profile_change = pservices.on_change;
+        gs.on_exit = [&] { pending_exit = true; game_fade_out = GAME_FADE_HALF_MS; };
+        game = std::make_unique<GameScene>(common_tree, full_tree, *players.current(), &highscores, pending_timed,
+                                           gs, static_cast<std::int64_t>(SDL_GetTicks()));
+        assets.play_stream(SoundId::MusicInGame1);
+        std::printf("game: %s, rack %s, %zu slots\n", pending_timed ? "timed" : "untimed", game->rack().c_str(),
+                    game->slots().size());
+    };
 
     const SelectionScene::HitTest hit = [&](const MenuButton& b, float px, float py) {
         if (b.hit_threshold <= 0) return true;
@@ -600,6 +868,7 @@ int main(int argc, char** argv) {
     int dump_accum_ms = 0;
     int dump_index = 0;
     bool text_input_on = false;
+    int auto_type_ms = 0;
     SceneId last_scene = flow.current();
     while (running) {
         SDL_Event e;
@@ -624,8 +893,29 @@ int main(int argc, char** argv) {
                     profile.mouse_up(e.button.x, e.button.y);
                 continue;
             }
+            if (game) {
+                if (e.type == SDL_TEXTINPUT) {
+                    for (const char* c = e.text.text; *c; ++c) game->type_letter(*c);
+                }
+                if (e.type == SDL_KEYDOWN) {
+                    switch (e.key.keysym.sym) {
+                        case SDLK_BACKSPACE: game->backspace(); break;
+                        case SDLK_RETURN:
+                        case SDLK_KP_ENTER: game->key_return(); break;
+                        case SDLK_SPACE: game->key_space(); break;
+                        case SDLK_ESCAPE: game->key_escape(); break;
+                        default: break;
+                    }
+                }
+                if (e.type == SDL_MOUSEMOTION) game->mouse_move(e.motion.x, e.motion.y);
+                if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
+                    game->mouse_down(e.button.x, e.button.y);
+                if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)
+                    game->mouse_up(e.button.x, e.button.y);
+                continue;
+            }
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = false;
-            if (flow.current() == SceneId::Selection && flow.selection()) {
+            if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0) {
                 auto* menu = flow.selection();
                 if (e.type == SDL_MOUSEMOTION) menu->mouse_move(e.motion.x, e.motion.y, hit);
                 if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
@@ -638,30 +928,68 @@ int main(int argc, char** argv) {
         int dt = static_cast<int>(now - last) * speed;
         last = now;
         if (dt > 100) dt = 100;
-        flow.update(dt);
+        if (game_fade_out > 0) {
+            game_fade_out -= dt;
+            if (game_fade_out <= 0) {
+                game_fade_out = 0;
+                if (pending_start) { pending_start = false; start_game(); }
+                else if (pending_exit) {
+                    pending_exit = false;
+                    game.reset();
+                    assets.play_stream(SoundId::MusicMenu);
+                    std::printf("t=%ld ms: back to the menu\n", simulated_ms);
+                }
+                game_fade_in = GAME_FADE_HALF_MS;
+            }
+        } else if (game_fade_in > 0) {
+            game_fade_in = std::max(0, game_fade_in - dt);
+        }
+        if (game) {
+            game->update(dt);
+            // --type: one key every 300 ms while a round is being played.
+            auto_type_ms += dt;
+            while (!auto_type.empty() && auto_type_ms >= 300) {
+                auto_type_ms -= 300;
+                const char c = auto_type.front();
+                auto_type.erase(0, 1);
+                if (c == '\n' || c == '|') game->key_return();
+                else if (c == ' ') game->key_space();
+                else game->type_letter(c);
+            }
+        } else {
+            flow.update(dt);
+        }
         profile.update(dt);
         simulated_ms += dt;
         if (flow.current() != last_scene) {
             last_scene = flow.current();
             std::printf("t=%ld ms: scene %d\n", simulated_ms, static_cast<int>(last_scene));
             if (last_scene == SceneId::Selection) profile.on_menu_entered();   // 0x42d9b0
+            if (last_scene == SceneId::Selection && !auto_play.empty()) request_game(auto_play == "timed");
         }
-        if (profile.wants_text_input() != text_input_on) {
-            text_input_on = profile.wants_text_input();
+        const bool want_text = profile.wants_text_input() || (game && !profile.open());
+        if (want_text != text_input_on) {
+            text_input_on = want_text;
             if (text_input_on) SDL_StartTextInput(); else SDL_StopTextInput();
         }
         if (exit_after_ms >= 0 && simulated_ms >= exit_after_ms) running = false;
 
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
-        for (const SpriteState* s : flow.draw_list()) draw_sprite(ren, assets, *s);
-        if (flow.current() == SceneId::Selection) {
-            // LABEL_PLAYERNAME: FONT_FONT_UIBAR, centred at (400, 28), charspacing 2.
-            draw_text(ren, assets, "FONT_FONT_UIBAR", welcome_text(players), 400, 28, TextAlign::Center,
-                      Anchor::Center, 2);
+        if (game) {
+            draw_game(ren, assets, *game);
+        } else {
+            for (const SpriteState* s : flow.draw_list()) draw_sprite(ren, assets, *s);
+            if (flow.current() == SceneId::Selection) {
+                // LABEL_PLAYERNAME: FONT_FONT_UIBAR, centred at (400, 28), charspacing 2.
+                draw_text(ren, assets, "FONT_FONT_UIBAR", welcome_text(players), 400, 28, TextAlign::Center,
+                          Anchor::Center, 2);
+            }
         }
         if (profile.open()) draw_dialog(ren, assets, profile);
-        const float black = flow.black_alpha();
+        float black = flow.black_alpha();
+        if (game_fade_out > 0) black = std::max(black, 1.0f - static_cast<float>(game_fade_out) / GAME_FADE_HALF_MS);
+        if (game_fade_in > 0) black = std::max(black, static_cast<float>(game_fade_in) / GAME_FADE_HALF_MS);
         if (black > 0.0f) {
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
             SDL_SetRenderDrawColor(ren, 0, 0, 0, static_cast<Uint8>(black * 255));

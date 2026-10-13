@@ -12,13 +12,37 @@ TEST(tree_parse_empty_file) {
 }
 
 TEST(tree_parse_single_word) {
-    // A tree containing just "a": root has child 'a' (end), then
-    // root's flag is '0' (root itself is not a word). Encoded as
-    // "a" + (subtree: empty, end '1') + "0" = "a10".
-    auto t = WordTree::parse(std::string_view("a10"));
+    // A tree containing just "a": the root lists its child letters ("a")
+    // and its own flag ('0': "" is not a word); then the child node
+    // follows: no letters, flag '1'. Encoded "a" "0" "1" = "a01".
+    auto t = WordTree::parse(std::string_view("a01"));
     ASSERT_EQ(t.size(), std::size_t(1));
     ASSERT_TRUE(t.contains("a"));
     ASSERT_TRUE(!t.contains("aa"));
+    ASSERT_EQ(t.serialize(), std::string("a01"));
+    // The old (wrong) reading "letter, subtree, flag" must NOT parse
+    // "a10" as {"a"}: here the root itself is flagged as a word.
+    auto t2 = WordTree::parse(std::string_view("a10"));
+    ASSERT_TRUE(!t2.contains("a"));
+    // Unsorted / duplicate child letters are rejected.
+    ASSERT_THROWS(WordTree::parse(std::string_view("ba011")));
+    ASSERT_THROWS(WordTree::parse(std::string_view("aa011")));
+}
+
+TEST(tree_parse_siblings_come_after_the_flag) {
+    // {"ab", "ac"}: root "a" + '0'; node a: "bc" + '0'; then b: '1', c: '1'.
+    auto t = WordTree::parse(std::string_view("a0bc011"));
+    ASSERT_EQ(t.size(), std::size_t(2));
+    ASSERT_TRUE(t.contains("ab"));
+    ASSERT_TRUE(t.contains("ac"));
+    ASSERT_TRUE(!t.contains("a"));
+    ASSERT_TRUE(!t.contains("abc"));
+    ASSERT_EQ(t.serialize(), std::string("a0bc011"));
+    auto w = t.words();
+    ASSERT_EQ(w.size(), std::size_t(2));
+    ASSERT_EQ(w[0], std::string("ab"));
+    ASSERT_EQ(w[1], std::string("ac"));
+    ASSERT_EQ(WordTree::from_words({"ac", "ab"}).serialize(), std::string("a0bc011"));
 }
 
 TEST(tree_round_trip_canonical) {
@@ -36,21 +60,15 @@ TEST(tree_round_trip_canonical) {
 }
 
 TEST(tree_round_trip_matches_original_format) {
-    // A valid tree containing exactly one word, "aardvark". The
-    // encoding is a recursive pre-order serialized trie:
+    // A valid tree containing exactly one word, "aardvark". Every node
+    // on the path lists its single child letter and the flag '0', and
+    // the last node is just '1':
     //
-    //   root   : "a" + (a-subtree) + "0" (root is not a word)
-    //   a-sub  : "a" + (a-sub)    + "0"
-    //   a-sub  : "r" + (r-sub)    + "0"
-    //   r-sub  : "d" + (d-sub)    + "0"
-    //   d-sub  : "v" + (v-sub)    + "0"
-    //   v-sub  : "a" + (a-sub)    + "0"
-    //   a-sub  : "r" + (r-sub)    + "0"
-    //   r-sub  : "k" + (k-sub)    + "0"
-    //   k-sub  : "1" (end, no kids)
+    //   root : "a0"   a : "a0"   a : "r0"   r : "d0"   d : "v0"
+    //   v    : "a0"   a : "r0"   r : "k0"   k : "1"
     //
-    // Flattened: "aardvark100000000" (17 bytes).
-    const std::string snippet = "aardvark100000000";
+    // Flattened: "a0a0r0d0v0a0r0k01" (17 bytes).
+    const std::string snippet = "a0a0r0d0v0a0r0k01";
     auto t = WordTree::parse(std::string_view(snippet));
     ASSERT_EQ(t.size(), std::size_t(1));
     ASSERT_TRUE(t.contains("aardvark"));

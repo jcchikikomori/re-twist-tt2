@@ -180,14 +180,14 @@ private:
     Node root_;
     std::size_t count_ = 0;
 
-    // Each child letter is written, then its subtree recursively, then
-    // the flag at the END. That is what makes the format canonical.
+    // Node := [a-z]* ('0'|'1') Node* — all child letters first, then the
+    // flag, then every child's subtree in the same order (CONFIRMED at
+    // 0x43e070, see docs/reverse-engineering/tree-format.md). Children
+    // are kept sorted, which is what makes the encoding canonical.
     static void write(const Node* n, std::string& out) {
-        for (const auto& k : n->kids) {
-            out.push_back(static_cast<char>(k.letter));
-            write(&k, out);
-        }
+        for (const auto& k : n->kids) out.push_back(static_cast<char>(k.letter));
         out.push_back(n->end ? '1' : '0');
+        for (const auto& k : n->kids) write(&k, out);
     }
 
     static void walk(const Node* n, std::string& buf,
@@ -230,8 +230,11 @@ private:
 
         explicit Parser(std::string_view b) : bytes(b) {}
 
+        // One node: its child letters, its flag, then the children
+        // (recursively) in letter order. Mirrors 0x43e070.
         Node read_node() {
             Node n;
+            std::vector<std::uint8_t> letters;
             for (;;) {
                 if (pos >= bytes.size()) {
                     throw TreeFormatError("unexpected end of data", pos);
@@ -240,35 +243,23 @@ private:
                 if (b == '0' || b == '1') {
                     n.end = (b == '1');
                     if (n.end) ++word_count;
-                    return n;
+                    break;
                 }
                 if (b < 'a' || b > 'z') {
                     throw TreeFormatError("invalid byte 0x" + hex(b), pos - 1);
                 }
-                Node child = Node::make(b);
-                child = read_into(std::move(child));
+                if (!letters.empty() && b <= letters.back()) {
+                    throw TreeFormatError("child letters not strictly ascending", pos - 1);
+                }
+                letters.push_back(b);
+            }
+            n.kids.reserve(letters.size());
+            for (std::uint8_t l : letters) {
+                Node child = read_node();
+                child.letter = l;
                 n.kids.push_back(std::move(child));
             }
-        }
-
-        Node read_into(Node n) {
-            for (;;) {
-                if (pos >= bytes.size()) {
-                    throw TreeFormatError("unexpected end of data", pos);
-                }
-                const std::uint8_t b = static_cast<std::uint8_t>(bytes[pos++]);
-                if (b == '0' || b == '1') {
-                    n.end = (b == '1');
-                    if (n.end) ++word_count;
-                    return n;
-                }
-                if (b < 'a' || b > 'z') {
-                    throw TreeFormatError("invalid byte 0x" + hex(b), pos - 1);
-                }
-                Node child = Node::make(b);
-                child = read_into(std::move(child));
-                n.kids.push_back(std::move(child));
-            }
+            return n;
         }
 
         static std::string hex(std::uint8_t b) {

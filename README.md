@@ -74,7 +74,7 @@ ctest --test-dir build --output-on-failure
 
 ## Layout
 
-```
+```text
 .
 ├── CMakeLists.txt
 ├── README.md
@@ -108,12 +108,20 @@ dictionaries are public-domain or CC BY-SA 4.0. The original GameHouse
   scoring; rack pick, board, slot cap, guess check, scoring — all
   unit-tested.
 - Dictionary: open `.tree` files committed and verified round-trip
-  byte-identical against the build pipeline.
+  byte-identical against the build pipeline, and the C++ codec checked
+  word-for-word against the Python reference decoder on both the
+  original and the open files. The game prefers `data/common.tree` /
+  `data/full.tree` (your own copies, gitignored) and falls back to the
+  open lists.
 - UI: SDL2 front end boots splash → loading → main menu with the
   original timings (`ui/`), renders the GF2 bitmap fonts, shows the
   "Welcome / Welcome back NAME" label and runs the name-input and
   player-select dialogs (add, pick, remove with confirmation) over the
-  saved profiles. Menu buttons react but no mode starts yet.
+  saved profiles. **Untimed and Timed are playable**: word grid, letter
+  rows, twist / clear / last word / enter, the 2:00 clock, bingo and
+  all-words popups, three misses to game over, high scores saved
+  (`docs/reverse-engineering/game-scene.md`). Lightning, Crossword and
+  Word of the Day are still menu stubs.
 - Crossword: grid, placement loop and scoring in
   `round_crossword.hpp`, reconstructed from confirmed decompilation.
 - Profiles: player list (5 max, 15-char names, exact-duplicate check),

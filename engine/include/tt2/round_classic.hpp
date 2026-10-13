@@ -114,6 +114,15 @@ public:
     const std::string& rack() const noexcept { return rack_; }
     const Config&      config() const noexcept { return cfg_; }
 
+    // The board with its per-slot "found" flags, or nullptr before
+    // `start`. The UI reads it to draw the word grid and to reveal the
+    // missing words at the end of a round.
+    const FilledBoard* board() const noexcept { return filled_board_.get(); }
+    std::size_t slot_count() const noexcept { return filled_board_ ? filled_board_->slot_count() : 0; }
+    bool complete() const noexcept {
+        return filled_board_ && filled_board_->filled_count() == filled_board_->slot_count();
+    }
+
 private:
     Config cfg_;
     const WordTree* common_;

@@ -107,6 +107,26 @@ TEST(classic_round_bingo_qualifies) {
     ASSERT_TRUE(r.qualified());
 }
 
+TEST(classic_round_exposes_board_and_completion) {
+    auto com = common();
+    auto ful = full();
+    Random rng(0);
+    Bag bag(com);
+    ClassicRound r(com, ful, ClassicRound::Config{});
+    ASSERT_TRUE(r.board() == nullptr);          // nothing before start
+    ASSERT_EQ(r.slot_count(), std::size_t{0});
+    ASSERT_TRUE(!r.complete());
+    const auto res = r.start(rng, bag, 0);
+    ASSERT_TRUE(r.board() != nullptr);
+    ASSERT_EQ(r.slot_count(), res.slot_count);
+    ASSERT_EQ(r.board()->flat_slots().size(), res.slot_count);
+    ASSERT_TRUE(!r.complete());
+    (void)r.guess(res.board_words[0]);
+    ASSERT_TRUE(r.board()->is_filled(0));
+    for (std::size_t i = 1; i < res.board_words.size(); ++i) (void)r.guess(res.board_words[i]);
+    ASSERT_TRUE(r.complete());
+}
+
 TEST(classic_round_duplicate_after_accept) {
     auto com = common();
     auto ful = full();

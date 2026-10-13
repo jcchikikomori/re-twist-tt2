@@ -199,9 +199,11 @@ the address-level walkthrough of the gameplay code is in
   headless scene model (`sprite.hpp`, `modifier.hpp`,
   `welcome_flow.hpp`, `bitmap_font.hpp` for the GF2 `fonts/*.xml`
   format, `profile_dialogs.hpp` for the name-input / player-select
-  dialogs), `ui/src/main.cpp` is the SDL2 front end, and
-  `ui/tests/` holds the headless tests. Timings and layout for the
-  welcome flow come from `docs/reverse-engineering/welcome-flow.md`;
+  dialogs, `game_scene.hpp` for the Classic Untimed / Timed scene),
+  `ui/src/main.cpp` is the SDL2 front end, and `ui/tests/` holds the
+  headless tests. Timings and layout for the welcome flow come from
+  `docs/reverse-engineering/welcome-flow.md`, the game scene geometry
+  from `docs/reverse-engineering/game-scene.md`;
   keep the model free of SDL so it stays testable. Original assets are
   never committed: `scripts/import-original.sh` copies them into the
   gitignored `imported-assets/` on the user's machine only.

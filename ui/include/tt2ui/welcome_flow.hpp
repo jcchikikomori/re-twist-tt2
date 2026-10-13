@@ -33,6 +33,23 @@ enum class SoundId {
     Button,             // Sound   SOUND_BUTTON
     ButtonRollover,     // Sound   SOUND_button_rollover
     ButtonWordOfTheDay, // Sound   SOUND_button_wordoftheday (disabled WOTD click)
+    // Game scene (sound/*.ogg, resources.xml section "default").
+    LetterPlace,        // SOUND_letter_place
+    LetterClear,        // SOUND_letter_clear
+    LetterLoad,         // SOUND_letter_load
+    WordCorrect,        // SOUND_word_correct
+    WordReject,         // SOUND_word_reject
+    WordBingo,          // SOUND_word_bingo
+    WordLast,           // SOUND_word_last
+    WordTwist,          // SOUND_word_twist
+    WordPassReveal,     // SOUND_word_pass_reveal
+    AllWords,           // SOUND_game_all_words_submitted
+    ClockCountdown,     // SOUND_game_clock_countdown
+    ClockTimeUp,        // SOUND_game_clock_timeup
+    LoseLife,           // SOUND_game_lose_life
+    NextRoundAchieved,  // SOUND_game_next_round_acheived
+    HighScoreAchieved,  // SOUND_game_high_score_achieved
+    MusicInGame1,       // Stream  MUSIC_in-game_1 (music/music_in-game_1.ogg)
 };
 
 // What the scenes need from the application.

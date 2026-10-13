@@ -108,7 +108,8 @@ if(TT2_BUILD_UI)
         set_target_properties(tt2_app PROPERTIES OUTPUT_NAME tt2)
         # Where `scripts/import-original.sh` puts the user's own assets.
         target_compile_definitions(tt2_app PRIVATE
-            TT2_IMPORTED_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/imported-assets")
+            TT2_IMPORTED_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/imported-assets"
+            TT2_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
         install(TARGETS tt2_app RUNTIME DESTINATION bin)
     else()
         message(STATUS "SDL2/SDL2_image/SDL2_mixer not found: skipping the tt2 UI binary")
@@ -143,6 +144,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_welcome_flow.cpp
         ui/tests/test_bitmap_font.cpp
         ui/tests/test_profile_dialogs.cpp
+        ui/tests/test_game_scene.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)

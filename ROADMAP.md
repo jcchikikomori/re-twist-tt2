@@ -4,7 +4,7 @@ This document describes the current status and the upcoming milestones of this p
 
 ## Updated
 
-`Tue, 13 Oct 2026 11:45:00 GMT+8`
+`Tue, 13 Oct 2026 14:10:00 GMT+8`
 
 ## Milestones (so far)
 
@@ -40,6 +40,13 @@ This document describes the current status and the upcoming milestones of this p
   remove-confirmation dialogs with the original layout, 15-character limit, duplicate check and
   reselect rule (`profile_dialogs.hpp`), all headless-tested. Profiles save to the per-user data
   directory as soon as they change.
+- Classic game scene (Untimed & Timed, goal 3): the word grid, letter rows, panel and UI bar laid out
+  from the decompiled `TextTwist2Scene` (`docs/reverse-engineering/game-scene.md`), typing / clicking
+  / twist / clear / last word / enter, the 2:00 clock with the 10 s countdown, bingo and all-words
+  popups, the three-miss game over and high-score submission, wired to the player's bag and
+  progression counters (`game_scene.hpp`, headless-tested). Found and fixed on the way: the C++
+  `.tree` codec read the grammar in the wrong order and produced garbage racks from the real
+  dictionaries; it now matches the exe (`0x43e070`) and the Python reference decoder byte-for-byte.
 
 ## Future Goals
 

@@ -26,7 +26,8 @@ fi
 copy_dir() {
     [ -d "$SRC/$1" ] || { echo "skip $1 (missing)"; return 0; }
     mkdir -p "$DST/$1"
-    cp -Rf "$SRC/$1/." "$DST/$1/"   # -f: files copied earlier are read-only
+    chmod -R u+w "$DST/$1" 2>/dev/null || true   # earlier copies keep the install's read-only bits
+    cp -Rf "$SRC/$1/." "$DST/$1/"
     echo "copied $1"
 }
 
@@ -34,6 +35,7 @@ copy_dir images/splash
 copy_dir images/loadscene
 copy_dir images/selectionscene
 copy_dir images/gui
+copy_dir images/gamescene
 copy_dir fonts
 copy_dir music
 copy_dir sound
