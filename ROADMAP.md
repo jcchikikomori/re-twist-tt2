@@ -4,7 +4,7 @@ This document describes the current status and the upcoming milestones of this p
 
 ## Updated
 
-`Tue, 13 Oct 2026 10:01:00 GMT+8`
+`Tue, 13 Oct 2026 11:45:00 GMT+8`
 
 ## Milestones (so far)
 
@@ -34,7 +34,12 @@ This document describes the current status and the upcoming milestones of this p
 - Profile & progression system decoded and implemented in the engine (`profile.hpp`,
   `profile_store.hpp`): player manager rules, per-player progression fields, the five high-score
   tables with the original ordering/trim/default-fill logic, and plain-text persistence. Spec:
-  `docs/reverse-engineering/profiles.md`. Trophy unlock conditions and the UI dialogs are next.
+  `docs/reverse-engineering/profiles.md`. Trophy unlock conditions are next.
+- Profile UI: the GF2 bitmap-font format (`fonts/*.xml` + padded PNG layers) decoded and rendered
+  (`bitmap_font.hpp`), the welcome label on the main menu, and the name-input / player-select /
+  remove-confirmation dialogs with the original layout, 15-character limit, duplicate check and
+  reselect rule (`profile_dialogs.hpp`), all headless-tested. Profiles save to the per-user data
+  directory as soon as they change.
 
 ## Future Goals
 

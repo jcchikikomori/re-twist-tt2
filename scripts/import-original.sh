@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Copy the images, music and sounds the UI needs out of the user's OWN
+# Copy the images, fonts, music and sounds the UI needs out of the user's OWN
 # Text Twist 2 install into `imported-assets/` (gitignored).
 #
 # Only run this against a copy you legally own. The repository never
@@ -26,13 +26,15 @@ fi
 copy_dir() {
     [ -d "$SRC/$1" ] || { echo "skip $1 (missing)"; return 0; }
     mkdir -p "$DST/$1"
-    cp -R "$SRC/$1/." "$DST/$1/"
+    cp -Rf "$SRC/$1/." "$DST/$1/"   # -f: files copied earlier are read-only
     echo "copied $1"
 }
 
 copy_dir images/splash
 copy_dir images/loadscene
 copy_dir images/selectionscene
+copy_dir images/gui
+copy_dir fonts
 copy_dir music
 copy_dir sound
 

@@ -197,7 +197,9 @@ the address-level walkthrough of the gameplay code is in
 - UI work (layout, styling, motion, responsiveness) goes through the
   designer lane. The UI lives in `ui/`: `ui/include/tt2ui/` is the
   headless scene model (`sprite.hpp`, `modifier.hpp`,
-  `welcome_flow.hpp`), `ui/src/main.cpp` is the SDL2 front end, and
+  `welcome_flow.hpp`, `bitmap_font.hpp` for the GF2 `fonts/*.xml`
+  format, `profile_dialogs.hpp` for the name-input / player-select
+  dialogs), `ui/src/main.cpp` is the SDL2 front end, and
   `ui/tests/` holds the headless tests. Timings and layout for the
   welcome flow come from `docs/reverse-engineering/welcome-flow.md`;
   keep the model free of SDL so it stays testable. Original assets are

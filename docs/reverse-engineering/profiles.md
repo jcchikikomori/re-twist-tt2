@@ -242,6 +242,30 @@ listed here:
 - Trophy _conditions_ are not evaluated yet (slots and counters are
   stored). See §1.1.
 
+### 5.1 The UI (`ui/include/tt2ui/profile_dialogs.hpp`)
+
+The dialogs use the §3 layout verbatim. Points that are inferred or
+simplified:
+
+- The welcome label joins `TEXT_WELCOME` / `TEXT_WELCOME_BACK` and the
+  name with a single space (INFERRED; 0x42f1a0 was not read to the
+  byte).
+- "Player exists." is shown in the `DIALOG_YESNO` frame with one OK
+  button; the original's message dialog blueprint was not decoded. The
+  typed name survives the message.
+- A player is made current as soon as its row is clicked; OK only
+  closes. Cancel on the very first name is disabled instead of hidden.
+- The text cursor sits right after the typed text with `cursory="-8"`
+  applied to the label's baseline (INFERRED placement).
+- Fonts: `fonts/*.xml` describe glyphs as `sx sy sw sh` in an unpadded
+  sheet plus `ix iy` cell indexes; every layer PNG stores the cell at
+  `(sx + 2p*ix, sy + 2p*iy)` with size `(sw + 2p, sh + 2p)` for its
+  `padding` p. That formula reproduces the exact pixel size of all nine
+  shipped sheets (`font_uibar.png` 344×338 at p=4,
+  `font_uibar_stroke.png` 392×382 at p=6, ...). Layers draw last to
+  first (shadow, stroke, face). Without imported fonts a 5×5 procedural
+  font stands in.
+
 ## 6. Address index
 
 | Address | What |

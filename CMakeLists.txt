@@ -141,6 +141,8 @@ if(TT2_BUILD_TESTS)
     add_executable(tt2_ui_tests
         engine/tests/test_main.cpp
         ui/tests/test_welcome_flow.cpp
+        ui/tests/test_bitmap_font.cpp
+        ui/tests/test_profile_dialogs.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)

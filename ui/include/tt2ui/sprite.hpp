@@ -35,7 +35,7 @@ enum class Flip { None, Horizontal, Vertical, Both };
 // mirrors around; the shipped XML only ever uses it together with a
 // flip so that a flipped quadrant stays inside its own quarter of the
 // screen. INFERRED semantics, see docs/reverse-engineering/welcome-flow.md.
-enum class Anchor { TopLeft, Top, Center, BottomLeft };
+enum class Anchor { TopLeft, Top, TopRight, Center, BottomLeft };
 
 struct Rect {
     float x = 0, y = 0, w = 0, h = 0;
@@ -61,6 +61,7 @@ struct SpriteState {
         switch (anchor) {
             case Anchor::Top:
             case Anchor::Center: return x - sheet.frame_w * 0.5f;
+            case Anchor::TopRight: return x - sheet.frame_w;
             default: return x;
         }
     }

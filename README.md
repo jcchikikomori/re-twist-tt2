@@ -110,13 +110,17 @@ dictionaries are public-domain or CC BY-SA 4.0. The original GameHouse
 - Dictionary: open `.tree` files committed and verified round-trip
   byte-identical against the build pipeline.
 - UI: SDL2 front end boots splash → loading → main menu with the
-  original timings (`ui/`). Menu buttons react but no mode starts yet;
-  the player-name label needs the bitmap-font renderer.
+  original timings (`ui/`), renders the GF2 bitmap fonts, shows the
+  "Welcome / Welcome back NAME" label and runs the name-input and
+  player-select dialogs (add, pick, remove with confirmation) over the
+  saved profiles. Menu buttons react but no mode starts yet.
 - Crossword: grid, placement loop and scoring in
   `round_crossword.hpp`, reconstructed from confirmed decompilation.
 - Profiles: player list (5 max, 15-char names, exact-duplicate check),
   per-player progression (bag seed/index, WOTD day, max length, 24
   trophy slots, counters) and the five high-score tables with the
   original insert/trim and default-fill rules, in `profile.hpp`;
-  plain-text save files in `profile_store.hpp`. Spec:
-  `docs/reverse-engineering/profiles.md`. Not wired to the UI yet.
+  plain-text save files in `profile_store.hpp`, stored under the
+  platform's per-user data directory (`%APPDATA%`, `~/Library/Application
+  Support`, `$XDG_DATA_HOME`). Spec: `docs/reverse-engineering/profiles.md`.
+  Importing the original game's save files is still to do.
