@@ -34,7 +34,7 @@
 - **Loading bar**: 483×69 — a row of **8 blue rounded-square slots** (fill `#0330AC`, ~6px radius) each holding a recessed dark navy ball; as loading progresses each slot is replaced by a white glossy letter ball spelling **L-O-A-D-I-N-G**; gold `#F7C05C` baseline strip under the row. Empty vs full are two separate PNGs.
 - **Loading… / Click here to start**: `loading_wait` / `click_here` — white `#FEFEFE` bold condensed text with navy `#192435` hard shadow; click-here sits centered under the bar once ready.
 - **GH_Branding.png** (313×70): small house-cube + tile wordmark bottom-left; copyright line "Copyright © 2008 GameHouse, Inc." in small white sans.
-- **Flow**: splash (GH) → loading (bg + ripple pulse + logo/spring + bar fill + "Loading…") → when full: "Click here to start" → menu.
+- **Flow**: splash (GH, ≥2.1 s) → 500 ms fade → loading (bg + ripple pulse + logo drop + bar fill, held ≥3.5 s) → 500 ms fade → menu. The "Click here to start" sprite exists but is never shown in the shipped build; the scene advances by itself. Timings and addresses: `docs/reverse-engineering/welcome-flow.md`.
 
 ## 3. Selection / menu (`selectionscene/`)
 

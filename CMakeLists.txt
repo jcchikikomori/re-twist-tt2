@@ -10,6 +10,7 @@ project(tt2
 # ----------------------------------------------------------------------------
 option(TT2_BUILD_TESTS "Build the engine unit tests" ON)
 option(TT2_WARN_AS_ERROR "Treat warnings as errors" OFF)
+option(TT2_BUILD_UI "Build the SDL2 desktop UI (needs SDL2, SDL2_image, SDL2_mixer)" ON)
 
 # ----------------------------------------------------------------------------
 # Engine (header-only library) + platform shim (compiled once per target)
@@ -55,6 +56,66 @@ target_link_libraries(tt2_tree PRIVATE tt2_engine tt2_platform)
 set_target_properties(tt2_tree PROPERTIES OUTPUT_NAME tt2-tree)
 
 # ----------------------------------------------------------------------------
+# Desktop UI (SDL2). `tt2_ui_logic` is the header-only scene model used by
+# both the app and the tests; `tt2` is the playable binary.
+# ----------------------------------------------------------------------------
+add_library(tt2_ui_logic INTERFACE)
+target_include_directories(tt2_ui_logic INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ui/include>
+)
+target_link_libraries(tt2_ui_logic INTERFACE tt2_engine)
+
+if(TT2_BUILD_UI)
+    # pkg-config first (works on every distro), then a plain header/library
+    # search as a fallback (e.g. when a Homebrew pkg-config shadows the
+    # system one and cannot see /usr/lib/*/pkgconfig).
+    set(TT2_SDL_OK OFF)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SDL2 QUIET IMPORTED_TARGET sdl2)
+        pkg_check_modules(SDL2_IMAGE QUIET IMPORTED_TARGET SDL2_image)
+        pkg_check_modules(SDL2_MIXER QUIET IMPORTED_TARGET SDL2_mixer)
+        if(SDL2_FOUND AND SDL2_IMAGE_FOUND AND SDL2_MIXER_FOUND)
+            set(TT2_SDL_LIBS PkgConfig::SDL2 PkgConfig::SDL2_IMAGE PkgConfig::SDL2_MIXER)
+            set(TT2_SDL_OK ON)
+        endif()
+    endif()
+    if(NOT TT2_SDL_OK)
+        # Homebrew/non-distro CMake builds do not know Debian's multiarch
+        # library directory, so name it explicitly.
+        set(TT2_SDL_LIB_PATHS /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
+            /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/lib64 /usr/lib /usr/local/lib)
+        find_path(TT2_SDL2_INCLUDE_DIR SDL.h PATH_SUFFIXES SDL2 PATHS /usr/include /usr/local/include)
+        find_library(TT2_SDL2_LIB SDL2 PATHS ${TT2_SDL_LIB_PATHS})
+        find_library(TT2_SDL2_IMAGE_LIB SDL2_image PATHS ${TT2_SDL_LIB_PATHS})
+        find_library(TT2_SDL2_MIXER_LIB SDL2_mixer PATHS ${TT2_SDL_LIB_PATHS})
+        if(TT2_SDL2_INCLUDE_DIR AND TT2_SDL2_LIB AND TT2_SDL2_IMAGE_LIB AND TT2_SDL2_MIXER_LIB)
+            add_library(tt2_sdl2_deps INTERFACE)
+            # Note: use the distro compiler (/usr/bin/g++) with the distro
+            # SDL2; a Homebrew gcc ships its own glibc headers and will not
+            # find Debian's <SDL2/_real_SDL_config.h>.
+            target_include_directories(tt2_sdl2_deps INTERFACE ${TT2_SDL2_INCLUDE_DIR})
+            target_link_libraries(tt2_sdl2_deps INTERFACE
+                ${TT2_SDL2_LIB} ${TT2_SDL2_IMAGE_LIB} ${TT2_SDL2_MIXER_LIB})
+            set(TT2_SDL_LIBS tt2_sdl2_deps)
+            set(TT2_SDL_OK ON)
+        endif()
+    endif()
+    if(TT2_SDL_OK)
+        message(STATUS "SDL2 found: building the tt2 UI binary")
+        add_executable(tt2_app ui/src/main.cpp)
+        target_link_libraries(tt2_app PRIVATE tt2_ui_logic tt2_platform ${TT2_SDL_LIBS})
+        set_target_properties(tt2_app PROPERTIES OUTPUT_NAME tt2)
+        # Where `scripts/import-original.sh` puts the user's own assets.
+        target_compile_definitions(tt2_app PRIVATE
+            TT2_IMPORTED_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/imported-assets")
+        install(TARGETS tt2_app RUNTIME DESTINATION bin)
+    else()
+        message(STATUS "SDL2/SDL2_image/SDL2_mixer not found: skipping the tt2 UI binary")
+    endif()
+endif()
+
+# ----------------------------------------------------------------------------
 # Tests
 # ----------------------------------------------------------------------------
 if(TT2_BUILD_TESTS)
@@ -74,6 +135,15 @@ if(TT2_BUILD_TESTS)
 
     include(CTest)
     add_test(NAME tt2_unit_tests COMMAND tt2_tests)
+
+    # UI logic tests: headless, no SDL needed.
+    add_executable(tt2_ui_tests
+        engine/tests/test_main.cpp
+        ui/tests/test_welcome_flow.cpp
+    )
+    target_include_directories(tt2_ui_tests PRIVATE engine/tests)
+    target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)
+    add_test(NAME tt2_ui_unit_tests COMMAND tt2_ui_tests)
 endif()
 
 # ----------------------------------------------------------------------------

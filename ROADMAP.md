@@ -22,9 +22,15 @@ This document describes the current status and the upcoming milestones of this p
 
 ## Success stories (what we made, so far)
 
-N/A
-
-To the LLM, populate this as unordered list
+- Header-only C++17 engine (`engine/include/tt2/`) with the `.tree` dictionary codec round-tripping
+  the original word lists byte-for-byte, the Java-LCG and MSVC CRT random generators, and the
+  Classic, Lightning and Crossword rounds, all unit tested.
+- Crossword mode reconstructed from confirmed decompilation (grid fit/commit rules, 10,000-attempt
+  placement loop).
+- Welcome flow (GameHouse splash, loading screen, main menu) decoded from the exe with exact timings
+  and layout: `docs/reverse-engineering/welcome-flow.md`.
+- First playable UI layer (`ui/`): SDL2 front end that boots splash, loading and the main menu 1:1
+  with the original timings, using the user's own imported assets or procedural placeholders.
 
 ## Future Goals
 

@@ -14,9 +14,10 @@ the engine.
 
 - **C++17** (any of GCC 9+, Clang 10+, MSVC 19.20+).
 - **CMake 3.16+** for the build.
-- **No third-party libraries.** The engine is header-only; the tree CLI
-  uses only the C++ standard library. A future UI layer (SDL2 / SDL2_ttf /
-  SDL2_mixer) is not part of this drop.
+- **No third-party libraries in the engine.** The engine is header-only;
+  the tree CLI uses only the C++ standard library. The desktop UI
+  (`ui/`) needs SDL2, SDL2_image and SDL2_mixer; it is skipped
+  automatically when they are missing (`TT2_BUILD_UI=OFF` to disable).
 - **No container required.** The project compiles on the host directly;
   `podman` / `docker` is optional for reproducing the same toolchain.
 
@@ -33,7 +34,7 @@ ctest --test-dir build --output-on-failure    # unit tests
 ## Layout
 
 | Path | Owner / purpose |
-|---|---|
+| --- | --- |
 | `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp`, `round_crossword.hpp`. |
 | `engine/tests/` | Unit tests, one file per header plus `test_main.cpp` (the in-tree test harness). |
 | `src/main.cpp` | The driver / smoke test for the engine. |
@@ -194,16 +195,24 @@ the address-level walkthrough of the gameplay code is in
   This is enforced by the tests (see `engine/tests/test_round_classic.cpp`)
   and the CMake build's ASan run.
 - UI work (layout, styling, motion, responsiveness) goes through the
-  designer lane. We do not have a UI yet; when one lands, this section
-  will point to it.
+  designer lane. The UI lives in `ui/`: `ui/include/tt2ui/` is the
+  headless scene model (`sprite.hpp`, `modifier.hpp`,
+  `welcome_flow.hpp`), `ui/src/main.cpp` is the SDL2 front end, and
+  `ui/tests/` holds the headless tests. Timings and layout for the
+  welcome flow come from `docs/reverse-engineering/welcome-flow.md`;
+  keep the model free of SDL so it stays testable. Original assets are
+  never committed: `scripts/import-original.sh` copies them into the
+  gitignored `imported-assets/` on the user's machine only.
 - Commits follow Conventional Commits. **The AI only stages changes and
   drafts commit messages; the user commits and pushes.**
 - **AI attribution is mandatory on every AI-generated commit.** Every
   commit message drafted by an LLM must end with a `Co-authored-by`
   trailer naming the actual model that generated the change, e.g.:
+
   ```text
   Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
   ```
+
   For non-Anthropic models, use the model name without email address
   (non Git format, not going to use Co-Author). Commits made directly
   by the user do not need this trailer.
