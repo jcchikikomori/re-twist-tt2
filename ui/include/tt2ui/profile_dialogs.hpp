@@ -13,6 +13,7 @@
 // labels; this file owns the state and the rules.
 #pragma once
 
+#include <array>
 #include <cstdlib>
 #include <functional>
 #include <string>
@@ -73,6 +74,38 @@ struct Dialog {
         return nullptr;
     }
 };
+
+// DEFAULT_PAINTER frame fill. The nine border PNGs are opaque only in a
+// thin outer band and fade to transparent towards the inside (an inner
+// shadow that is meant to fall on the centre image), so the centre must
+// be painted under the whole frame, not just inside the 37/86/53 px
+// border boxes. Measured from the alpha channels of
+// images/gui/dialogdefault/*.png: the outer edge is fully opaque from
+// x=1 (left) / y=1 (top); the right edge carries a 7 px and the bottom
+// edge a 16 px drop shadow that falls outside the dialog; the corners
+// are rounded with a ~10 px radius. The fill is therefore the dialog
+// rect minus those margins, built from two overlapping rectangles so
+// the rounded corners stay transparent.
+struct FillRect {
+    int x = 0, y = 0, w = 0, h = 0;
+    bool operator==(const FillRect& o) const { return x == o.x && y == o.y && w == o.w && h == o.h; }
+};
+constexpr int FRAME_FILL_LEFT = 1;
+constexpr int FRAME_FILL_TOP = 1;
+constexpr int FRAME_FILL_RIGHT = 7;     // drop shadow of right.png
+constexpr int FRAME_FILL_BOTTOM = 16;   // drop shadow of bottom.png
+constexpr int FRAME_CORNER = 10;        // rounded-corner radius
+
+// The two rectangles (a cross) that fill a w x h dialog, relative to
+// its top-left corner. Empty rects (w or h <= 0) mean "too small".
+inline std::array<FillRect, 2> dialog_fill_rects(int w, int h) {
+    const int fw = w - FRAME_FILL_LEFT - FRAME_FILL_RIGHT;
+    const int fh = h - FRAME_FILL_TOP - FRAME_FILL_BOTTOM;
+    return {{
+        {FRAME_FILL_LEFT + FRAME_CORNER, FRAME_FILL_TOP, fw - 2 * FRAME_CORNER, fh},
+        {FRAME_FILL_LEFT, FRAME_FILL_TOP + FRAME_CORNER, fw, fh - 2 * FRAME_CORNER},
+    }};
+}
 
 // Strings from commontext.xml / text.xml.
 namespace strings {

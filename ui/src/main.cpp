@@ -445,9 +445,20 @@ void draw_dialog_frame(SDL_Renderer* ren, Assets& assets, const Dialog& d) {
         SDL_SetTextureAlphaMod(img.texture, 255);
         SDL_RenderCopy(ren, img.texture, &src, &dst);
     };
-    // Centre first so the ornate borders overlap it.
-    blit("BORDER_CENTER", SCREEN_W, SCREEN_H, x + FRAME_SIDE_W, y + FRAME_TOP_H, inner_w, inner_h,
-         (SCREEN_W - inner_w) / 2, (SCREEN_H - inner_h) / 2);
+    // Centre first so the ornate borders overlap it. The borders fade to
+    // transparent on their inner side, so the fill runs under the whole
+    // frame (see dialog_fill_rects); both rects crop the same window out
+    // of the middle of background.png so they line up seamlessly.
+    {
+        const int fill_w = d.w - FRAME_FILL_LEFT - FRAME_FILL_RIGHT;
+        const int fill_h = d.h - FRAME_FILL_TOP - FRAME_FILL_BOTTOM;
+        const int crop_x = (SCREEN_W - fill_w) / 2, crop_y = (SCREEN_H - fill_h) / 2;
+        for (const FillRect& r : dialog_fill_rects(d.w, d.h)) {
+            if (r.w <= 0 || r.h <= 0) continue;
+            blit("BORDER_CENTER", SCREEN_W, SCREEN_H, x + r.x, y + r.y, r.w, r.h,
+                 crop_x + (r.x - FRAME_FILL_LEFT), crop_y + (r.y - FRAME_FILL_TOP));
+        }
+    }
     blit("BORDER_TOP_LEFT", FRAME_SIDE_W, FRAME_TOP_H, x, y, FRAME_SIDE_W, FRAME_TOP_H);
     blit("BORDER_TOP_CENTER", 4, FRAME_TOP_H, x + FRAME_SIDE_W, y, inner_w, FRAME_TOP_H);
     blit("BORDER_TOP_RIGHT", FRAME_SIDE_W, FRAME_TOP_H, x + d.w - FRAME_SIDE_W, y, FRAME_SIDE_W, FRAME_TOP_H);

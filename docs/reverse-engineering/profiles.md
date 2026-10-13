@@ -265,6 +265,17 @@ simplified:
   `font_uibar_stroke.png` 392×382 at p=6, ...). Layers draw last to
   first (shadow, stroke, face). Without imported fonts a 5×5 procedural
   font stands in.
+- `DEFAULT_PAINTER` frame: the nine `images/gui/dialogdefault/*.png`
+  borders are opaque only in a thin outer band and fade to transparent
+  on their inner side (an inner shadow meant to fall on the centre
+  image), so the centre (`images/gui/background.png`, cropped around
+  its middle) is painted under the whole dialog, not just inside the
+  border boxes. Measured from the alpha channels: the fill starts at
+  (1, 1), stops 7 px short of the right edge and 16 px short of the
+  bottom (those strips are drop shadows outside the frame), and leaves
+  the ~10 px rounded corners uncovered (`dialog_fill_rects`). The
+  `offsetleft/top/right/bottom` values of the painter (14/56/14/26) are
+  content margins, not fill bounds.
 
 ## 6. Address index
 

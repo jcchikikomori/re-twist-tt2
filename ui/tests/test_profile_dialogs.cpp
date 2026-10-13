@@ -43,6 +43,27 @@ struct Fixture {
 
 }  // namespace
 
+TEST(dialog_fill_rects_cover_frame_minus_shadows_and_corners) {
+    // DIALOG_NEWPLAYER is 402x223.
+    auto r = dialog_fill_rects(402, 223);
+    // Horizontal bar: full height, corners cut on the left and right.
+    ASSERT_TRUE(r[0] == (FillRect{11, 1, 374, 206}));
+    // Vertical bar: full width, corners cut at the top and bottom.
+    ASSERT_TRUE(r[1] == (FillRect{1, 11, 394, 186}));
+    // Union spans x in [1, 395) and y in [1, 207): the opaque right
+    // band starts at 402-22=380 and the bottom band at 223-35=188, so
+    // both bands sit on top of the fill and the drop shadows do not.
+    ASSERT_EQ(r[1].x + r[1].w, 402 - FRAME_FILL_RIGHT);
+    ASSERT_EQ(r[0].y + r[0].h, 223 - FRAME_FILL_BOTTOM);
+    ASSERT_TRUE(r[1].x + r[1].w > 380);
+    ASSERT_TRUE(r[0].y + r[0].h > 188);
+    // The corner pixel itself stays uncovered.
+    ASSERT_TRUE(r[0].x > FRAME_FILL_LEFT && r[1].y > FRAME_FILL_TOP);
+    // Degenerate dialog: the rects collapse instead of going negative-safe.
+    auto tiny = dialog_fill_rects(10, 10);
+    ASSERT_TRUE(tiny[0].w < 0 && tiny[1].h < 0);
+}
+
 TEST(welcome_text_follows_returning_flag) {
     tt2::PlayerManager pm;
     ASSERT_EQ(welcome_text(pm), std::string());
