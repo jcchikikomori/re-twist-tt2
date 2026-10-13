@@ -95,7 +95,18 @@ ctest --test-dir build --output-on-failure
 └── Text Twist 2.exe -> /home/deck/.temp/Text Twist 2.exe   (gitignored)
 ```
 
+## License
+
+- **Code** (engine, UI, tools, scripts, docs): [MIT](LICENSE).
+- **Dictionaries** (`data/open-*.tree`): `open-full.tree` is public domain
+  and `open-common.tree` is CC BY-SA 4.0. See
+  [`data/LICENSE.md`](data/LICENSE.md) for attribution.
+
 ## Legal
+
+This is an independent fan project. It is not affiliated with, endorsed
+by, or sponsored by GameHouse. "Text Twist" is a trademark of its
+respective owner, and the licenses above grant no rights to it.
 
 Look and feel may imitate the original; assets may not. The shipped
 dictionaries are public-domain or CC BY-SA 4.0. The original GameHouse
