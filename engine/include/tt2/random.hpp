@@ -73,6 +73,59 @@ private:
     std::uint64_t seed_;
 };
 
+// Microsoft CRT `rand()` / `srand()`, byte-for-byte (msvcrt, 32-bit):
+//
+//   state = state * 214013 + 2531011
+//   out   = (state >> 16) & 0x7fff
+//
+// CONFIRMED 2026-10-13 (Ghidra 12.1.4, TextTwist2.exe 0c6e962c…): the
+// Crossword word-list shuffle (0x4228f0) and the crossing-pair shuffle
+// (0x439370) are MSVC `std::random_shuffle` driven by this generator,
+// not by the Java LCG above. Whether the game ever calls `srand()` is
+// not observed; the CRT default seed is 1.
+class CrtRandom {
+public:
+    static constexpr std::uint32_t MULTIPLIER = 214013u;
+    static constexpr std::uint32_t ADDEND     = 2531011u;
+    static constexpr std::uint32_t DEFAULT_SEED = 1u;
+
+    explicit CrtRandom(std::uint32_t seed = DEFAULT_SEED) noexcept : state_(seed) {}
+
+    void srand(std::uint32_t seed) noexcept { state_ = seed; }
+    std::uint32_t state() const noexcept { return state_; }
+
+    std::int32_t rand() noexcept {
+        state_ = state_ * MULTIPLIER + ADDEND;
+        return static_cast<std::int32_t>((state_ >> 16) & 0x7fffu);
+    }
+
+    // MSVC `std::random_shuffle`'s range draw (0x4228f0 / 0x439370):
+    // take 15-bit chunks of `rand()` until the mask covers `n`, then
+    // reduce modulo `n`. Returns a value in [0, n).
+    std::uint32_t below(std::uint32_t n) noexcept {
+        std::uint32_t mask = 0x7fffu;
+        std::uint32_t v = static_cast<std::uint32_t>(rand()) & 0x7fffu;
+        while (mask < n && mask != 0xffffffffu) {
+            v    = (v << 15) | (static_cast<std::uint32_t>(rand()) & 0x7fffu);
+            mask = (mask << 15) | 0x7fffu;
+        }
+        return n == 0 ? 0 : v % n;
+    }
+
+    // MSVC `std::random_shuffle(first, last)`:
+    //   for i in 1..n-1: swap(a[i], a[below(i + 1)])
+    template <typename T>
+    void shuffle(std::vector<T>& a) noexcept {
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            const std::size_t j = below(static_cast<std::uint32_t>(i + 1));
+            std::swap(a[i], a[j]);
+        }
+    }
+
+private:
+    std::uint32_t state_;
+};
+
 // Monotonic millisecond clock. The binary uses `timeGetTime()` from
 // WinMM; the engine references `tt2::millis()` only when the bag is
 // reseeded, so a platform shim or a deterministic stub both work.

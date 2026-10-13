@@ -185,20 +185,21 @@ This means any valid dictionary word of the right length can fill a slot, even i
 ### Round advance
 - Classic: when time runs out, if the qualified flag (`table+0x88`, set by any bingo) is set, you advance to the next round. Otherwise 0x425420 runs the pass / end-game path ("Sorry, you didn't qualify…") (@0x426f2b..0x42701b). **CONFIRMED**
   Untimed works the same way: the bingo enables Next Round. Finding all words also ends the round early. **INFERRED for the button wiring**
-- Lightning: the round ends when all n bingo words are solved (0x411680 → +1000). If the timer hits 0, the game is lost. **INFERRED for the loss path**
+- Lightning: the round ends when all n bingo words are solved (0x411680 is the "every word's `+0x88` flag set" check; the +1000 is at 0x411bc0). If the timer hits 0, the game is lost. **INFERRED for the loss path** — 2026-10-13: the only reference to `SOUND_game_clock_timeup` is in the Classic scene (0x426f46), so the Blitz timer-out handler has not been located yet.
 
-### Crossword word set (CONFIRMED, 0x41bcd6..0x41c1b8)
-- Root length `L = min(5 + rand%4, playerMaxLen)`, picked with the same 0x43d550 loop.
-- Sub-anagrams come from the **common** tree only. The list is shuffled with CRT `rand()` (0x422080).
-- The root is **rejected unless exactly one full-length anagram exists** (`cmp edi,1` @0x41beb7).
-- Word count: `N = min(10, 4 + rand % floor(4 + (round-1) × BLITZ_WORD_NUMBER_INCREMENT))`. So it's 4 words in early rounds and grows slowly.
-- The first N shuffled non-root words are taken, then the root word is appended last.
+### Crossword word set (CONFIRMED, 0x41ba40 setup; re-verified 2026-10-13 with Ghidra 12.1.4)
+- Root length `L = min(5 + rand%4, playerMaxLen)` from the game's Java-style LCG (`DAT_005fde90`), then the same 0x43d550 pick loop as Classic (free skip of longer words, exact hit accepted, otherwise the closest shorter word over 5 tries).
+- Sub-anagrams come from the **common** tree only (0x43d7b0). The list is shuffled with `std::random_shuffle` driven by **CRT `rand()`** (0x422080 → 0x4228f0: 15-bit chunks of `rand() & 0x7fff`, reduced `% (i+1)`, `swap(a[i], a[j])` for `i = 1..n-1`). Whether the game ever calls `srand()` was not observed; the CRT default seed is 1.
+- The root is **rejected unless exactly one entry has the root's length** (`cmp edi,1` @0x41beb7), i.e. the root has no other full-length anagram. Rejection restarts the whole setup (new `L`, new root).
+- Word count: `N = min(10, 4 + rand % floor(4 + (round-1) × BLITZ_WORD_NUMBER_INCREMENT))` (0x41bf23..0x41c030; the LCG again).
+- The **first N entries** of the shuffled list are walked; the root is skipped when it is among them (so the set has N or N−1 non-root words). The root is appended **last** (0x41c1bd).
+- The grid builder runs on that list. If it fails, the entire setup restarts (`cStack_f1 == 0` loops back to the top).
 - Guesses are validated against the full DamBeavers list (`+0x2ac` → `table+0x188`, @0x41c262..0x41c293).
 
-### Grid construction (0x436090, CrosswordTable 0x8b0 bytes)
-- Cell array at `table+0x1c0`, 8 bytes per cell (`int letter`, `byte blocked` @+4), stride **11** → an 18×11 grid. **CONFIRMED (stride/offsets)**
-- The root (bingo) word goes in first, centered: `start = (18 − len)/2` on the 18-long axis, fixed index **5** on the 11-long axis, so it sits on the middle line.
-  The cells just before and after it get marked blocked:
+### Grid construction (CONFIRMED, 0x436090 builder / 0x435f90 fit / 0x435d30 commit; re-verified 2026-10-13)
+- Cell array at `table+0x1c0`, 8 bytes per cell (`int letter`, `byte blocked` @+4), stride **11**: `cell = a*11 + b` with `a` along the 18-long axis. A horizontal word advances `a`; a vertical word advances `b`.
+- Words are consumed **from the back of the list**: the root first, then the remaining words in reverse order.
+- The root goes in horizontal and centred: `a = (18 − len)/2`, `b = 5`. The cells just before and after it are marked blocked; no other cells.
   ```
   00436180: mov eax, 0x12 ; sub eax, len ; cdq ; sub eax,edx ; sar eax,1
   00436194: mov [edi+0x24], eax         ; start
@@ -206,13 +207,22 @@ This means any valid dictionary word of the right length can fill a slot, even i
   004361cf: imul edx, edx, 0xb          ; cell = a*11 + b
   004361ed: mov byte ptr [edx+ecx*8+0x1c4], 1   ; block cell at -1 / len
   ```
-- The remaining words go through up to **10,000 attempts** (`cmp [esp+0x20],0x2710`). Each attempt:
-  1. Pick a random already-placed word.
-  2. List every letter-match pair whose crossing cell isn't blocked.
-  3. Shuffle that list (0x439370).
-  4. Place the new word **perpendicular** to the placed one at the first pair that passes the fit check 0x435f90, then commit with 0x435d30.
+- Each remaining word gets up to **10,000 attempts** (`cmp [esp+0x20],0x2710`). One attempt:
+  1. Pick an already-placed word with the LCG: `k = next % placedCount` (negative fixed up).
+  2. For every `i` in the new word and `j` in the placed word with equal letters whose placed cell is **not blocked**, push `j` (duplicates allowed; `i` outer, `j` inner).
+  3. Shuffle that list with the CRT `random_shuffle` (0x439370).
+  4. Pop from the **back**. For the popped `j`, scan `i` in order; where the letters match, position the new word **perpendicular**: placed horizontal → new vertical at `a = placed.a + j`, `b = placed.b − i`; placed vertical → new horizontal at `a = placed.a − i`, `b = placed.b + j`. The first candidate that passes the fit check is committed.
+  5. When no candidate fits, the attempt counts and the next one picks a new placed word.
+- **Fit check (0x435f90)**, with `crossing = i`:
+  - start must satisfy `1 ≤ a ≤ 18` and `1 ≤ b ≤ 9`; the cell **after** the word (`start + len`) must satisfy the same bounds;
+  - the cell **before** and the cell **after** the word must be **empty** (blocked is allowed there);
+  - every other letter cell, except the crossing cell, must be **empty and not blocked**.
+  - There is **no explicit side-neighbour test**; the no-touch behaviour comes from the blocks written at commit time.
+- **Commit (0x435d30)**: write the letters, block the cell before and the cell after, and block the full **3×3 neighbourhood of the crossing cell** (`0x164 = 0x1c4 − 12 cells`, 3 rows of stride `0x58`, 3 cells of stride 8). This forbids later crossings on the placed word's letters adjacent to an existing crossing.
+- The 10,000-attempt cap is per word. Hitting it makes the builder return 0 and the round setup starts over with a fresh root.
 
-  **CONFIRMED for the flow.** The exact adjacency rules inside 0x435f90 are **INFERRED** (standard crossword no-touch checks).
+### Lose-a-life path (CONFIRMED, 0x425420; new 2026-10-13)
+- Classic non-qualify runs 0x425420. It increments `scene+0x1e8`, plays `SOUND_game_lose_life`, and **only when that counter reaches 3** marks the game over (`scene+0x260 = 1`, high-score save 0x428c80). Below 3 it reveals the missing words (`SOUND_word_pass_reveal`, 3,000 ms `GF2::ModifierDelay`) and continues. Where `+0x1e8` is reset was not traced. **CONFIRMED for the threshold; INFERRED that it behaves as three lives.**
 
 ---
 

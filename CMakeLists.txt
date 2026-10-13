@@ -68,6 +68,7 @@ if(TT2_BUILD_TESTS)
         engine/tests/test_board.cpp
         engine/tests/test_scoring.cpp
         engine/tests/test_round_classic.cpp
+        engine/tests/test_round_crossword.cpp
     )
     target_link_libraries(tt2_tests PRIVATE tt2_engine tt2_platform)
 

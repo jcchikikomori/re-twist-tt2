@@ -8,6 +8,38 @@ addresses are now stale). The **behavioural** notes in that file remain valid
 — the engine logic didn't change between copies, just the compiler's
 instruction layout.
 
+## 0. Installed game executable (the analysis target since 2026-10-13)
+
+The sections below describe the 23.9 MB `Text Twist 2.exe` (the downloadable
+bundle). The file the gameplay addresses were traced on, and the one REA /
+Ghidra now opens, is the **installed** `TextTwist2.exe`:
+
+| Field | Value |
+|---|---|
+| Path | `<install dir>/TextTwist2.exe` (linked into the repo as `Text Twist 2.exe`, gitignored) |
+| Size | 2,218,496 bytes |
+| SHA-256 | `0c6e962cb9a49d0dc163e48cfd3535ed31aa505232b96b8e265ab4bd18a9e801` |
+| File time | 2008-11-27 |
+| Format | PE32, x86, image base `0x400000` |
+
+Sections as Ghidra 12.1.4 loads them (`binary_overview`, 9,408 procedures,
+3,297 defined strings):
+
+| Name | Start | End | Length |
+|---|---|---|---|
+| Headers | `0x400000` | `0x400400` | 1,024 |
+| `.text` | `0x401000` | `0x575200` | 1,524,224 |
+| `.rdata` | `0x576000` | `0x5b7800` | 268,288 |
+| `.data` | `0x5b8000` | `0x6126dc` | 370,396 |
+| `.rsrc` | `0x613000` | `0x65d000` | 303,104 |
+
+Address-base check performed before trusting any new decompilation:
+`0x43e070` decompiles to the recursive `.tree` loader (reads bytes until
+`'0'`/`'1'`, rejects non-`a–z`, packs each node as 24-bit offset | 7-bit
+child count | bit 31 = word), and `0x4247fe` sits in the guess handler with
+`score += len*len*10`, `+1000` on the first bingo and `+100 * slots` when
+every word is found. Both match `gameplay-notes.md`.
+
 ## 1. File identity
 
 | Field | Value |

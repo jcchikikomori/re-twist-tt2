@@ -34,7 +34,7 @@ ctest --test-dir build --output-on-failure    # unit tests
 
 | Path | Owner / purpose |
 |---|---|
-| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp`. |
+| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp`, `round_crossword.hpp`. |
 | `engine/tests/` | Unit tests, one file per header plus `test_main.cpp` (the in-tree test harness). |
 | `src/main.cpp` | The driver / smoke test for the engine. |
 | `tools/tree_cli.cpp` | Dictionary tool: `decode`, `encode`, `merge`, `diff`, `verify`. Replaces the old `tools/tree-cli.ts`. |

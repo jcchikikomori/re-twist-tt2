@@ -12,6 +12,7 @@
 #include "tt2/scoring.hpp"
 #include "tt2/round_classic.hpp"
 #include "tt2/round_lightning.hpp"
+#include "tt2/round_crossword.hpp"
 
 TEST(sanity) {
     ASSERT_EQ(1 + 1, 2);
