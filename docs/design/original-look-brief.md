@@ -127,3 +127,10 @@
 **Do not carry over**: publisher splash, gray dead bevel chrome, black outlines on small text, Dutch dev placeholder strings, and the ultra-thin 1px white menu rect (use a proper 2px `rgba(255,255,255,.35)` glass frame instead).
 
 *Not analyzed (time): `crosswordscene/background.png`, blitz/trophy scene assets; both follow the same blue-panel system per their identical panel sprite names.*
+
+## 7. Found old assets (orphaned files)
+
+Found some assets from the original game, which is based on the first iteration of the series, and considered old and not being used:
+
+- `imported-assets/images/gamescene/tt_commentary.png`
+- `imported-assets/images/gamescene/tt_gameover.PNG`
