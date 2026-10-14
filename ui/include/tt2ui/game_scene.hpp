@@ -388,12 +388,11 @@ public:
 
     void mouse_move(float x, float y) {
         if (dialog_open()) {
-            if (dialog_mouse_move(dialog_, x, y)) play(SoundId::ButtonRollover);
+            dialog_mouse_move(dialog_, x, y);   // no hover sound (0x48d390)
             return;
         }
         for (auto& b : buttons_) {
             const bool over = b.sprite.visible && b.enabled && b.contains(x, y);
-            if (over && !b.hover) play(SoundId::ButtonRollover);
             b.hover = over;
             if (!over) b.pressed = false;
         }

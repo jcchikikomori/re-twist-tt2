@@ -160,7 +160,6 @@ const std::map<SoundId, std::string> kSoundFiles = {
     {SoundId::LoadingSpring, "sound/loading_tee_sound.ogg"},
     {SoundId::LoadingBounce, "sound/loading_two_sound.ogg"},
     {SoundId::Button, "sound/button.ogg"},
-    {SoundId::ButtonRollover, "sound/button_rollover.ogg"},
     {SoundId::ButtonWordOfTheDay, "sound/button_wordoftheday.ogg"},
     {SoundId::LetterPlace, "sound/letter_place.ogg"},
     {SoundId::LetterClear, "sound/letter_clear.ogg"},
@@ -1089,8 +1088,7 @@ int main(int argc, char** argv) {
                     if (k == SDLK_RETURN || k == SDLK_KP_ENTER) menu_dialog_press("BUTTON_YES");
                     else if (k == SDLK_ESCAPE) menu_dialog_open = false;   // INFERRED: cancel
                 }
-                if (e.type == SDL_MOUSEMOTION && dialog_mouse_move(menu_dialog, e.motion.x, e.motion.y))
-                    assets.play_sound(SoundId::ButtonRollover);
+                if (e.type == SDL_MOUSEMOTION) dialog_mouse_move(menu_dialog, e.motion.x, e.motion.y);
                 if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
                     dialog_mouse_down(menu_dialog, e.button.x, e.button.y);
                 if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)

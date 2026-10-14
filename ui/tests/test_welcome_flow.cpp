@@ -399,9 +399,9 @@ TEST(selection_hover_press_release_fires_action) {
     const float cx = quit->sprite.x + 10, cy = quit->sprite.y + 10;
     menu.mouse_move(cx, cy, rect_only);
     ASSERT_TRUE(quit->hover);
-    ASSERT_EQ(count(host.sounds, SoundId::ButtonRollover), 1);
-    menu.mouse_move(cx + 1, cy, rect_only);         // still hovering: no second rollover
-    ASSERT_EQ(count(host.sounds, SoundId::ButtonRollover), 1);
+    ASSERT_TRUE(host.sounds.empty());               // ROADMAP bug #3: hover is silent (0x48d390)
+    menu.mouse_move(cx + 1, cy, rect_only);
+    ASSERT_TRUE(host.sounds.empty());
     menu.update(0);
     ASSERT_EQ(quit->sprite.frame, 1);
     menu.mouse_down(cx, cy, rect_only);
@@ -431,6 +431,24 @@ TEST(selection_pointer_hot_tracks_clickable_hover) {
     wotd->enabled = false;
     menu.mouse_move(wotd->sprite.x + 5, wotd->sprite.y + 5, rect_only);
     ASSERT_TRUE(!menu.pointer_over_clickable());
+}
+
+// ROADMAP bug #3: no button sets `oversound` in the install XML and the
+// GF2 parser (0x48d390) has no default, so hovering is silent everywhere.
+TEST(menu_hover_plays_no_sound) {
+    RecordingHost host;
+    tt2::CrtRandom rng(1);
+    SelectionScene menu(host, rng);
+    host.sounds.clear();
+    int hovered = 0;
+    for (const auto& b : menu.buttons()) {
+        const float cx = b.sprite.left() + 1, cy = b.sprite.top() + 1;
+        menu.mouse_move(cx, cy, rect_only);
+        if (b.hover) ++hovered;                     // the frame still reacts
+        menu.mouse_move(-100, -100, rect_only);
+    }
+    ASSERT_EQ(hovered, 12);
+    ASSERT_TRUE(host.sounds.empty());
 }
 
 TEST(selection_release_outside_or_masked_does_nothing) {

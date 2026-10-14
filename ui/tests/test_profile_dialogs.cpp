@@ -320,17 +320,17 @@ TEST(mouse_outside_buttons_and_disabled_buttons_do_nothing) {
     f.flow.mouse_up(1, 1);
     ASSERT_TRUE(f.flow.active() == DialogKind::PlayerSelect);
     ASSERT_TRUE(f.sounds.empty());
-    // Hover plays the rollover once.
+    // Hover is silent (no `oversound` in the install XML, 0x48d390).
     auto [x, y] = f.centre("BUTTON_OK");
     f.flow.mouse_move(x, y);
     f.flow.mouse_move(x + 1, y);
-    ASSERT_EQ(f.sounds.size(), std::size_t{1});
-    ASSERT_TRUE(f.sounds[0] == SoundId::ButtonRollover);
+    ASSERT_TRUE(f.sounds.empty());
     // Press, drag off, release: no click.
     f.flow.mouse_down(x, y);
     f.flow.mouse_move(1, 1);
     f.flow.mouse_up(1, 1);
     ASSERT_TRUE(f.flow.active() == DialogKind::PlayerSelect);
+    ASSERT_TRUE(f.sounds.empty());
     // Events with no dialog open are ignored.
     f.flow.close();
     f.flow.mouse_down(x, y);

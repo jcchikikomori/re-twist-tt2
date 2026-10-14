@@ -235,7 +235,6 @@ public:
         if (!open()) return;
         for (auto& b : dialog_.buttons) {
             const bool over = hit(b, x, y);
-            if (over && !b.hover && b.enabled) sound(SoundId::ButtonRollover);
             b.hover = over;
             if (!over) b.pressed = false;
         }

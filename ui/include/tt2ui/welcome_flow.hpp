@@ -31,7 +31,6 @@ enum class SoundId {
     LoadingSpring,      // Sound   SOUND_loading_spring (sound/loading_tee_sound.ogg)
     LoadingBounce,      // Sound   SOUND_loading_bounce (sound/loading_two_sound.ogg)
     Button,             // Sound   SOUND_BUTTON
-    ButtonRollover,     // Sound   SOUND_button_rollover
     ButtonWordOfTheDay, // Sound   SOUND_button_wordoftheday (disabled WOTD click)
     // Game scene (sound/*.ogg, resources.xml section "default").
     LetterPlace,        // SOUND_letter_place
@@ -372,10 +371,12 @@ public:
         return false;
     }
 
+    // Hover only changes the frame: the GF2 button parser (0x48d390) sets a
+    // hover sound only from an `oversound` attribute, which no button in
+    // the install XML has (welcome-flow.md §3).
     void mouse_move(float x, float y, const HitTest& hit) {
         for (auto& b : buttons_) {
             const bool over = b.contains(x, y) && hit(b, x, y);
-            if (over && !b.hover) host_.play_sound(SoundId::ButtonRollover);
             b.hover = over;
             if (!over) b.pressed = false;
         }

@@ -155,16 +155,13 @@ inline bool dialog_hit(const Dialog& d, const MenuButton& b, float x, float y) {
     return b.enabled && b.sprite.visible && b.contains(x - d.left(), y - d.top());
 }
 
-// Returns true when the pointer entered a button (play the rollover).
-inline bool dialog_mouse_move(Dialog& d, float x, float y) {
-    bool entered = false;
+// Hover state only; buttons play no hover sound (welcome-flow.md §3).
+inline void dialog_mouse_move(Dialog& d, float x, float y) {
     for (auto& b : d.buttons) {
         const bool over = dialog_hit(d, b, x, y);
-        if (over && !b.hover) entered = true;
         b.hover = over;
         if (!over) b.pressed = false;
     }
-    return entered;
 }
 inline void dialog_mouse_down(Dialog& d, float x, float y) {
     for (auto& b : d.buttons) b.pressed = dialog_hit(d, b, x, y);

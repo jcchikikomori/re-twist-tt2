@@ -580,7 +580,7 @@ TEST(mouse_buttons_hover_press_and_fire) {
     const float cx = twist->sprite.x + 10, cy = twist->sprite.y + 10;
     s.mouse_move(cx, cy);
     ASSERT_TRUE(twist->hover);
-    ASSERT_TRUE(f.played(SoundId::ButtonRollover));
+    ASSERT_TRUE(!f.played(SoundId::Button));                // hover is silent; only the click sounds
     s.mouse_down(cx, cy);
     ASSERT_TRUE(twist->pressed);
     s.update(0);
@@ -865,7 +865,6 @@ TEST(dialog_buttons_respond_to_the_mouse) {
     s.mouse_move(x, y);
     ASSERT_TRUE(resume->hover);
     ASSERT_TRUE(s.pointer_over_clickable());
-    ASSERT_TRUE(f.played(SoundId::ButtonRollover));
     s.mouse_down(x, y);
     s.update(0);
     ASSERT_EQ(resume->sprite.frame, 2);
