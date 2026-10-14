@@ -140,7 +140,20 @@ All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
 
 - `0x407f40` wires the pause menu. STOP opens `0x408320`: "Exit Game?" / "Are you sure you
   want to leave this game? Your game will be saved for next time." YES saves and leaves.
-- `0x428b60` event `0x206` opens the pause menu; INFERRED to be the window losing focus.
+- `0x428b60` event `0x206` opens `DIALOG_MENU` and touches no sound or stream
+  (`ev_761416f061c3d27fa5dbec9fe2fa719dfc783be3dcaa2821d1000c69b0284d43`); that the event is
+  the window losing focus is INFERRED.
+- **The pause menu leaves the music playing** (CONFIRMED, REA batch A):
+
+  | Fact | Evidence |
+  | --- | --- |
+  | `DialogMenu` ctor `0x407f40` only wires the four buttons (HOW TO PLAY `0x408180`, SETTINGS `0x408250`, STOP `0x408320`, RESUME `0x408450`) | `ev_2a3a8994bcd25b92dbc965652fad45a654776d8ac2639b51fceb5c149c9ca61c` |
+  | `DialogPause` (vtable `0x58eb6c`) overrides show (slot 44, `0x58ec1c`) with `0x409fa0`: `SOUND_PAUSE`, then `0x463f30(stream, 0)` silences the music | `ev_9c6afbad8e1644ab010630304d5872b82c9a608b7d67ba71c56f09e1a0ff50ce`, `ev_2d01cac98c38343f75de21ae5ec2a5584c9027eea792c190a57c3b498a8345e7` |
+  | `DialogMenu` (vtable `0x58e2d4`) slot 44 is `0x40aa30`, which only calls the base show `0x40cba0` + `0x40ccc0` — no stream call | `ev_2f0422e109e808814453698910e79e374d781e3604c08e1dbf14fc920b730cd2`, `ev_949ede650c9f4be84039f4f0ae1f1427babecc03b9a2d15dd0083bb4176a8910` |
+  | The restore `0x40a1f0` is referenced only from `DialogPause` code (`0x409f06`, `0x40a1d9`) | `ev_bd81e5dd7c4a468adbe11af004c45d7d9dd744eea34ac49a0f8e3695566e7898` |
+  | Base show `0x40cba0` plays `SOUND_DIALOG_SHOW` when the dialog's `+0x1d8` flag is set; `0x40ccc0` fades the dialog in over `DIALOG_FADE_TIME`. Which dialogs set the flag is untraced (batch B) | `ev_d7d36e48c0f87c322b1186f9dc675605b267f0e5c54be1422130376ec3ec6534`, `ev_09e7db4e965c6ce1803195520b13466e61363f581b31c460a4dfae899e755586` |
+
+- Buttons never play a hover sound (welcome-flow.md §3, button parser `0x48d390`).
 - Not implemented: HOW TO PLAY / SETTINGS (they show "Not available"), the eight
   letterball sprites of `DIALOG_NEXTROUND`, `DialogPause` (`0x409e50`, key `p`, which
   clashes with typing), and the Pass dialog.
@@ -166,6 +179,7 @@ All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
 | Address | What |
 | --- | --- |
 | `0x423a20` | `TextTwist2Scene` ctor: looks up the components, loads both `.tree` files |
+| `0x43e070` | Recursive `.tree` node reader (letters, `0`/`1`, children); anchor check 2026-10-14 `ev_b0fd200dbf3523b14f18941871fe88b17c0aed2eac8ed5f6991650daf2055e70` |
 | `0x425c50` | Round start: timer / round / score reset, rack pick, `AnagramTable` ctor |
 | `0x426360` | After setup: timer label text, panel pieces fitted to the grid |
 | `0x427680` | Mouse down on the letter rows (place / take back) |

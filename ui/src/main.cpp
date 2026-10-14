@@ -1012,9 +1012,6 @@ int main(int argc, char** argv) {
         gs.discard_save = [&store, player, mode, &save_dir] {
             if (!save_dir.empty()) store.remove_saved_game(player, mode);
         };
-        // INFERRED (0x409fa0 / 0x40a1f0 silence and restore the stream for
-        // DialogPause): the music drops while the pause menu is up.
-        gs.on_pause = [audio](bool paused) { if (audio) Mix_VolumeMusic(paused ? 0 : MIX_MAX_VOLUME / 2); };
         game = std::make_unique<GameScene>(common_tree, full_tree, *players.current(), &highscores, pending_timed,
                                            gs, static_cast<std::int64_t>(SDL_GetTicks()), pending_resume.get());
         if (pending_resume) std::printf("game: resumed round %d\n", pending_resume->round);

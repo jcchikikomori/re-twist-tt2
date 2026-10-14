@@ -223,8 +223,8 @@ public:
         // Saved games (0x427b20 save on leave, 0x461840 delete).
         std::function<void(const tt2::SavedGame&)> save_game;
         std::function<void()> discard_save;
-        // The pause menu is open (true) or closed: the front end lowers the music.
-        std::function<void(bool)> on_pause;
+        // No pause hook: the pause menu leaves the music playing (DialogMenu
+        // show 0x40aa30 has no stream call; game-scene.md §6, REA batch A).
     };
 
     // `resume`: a saved game to continue (0x42a460); nullptr starts round 1.
@@ -756,7 +756,6 @@ private:
         open_dialog(GameDialog::PauseMenu);
     }
     void open_dialog(GameDialog kind) {
-        const bool was_paused = paused();
         dialog_kind_ = kind;
         switch (kind) {
             case GameDialog::PauseMenu: dialog_ = build_pause_menu(); break;
@@ -771,7 +770,6 @@ private:
             case GameDialog::None: dialog_ = Dialog{}; break;
         }
         for (auto& b : buttons_) b.hover = b.pressed = false;
-        if (paused() != was_paused && services_.on_pause) services_.on_pause(paused());
     }
     void close_dialog() { open_dialog(GameDialog::None); }
 

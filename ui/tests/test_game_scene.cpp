@@ -45,7 +45,6 @@ struct Fixture {
     int exits = 0;
     int discards = 0;
     std::vector<tt2::SavedGame> saved;
-    std::vector<bool> pauses;
     std::unique_ptr<GameScene> scene;
 
     explicit Fixture(bool timed, bool with_hs = true, std::int64_t seed = 0) {
@@ -55,7 +54,6 @@ struct Fixture {
         s.on_exit = [this] { ++exits; };
         s.save_game = [this](const tt2::SavedGame& g) { saved.push_back(g); };
         s.discard_save = [this] { ++discards; };
-        s.on_pause = [this](bool p) { pauses.push_back(p); };
         scene = std::make_unique<GameScene>(com, ful, profile, with_hs ? &hs : nullptr, timed, s, seed);
     }
     bool played(SoundId id) const {
@@ -693,21 +691,34 @@ TEST(pause_menu_freezes_the_clock_and_resumes) {
     auto& s = *f.scene;
     s.press("BUTTON_Menu");
     ASSERT_TRUE(s.paused());
-    ASSERT_EQ(f.pauses.size(), std::size_t{1});
-    ASSERT_TRUE(f.pauses.back());
     s.update(30000);
     ASSERT_EQ(s.time_left_ms(), ROUND_MS);                 // nothing moved
     s.type_letter(s.rack()[0]);                            // input goes to the dialog
     ASSERT_TRUE(s.typed().empty());
     s.dialog_press("BUTTON_RESUME");
     ASSERT_TRUE(!s.dialog_open());
-    ASSERT_TRUE(!f.pauses.back());
     s.update(1000);
     ASSERT_EQ(s.time_left_ms(), ROUND_MS - 1000);
     s.focus_lost();                                        // losing focus pauses too
     ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
     s.key_return();                                        // Return = RESUME
     ASSERT_TRUE(!s.dialog_open());
+}
+
+// ROADMAP bug #4: DialogMenu's show (0x40aa30) only runs the base dialog
+// show; the SOUND_PAUSE + music silence (0x409fa0) belongs to DialogPause.
+// Opening and closing the pause menu therefore plays nothing but clicks.
+TEST(pause_menu_plays_only_the_button_click) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    s.update(5000);                                        // let the round-start flips finish
+    f.sounds.clear();
+    s.press("BUTTON_Menu");
+    s.update(500);
+    s.dialog_press("BUTTON_RESUME");
+    s.update(500);
+    ASSERT_TRUE(!f.sounds.empty());
+    for (auto id : f.sounds) ASSERT_TRUE(id == SoundId::Button);
 }
 
 TEST(pause_menu_help_and_settings_are_not_available_yet) {

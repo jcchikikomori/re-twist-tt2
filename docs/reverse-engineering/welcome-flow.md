@@ -203,9 +203,17 @@ Background `images/selectionscene/background.png`. Sprite sheets with
 | `LOGO_BOUNCE` | `logo_bounce.png` 1728×252, 12 frames of 144×252 | 513,43 | ball bounce loop |
 | `LOGO_STATIC` | `logo_static.png` 254×204 | 288,84 | the "TEXT TWIST" wordmark |
 
-All buttons use `clicksound="SOUND_BUTTON"`; hover uses the engine-wide
-`SOUND_button_rollover`. `hitmaskthreshold` is the alpha threshold for
-hit testing against the sprite's pixels (**INFERRED** from the name).
+All buttons use `clicksound="SOUND_BUTTON"`. **Hover plays no sound** (CONFIRMED,
+REA batch A, 2026-10-14):
+
+| Fact | Evidence |
+| --- | --- |
+| The GF2 button parser `0x48d390` reads `clicksound`, `oversound`, `disabledsound`, `soundsection`, `firekey`; a hover sound is set **only** from an `oversound` attribute | `ev_9868528458dbaeab13eb36a04bd7b1af6768b2b2cb5d6673cf84ed1484f9bbf4` |
+| The exe has no `SOUND_button_rollover` / `rollover` string; the sound attribute strings are `offsound`, `onsound`, `oversound`, `disabledsound`, `clicksound`, `sound`, `playsound` | `ev_a8e7c64d6cfc29282762153ff8557396cbf854d18d9494f89d144eed89a23be0`, `ev_3469b5d5e980e801ba86e36175624c28cff71477384e94e7d3df1030d80f5831` |
+| No element of the install XML sets `oversound` (only `clicksound` ×71, `onsound` ×10, `offsound` ×5, `onlysound` ×2, `disabledsound` ×1); `SOUND_button_rollover` is only declared in `resources.xml` | read-only grep of `properties/*.xml` |
+
+So no button in any scene or dialog plays `SOUND_button_rollover`. `hitmaskthreshold` is the
+alpha threshold for hit testing against the sprite's pixels (**INFERRED** from the name).
 
 ### Enter (`0x42d9b0`) and init (`0x42d220`) — CONFIRMED
 
