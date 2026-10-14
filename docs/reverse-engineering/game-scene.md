@@ -82,7 +82,11 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   pearl; frames 12–16 morph it into the square chicklet and are not used by this scene.
 - Move (CONFIRMED, `0x43a4c0`): into a container a ball slides with `ModifierLocationLine`
   in **300 ms** (plus a `ModifierScale`); the twist relayout (`0x43c370`) uses **400 ms**.
-  The easing function (label `0x4513d0`) does not decompile; linear is INFERRED.
+  The easing `0x4513d0` (a label, so it does not decompile) is **smoothstep**
+  `f(t) = (3 − 2t)·t²`. The x87 code loads the constant `3.0` from `0x59b830`
+  (CONFIRMED, `ev_631caed6b8f3ba4084a84f4bd86e615093e5078fc61254fa98e784e7245cecc0`,
+  `ev_395892991af74c77cf8ae3b0eb9abf6d259d408e23d7ed0aee81a9916e4901aa`). Example: at
+  `t = 0.25` the ball has covered `(3 − 0.5)·0.0625 = 0.156` of the way.
 - `0x427680` (mouse): a click on an available ball plays it (`SOUND_letter_place`); a click
   on the **last** played ball takes it back (`SOUND_letter_clear`).
 - Twist: INFERRED as a `std::random_shuffle` of the available balls with the game LCG
@@ -109,18 +113,56 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
 - End of round: `0x428840` (all words) / `0x425420` (time up without a bingo): the missing
   words are revealed (`SOUND_word_pass_reveal`, `ModifierDelay(3000)`); a miss increments
   `+0x1e8` and plays `SOUND_game_lose_life`; the **third** miss marks the game over
-  (`+0x260 = 1`, high-score save `0x428c80`). Every reveal holds **3000 ms**. Give Up asks
-  first (`0x425b60` sets `+0x20c = 4`; `0x426860` case 4 opens the "Give Up?" yes/no).
+  (`+0x260 = 1`, high-score save `0x428c80`). Every reveal holds **3000 ms**.
+- Pass / Give Up (CONFIRMED, REA batch B). The scene has one button spot at (317, 473)
+  shared by NEXT ROUND, `BUTTON_Pass_2`, `BUTTON_Pass` and GIVE UP. The refresh `0x425710`
+  shows exactly one of them outside Word of the Day:
+
+  | State | Visible button |
+  | --- | --- |
+  | qualified (bingo found) | NEXT ROUND |
+  | misses `+0x1e8` = 0 | `BUTTON_Pass_2` |
+  | misses = 1 | `BUTTON_Pass` |
+  | misses = 2 | GIVE UP |
+
+  The dispatcher `0x425b60` sends Pass and Give Up to state 4. State 4 asks "PASS?"
+  (`TEXT_DIALOG_PASS_HEADER` / `TEXT_DIALOG_PASS`) when `misses + 1 < 3`, otherwise "GIVE
+  UP?" (`TEXT_DIALOG_GIVEUP_*`). YES (`0x428610` → `0x4253a0`) calls `0x425420(0)`:
+  misses++, `SOUND_game_lose_life`. With misses < 3 the missing words are revealed
+  (`SOUND_word_pass_reveal`, 3000 ms) and the next round starts (`0x425190`). On the
+  third miss the game ends with **no reveal**: save deleted (`0x461840`), high-score
+  path `0x428c80`. NO (`0x428720`) resumes. Worked example: pass, pass, give up = misses
+  1, 2, 3 → game over on the give up.
+  Evidence: `ev_52333333f7d1d525a504b153b09bd1bfa66307e5ca52024a9d0472e70a683fb5`,
+  `ev_104f9575430ab658e77ee43a6e339523b1acea4ee9872327d379a15d6fb3603f`,
+  `ev_1e2c943eb1fd9e777628f98b61f09d7e3a266dcf9a80b15b9efb2db1895a6c4e`,
+  `ev_e8a263cb4fe7f6b863b5487d9ecacf1cf315903d63832b732ccaa95b0e6200fc`,
+  `ev_f5625215aea38c76cfd0a11f37c1024737f1adef063e566f82fe909c0346064b`.
+- Scene states (`+0x20c`, run by `0x426860`, jump table `0x427058`, CONFIRMED): 1 and 2
+  open `DIALOG_MENU`; 3 is round end (outside WOTD it plays
+  `SOUND_game_next_round_acheived` and opens `DIALOG_NEXTROUND`); 4 is the Pass / Give Up
+  question above; 5 opens `DIALOG_TUTORIAL`, which round start `0x425c50` selects on a
+  player's first game (`ev_48575bcd821545fb8381f5848f6747d5854fdb32bc35c8f13f433c9eb23b69d8`);
+  6 opens `DIALOG_PASSROUND`.
+- `DIALOG_PASSROUND` is Timed only (CONFIRMED, REA batch B2). After the switch, the
+  per-frame path at `0x426fc7` checks the mode against `CLASSIC_TIMED`; when the round's
+  `[+0x1f4]+0x88` flag is clear it calls `0x425420(1)`. That is the time-up miss: reveal
+  for 3000 ms, then `0x428a80` (`mov byte [ecx+0x2f9], 0; mov [ecx+0x20c], 6`) opens
+  "Round Passed". The Untimed Pass uses `0x425420(0)` and goes straight to the next round.
+  Evidence: `ev_1db2070b1f8957586c818109a077def962b1bde2347201f67832bdd159ab78a4`,
+  `ev_145f168ef700c17cdca70da2f3fd7f8f846a5d95bb583403c0af92197781be55`,
+  `ev_2d7452782ce28eaa417c1f96e2e9313a8beeb47f5695f60eeb2ebc9b140df993`,
+  `ev_faa42e184823a6f1cb814bcda1ce22fb7171ed5f5d9f154bb2232d012abcaa66`.
 - After the reveal (CONFIRMED): qualified → `DIALOG_NEXTROUND`; a miss with lives left →
   the next round starts by itself (`0x425190`); game over → `0x427d10` submits the score
   and opens `DIALOG_CONGRATS` when it ranks, else `DIALOG_ENDGAME`. Game over deletes the
   saved game (`0x427cc0`).
-- INFERRED: NEXT ROUND / GIVE UP share one spot and swap on the qualified flag; pressing
-  NEXT ROUND while qualified ends the round early; the clock labels are hidden in Untimed;
-  the GAME OVER sprite fades in over 500 ms and a click returns to the menu; the
-  commentary fades 250 ms in, holds 2 s, fades 250 ms out; popups run one pass at 60 ms per
-  frame. The Pass buttons (`BUTTON_Pass`, `BUTTON_Pass_2`, `+0x20c = 5` on first play) are
-  not implemented yet.
+- NEXT ROUND (CONFIRMED, `0x425b60`) calls `0x428840(3000)`, which ends the round early.
+- INFERRED: the clock labels are hidden in Untimed; the GAME OVER sprite fades in over
+  500 ms and a click returns to the menu; the commentary fades 250 ms in, holds 2 s,
+  fades 250 ms out; popups run one pass at 60 ms per frame.
+- Not implemented yet: the Pass buttons. Our Untimed scene always asks "Give Up?" and
+  ends the game on YES, which is wrong (plan phase 7).
 - High scores: `HighScoreManager::submit(mode, name, score, round)` on game over
   (`SOUND_game_high_score_achieved` when the entry makes the table), saved next to the
   profiles. Progress counters (`TRACKER/SOLVED`, `HARD_SOLVED`, `TWISTS`, rounds per mode)
@@ -133,8 +175,9 @@ All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
 | Dialog | Size | Contents |
 | --- | --- | --- |
 | `DIALOG_MENU` (pause) | 322×390 | `PAUSE_HEADER` "PAUSE MENU" at (163, 19); 181×208 buttons HOW TO PLAY (162, 87), SETTINGS (163, 155), STOP (163, 224), RESUME (163, 290) |
-| `DIALOG_YESNO` | 400×180 min | `HEADER`, `MESSAGE` (line height 30); `0x40b470` moves YES / NO down by the message height and grows the **height** only |
+| `DIALOG_YESNO` | 400×180 min | `HEADER`, `MESSAGE` (`FONT_SETTINGSTEXT`, `width="390"`, `wrapstyle="wordwrap"`, line height 30); `0x40b470` moves YES / NO down by the message height and grows the **height** only |
 | `DIALOG_NEXTROUND` | 380×320 | `IMAGE_BURST` sparkle (frametime 40, `#FFA800`, additive) at (191, 154); "Click to continue to the next round!"; OK at (190, 239) |
+| `DIALOG_PASSROUND` | 380×280 | `TEXT_PASS_ROUND_TITLE` "Round Passed" (191, 16); `TEXT_PASS_ROUND_BODY` (192, 85); OK (189, 199) |
 | `DIALOG_ENDGAME` | 380×260 | "GAME OVER" (190, 14); body (192, 88), line height 38; PLAY AGAIN (271, 173), MENU (109, 173) |
 | `DIALOG_CONGRATS` | 380×320 | sparkle frame 4 at (191, 138); "Congratulations! You earned a new high score!" (193, 107) |
 
@@ -151,12 +194,46 @@ All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
   | `DialogPause` (vtable `0x58eb6c`) overrides show (slot 44, `0x58ec1c`) with `0x409fa0`: `SOUND_PAUSE`, then `0x463f30(stream, 0)` silences the music | `ev_9c6afbad8e1644ab010630304d5872b82c9a608b7d67ba71c56f09e1a0ff50ce`, `ev_2d01cac98c38343f75de21ae5ec2a5584c9027eea792c190a57c3b498a8345e7` |
   | `DialogMenu` (vtable `0x58e2d4`) slot 44 is `0x40aa30`, which only calls the base show `0x40cba0` + `0x40ccc0` — no stream call | `ev_2f0422e109e808814453698910e79e374d781e3604c08e1dbf14fc920b730cd2`, `ev_949ede650c9f4be84039f4f0ae1f1427babecc03b9a2d15dd0083bb4176a8910` |
   | The restore `0x40a1f0` is referenced only from `DialogPause` code (`0x409f06`, `0x40a1d9`) | `ev_bd81e5dd7c4a468adbe11af004c45d7d9dd744eea34ac49a0f8e3695566e7898` |
-  | Base show `0x40cba0` plays `SOUND_DIALOG_SHOW` when the dialog's `+0x1d8` flag is set; `0x40ccc0` fades the dialog in over `DIALOG_FADE_TIME`. Which dialogs set the flag is untraced (batch B) | `ev_d7d36e48c0f87c322b1186f9dc675605b267f0e5c54be1422130376ec3ec6534`, `ev_09e7db4e965c6ce1803195520b13466e61363f581b31c460a4dfae899e755586` |
+  | Base show `0x40cba0` plays `SOUND_DIALOG_SHOW` when the dialog's `+0x1d8` flag is set; `0x40ccc0` fades the dialog in over `DIALOG_FADE_TIME`. Which dialogs set the flag is still untraced | `ev_d7d36e48c0f87c322b1186f9dc675605b267f0e5c54be1422130376ec3ec6534`, `ev_09e7db4e965c6ce1803195520b13466e61363f581b31c460a4dfae899e755586` |
 
 - Buttons never play a hover sound (welcome-flow.md §3, button parser `0x48d390`).
-- Not implemented: HOW TO PLAY / SETTINGS (they show "Not available"), the eight
-  letterball sprites of `DIALOG_NEXTROUND`, `DialogPause` (`0x409e50`, key `p`, which
-  clashes with typing), and the Pass dialog.
+- Label wrapping (CONFIRMED, `0x468ea0`,
+  `ev_249d5e89a1ce5f847e34c5b0aa1043fb9534141758fc4c51af324e447919fb3d`): `wrapstyle` is
+  stored at label `+0x20c` as `autowidth` = 0, `wordwrap` = 1, `truncate` = 2; `alignh` at
+  `+0x208` as `left` = 0, `center` = 1, `right` = 2. So a long yes/no message wraps at
+  390 px; our renderer drawing it on one line is a bug (plan phase 4).
+- Word-wrap rule (CONFIRMED, REA batch B2). setText (`0x4698c0`, Label vtable `0x595df4`
+  slot `+0xb0`) relayouts through `0x469a40`, a tokenizer: `\n`, `\r`, U+2028 and U+2029
+  end the line; space, tab, NBSP, U+2000–U+200B, U+202F, U+205F and U+3000 end a word;
+  `[style=…]` tags switch the style inline. Each finished word goes through `0x46a7b0`.
+  With `wrapstyle` = 1 the word stays on the line when `x + wordWidth ≤ labelWidth`; else,
+  when the line already has text and the word fits an empty line, the line breaks
+  (`0x46a200`) and the word starts at `x = 0`; else the word is **dropped** (its run gets
+  an empty string). The space advance after a word is added only when `x ≠ 0`, so a new
+  line never starts with a space. Worked example at width 390: a line holding 300 px of
+  text takes a 60 px word (`300 + 60 = 360 ≤ 390`) but breaks before a 100 px word
+  (`400 > 390`). Evidence:
+  `ev_9e5e892d09d11f7a2d0cd3888e01526982aad04c610aca57260a98466eb95fc7`,
+  `ev_d519c62875e45b5f845329140c3439dd940ffaa22b74e9eace375be892159568`,
+  `ev_b1d5061f07f9fffbc4895b1a4e76445b1d748023e05b0db173aaba82933f6918`,
+  `ev_1abdcf6ac92d4139a100fd3b55d007eb07be3b8a2732bcd5700be5780a1b16a9`.
+- `DIALOG_NEXTROUND` letterballs (CONFIRMED, `0x409100`,
+  `ev_6a53b49b495b8b239bf5779bcd7e6fa734afd428cc313d95f38117b7752c2c2f`): the balls spell
+  `TEXT_NEXT_ROUND_LETTERBALLS` ("Great Job"). Each non-space character `i` becomes a
+  `LetterBall` on the next sprite slot `"1"`..`"8"`, so GREAT fills the top arc (1–5) and
+  JOB the lower row (6–8). Ball `i` appears after `500 + 200·i` ms; the space still counts,
+  so G = 500 ms, T = 1300 ms, J = 1700 ms, B = 2100 ms. Every ball also bursts 8
+  `IMAGE_PARTICLEBALL` particles: random angle, distance `75 + rand % 50` px, alpha fade
+  over `600 + rand % 90` ms, linear easing. Slot positions:
+
+  | Slot | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | (x, y) | (60, 34) | (124, 3) | (192, −8) | (259, 1) | (321, 34) | (126, 75) | (192, 61) | (257, 74) |
+
+- HOW TO PLAY and SETTINGS are decoded in `help-and-settings.md`.
+- Not implemented: HOW TO PLAY / SETTINGS (they show "Not available"), the
+  `DIALOG_NEXTROUND` letterballs, `DialogPause` (`0x409e50`, key `p`, which clashes with
+  typing), and the Pass flow.
 
 ## 7. Saved games (CONFIRMED)
 
@@ -196,3 +273,13 @@ All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
 | `0x4242a0` / `0x42dc80` | Scene start (load or new game) / "Continue the game?" prompt |
 | `0x429dd0` / `0x42a460` | Save / load the running game |
 | `0x427d10` | Game over: high score, then `DIALOG_CONGRATS` or `DIALOG_ENDGAME` |
+| `0x426860` / `0x427058` | Scene state machine (`+0x20c`) / its jump table |
+| `0x425b60` | Button dispatcher (Menu, NextRound, Pass / GiveUp, Clear, Enter, LastWord, Twist) |
+| `0x425710` | Button refresh: NEXT ROUND / Pass_2 / Pass / GIVE UP |
+| `0x4253a0` / `0x425420` | Pass / Give Up YES / miss path (reveal or game over) |
+| `0x409100` | `DIALOG_NEXTROUND` letterballs and particles |
+| `0x4513d0` | Smoothstep easing `(3 − 2t)·t²` |
+| `0x468ea0` | Label XML parser (`wrapstyle`, `alignh`, `autofitheight`) |
+| `0x468b20` / `0x595df4` | Label ctor / Label vtable |
+| `0x4698c0` / `0x469a40` / `0x46a7b0` | Label setText / layout tokenizer / word flush with the wrap rule |
+| `0x428a80` | Sets state 6 (`DIALOG_PASSROUND`) after a Timed time-up miss |
