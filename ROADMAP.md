@@ -62,6 +62,7 @@ This document describes the current status and the upcoming milestones of this p
 ## Future Goals
 
 1. Widescreen support
-2. User will be able to use custom dictionaries, for fun!
-3. Automatically make a build for Linux using GitHub Actions
-4. Being able to play the game on a Web Browser
+2. Gamepad support (Use SDL2 or better)
+3. User will be able to use custom dictionaries, for fun!
+4. Automatically make a build for Linux using GitHub Actions
+5. Being able to play the game on a Web Browser
