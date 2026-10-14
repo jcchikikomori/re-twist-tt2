@@ -415,7 +415,13 @@ struct Font {
 class Assets {
 public:
     Assets(SDL_Renderer* r, std::string dir) : renderer_(r), dir_(std::move(dir)) {}
-    ~Assets() {
+    ~Assets() { release(); }
+
+    // Frees every texture, sound and song. main() calls it before
+    // Mix_CloseAudio and SDL_DestroyRenderer: the renderer frees its own
+    // textures, so destroying them afterwards (from ~Assets at the end of
+    // main) read freed memory and crashed the Windows Release build.
+    void release() {
         for (auto& [k, img] : images_) {
             if (img.texture) SDL_DestroyTexture(img.texture);
             if (img.surface) SDL_FreeSurface(img.surface);
@@ -424,6 +430,10 @@ public:
             for (SDL_Texture* t : f.layers) if (t) SDL_DestroyTexture(t);
         for (auto& [k, m] : music_) Mix_FreeMusic(m);
         for (auto& [k, c] : chunks_) Mix_FreeChunk(c);
+        images_.clear();
+        fonts_.clear();
+        music_.clear();
+        chunks_.clear();
     }
 
     Image& image(const SheetSpec& spec) {
@@ -1698,6 +1708,7 @@ int main(int argc, char** argv) {
     if (cursor_wait) SDL_FreeCursor(cursor_wait);
     if (cursor_hand) SDL_FreeCursor(cursor_hand);
     if (cursor_arrow) SDL_FreeCursor(cursor_arrow);
+    assets.release();   // before the mixer and the renderer it came from
     if (audio) Mix_CloseAudio();
     for (DialogLayer* l : {&game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
                            &menu_credits_layer, &profile_layer})
