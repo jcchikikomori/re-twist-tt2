@@ -873,6 +873,18 @@ TEST(pause_menu_settings_cancel_and_escape_change_nothing) {
     ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
 }
 
+TEST(settings_window_mode_change_reaches_the_open_dialog) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    s.window_mode_changed(true);                            // no dialog: harmless
+    s.press("BUTTON_Menu");
+    s.dialog_press("BUTTON_SETTINGS");
+    s.window_mode_changed(true);
+    ASSERT_TRUE(s.settings_dialog()->values().fullscreen);
+    s.dialog_press("BUTTON_OK");
+    ASSERT_TRUE(f.settings.fullscreen);                     // OK does not flip it back
+}
+
 TEST(settings_slider_drag_in_the_scene_applies_live) {
     Fixture f(false);
     auto& s = *f.scene;

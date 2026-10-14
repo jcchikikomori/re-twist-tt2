@@ -63,6 +63,14 @@ struct SettingsSlider {
     int knob_frame() const { return held ? 2 : (hover ? 1 : 0); }
 };
 
+// Alt+Enter flips the window mode. Deliberate deviation: the original has
+// no such shortcut; its key translator 0x484770 only sends Esc to windowed
+// mode, and WM_SIZE / SIZE_MAXIMIZED (0x484036) to fullscreen
+// (help-and-settings.md §3.4). A held key's auto-repeat does not toggle.
+inline bool is_fullscreen_shortcut(bool alt_down, bool enter_key, bool repeat) {
+    return alt_down && enter_key && !repeat;
+}
+
 // What DIALOG_SETTINGS needs from the application.
 struct SettingsHost {
     std::function<tt2::GameSettings()> current;              // the live settings
@@ -151,6 +159,14 @@ public:
         }
         if (name == "BUTTON_INFO") return Result::Info;
         return Result::None;
+    }
+
+    // The window mode changed outside the dialog (Alt+Enter): show it, and
+    // keep it on CANCEL and OK. Silent, unlike a click on the switch.
+    void sync_fullscreen(bool on) {
+        saved_.fullscreen = on;
+        values_.fullscreen = on;
+        refresh_switches();
     }
 
     // Slider changes, as the slider callbacks 0x40c5c0 / 0x40c5f0 see them.

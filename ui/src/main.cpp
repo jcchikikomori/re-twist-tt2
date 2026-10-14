@@ -926,7 +926,7 @@ int main(int argc, char** argv) {
     std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
                                // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP, '>' NEXT ROUND,
                                // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages,
-                               // '#' SETTINGS, '6'..'8' max length, '!' fullscreen switch
+                               // '#' SETTINGS, '6'..'8' max length, '!' fullscreen switch, '^' Alt+Enter
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_dir = argv[++i];
@@ -1104,6 +1104,15 @@ int main(int argc, char** argv) {
         }
         if (r == SettingsDialog::Result::Ok || r == SettingsDialog::Result::Cancel) menu_settings.reset();
     };
+    // Alt+Enter (deviation, see is_fullscreen_shortcut): flip the window
+    // mode, save settings.txt, and keep an open Settings dialog in step.
+    auto toggle_fullscreen = [&] {
+        tt2::GameSettings g = settings;
+        g.fullscreen = !g.fullscreen;
+        settings_host.commit(g);
+        if (menu_settings) menu_settings->sync_fullscreen(g.fullscreen);
+        if (game) game->window_mode_changed(g.fullscreen);
+    };
     // "Continue the game?" (CTEXT_START_SAVEGAME, 0x42dc80) on the menu.
     Dialog menu_dialog;
     bool menu_dialog_open = false;
@@ -1195,6 +1204,13 @@ int main(int argc, char** argv) {
                 if (game) game->leave();   // 0x427b20: closing the window saves a running round
             }
             if (game && e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) game->focus_lost();
+            // Before any routing, so Alt+Enter (and its auto-repeat) never
+            // submits a word or presses OK.
+            if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_ALT) &&
+                (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER)) {
+                if (is_fullscreen_shortcut(true, true, e.key.repeat != 0)) toggle_fullscreen();
+                continue;
+            }
             if (profile.open()) {
                 // A dialog is modal: it eats the input.
                 if (e.type == SDL_TEXTINPUT) profile.text_input(e.text.text);
@@ -1332,7 +1348,7 @@ int main(int argc, char** argv) {
             }
         }
         // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL;
-        // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '|' OK.
+        // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '|' OK, '^' Alt+Enter.
         if (!game && auto_play.empty() && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
             flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
@@ -1342,6 +1358,7 @@ int main(int argc, char** argv) {
                 auto_type.erase(0, 1);
                 if (c == '?') services.menu_action("BUTTON_HOWTOPLAY");
                 else if (c == '#') services.menu_action("BUTTON_SETTINGS");
+                else if (c == '^') toggle_fullscreen();
                 else if (menu_settings && c == '~') menu_settings_result(menu_settings->press("BUTTON_CANCEL"));
                 else if (menu_settings && c == '|') menu_settings_result(menu_settings->press("BUTTON_OK"));
                 else if (menu_settings && c == '!') menu_settings->press("SWITCH_FULLSCREEN");
@@ -1366,6 +1383,7 @@ int main(int argc, char** argv) {
                 else if (c == '$') game->dialog_press("BUTTON_STOP");   // pause menu STOP
                 else if (c == '?') game->dialog_press("BUTTON_HOWTOPLAY");   // pause menu HOW TO PLAY
                 else if (c == '#') game->dialog_press("BUTTON_SETTINGS");    // pause menu SETTINGS
+                else if (c == '^') toggle_fullscreen();                      // Alt+Enter
                 else if (c == '!') game->dialog_press("SWITCH_FULLSCREEN");  // settings: fullscreen
                 else if (c >= '6' && c <= '8') game->dialog_press(SettingsDialog::length_switch(c - '0'));
                 else if (c == '<') game->dialog_press("BUTTON_PREV");       // help: previous page

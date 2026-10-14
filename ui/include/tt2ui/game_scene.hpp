@@ -329,6 +329,8 @@ public:
     Dialog& dialog() { return settings_ ? settings_->dialog() : dialog_; }
     // DIALOG_SETTINGS while dialog_kind() == Settings, else nullptr.
     const SettingsDialog* settings_dialog() const { return settings_ ? &*settings_ : nullptr; }
+    // Alt+Enter changed the window mode: an open Settings dialog follows it.
+    void window_mode_changed(bool fullscreen) { if (settings_) settings_->sync_fullscreen(fullscreen); }
     // The clock and the animations stand still while one of these is up.
     bool paused() const {
         return dialog_kind_ == GameDialog::PauseMenu || dialog_kind_ == GameDialog::ConfirmExit ||

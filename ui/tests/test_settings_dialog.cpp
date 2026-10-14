@@ -184,3 +184,24 @@ TEST(settings_ok_keeps_the_new_values) {
     ASSERT_TRUE(d.press("BUTTON_INFO") == SettingsDialog::Result::None);  // disabled
     ASSERT_TRUE(d.press("BUTTON_NOPE") == SettingsDialog::Result::None);
 }
+
+TEST(settings_alt_enter_is_the_only_fullscreen_shortcut) {
+    ASSERT_TRUE(is_fullscreen_shortcut(true, true, false));
+    ASSERT_TRUE(!is_fullscreen_shortcut(true, true, true));                // auto-repeat
+    ASSERT_TRUE(!is_fullscreen_shortcut(false, true, false));              // plain Enter submits
+    ASSERT_TRUE(!is_fullscreen_shortcut(true, false, false));              // Alt + another key
+}
+
+TEST(settings_sync_fullscreen_survives_cancel_and_ok) {
+    Rig r;
+    SettingsDialog d(saved(), 6, true, r.services());
+    d.sync_fullscreen(true);                                               // Alt+Enter while open
+    ASSERT_EQ(frame(d, "SWITCH_FULLSCREEN"), SWITCH_ON_ROW_OFFSET);
+    ASSERT_TRUE(r.sounds.empty());                                         // silent
+    d.press("BUTTON_CANCEL");
+    ASSERT_TRUE(d.values().fullscreen);                                    // not reverted
+    SettingsDialog d2(saved(), 6, true, r.services());
+    d2.sync_fullscreen(true);
+    d2.press("BUTTON_OK");
+    ASSERT_TRUE(d2.values().fullscreen);                                   // OK keeps it
+}

@@ -139,6 +139,34 @@ Evidence: `ev_6ff35b71b9d47934d1bf06afbd433db0f2ae0744310c4311589f3d5027cae6d4`,
 `ev_2cec752d01ce146862067d7d2593a01aaf38787e06382d6b083a7a72d5a83fcb`,
 `ev_a1ebda5e7e861433e01015e008026b69222125c68bf8c3122f8002077ad199be`.
 
+### 3.4 Window mode shortcuts (REA batch D, 2026-10-14)
+
+`GF2::GameWindowWin32` (ctor `0x4834c0`) registers the window procedure `0x483ef0`; byte `+0x3d` of the
+window object is the "fullscreen supported" flag. The fullscreen setter is the window's vtable slot
+`+0x34`, and only three paths reach it:
+
+| Trigger | Effect | Where |
+| --- | --- | --- |
+| Settings OK | the FULLSCREEN switch value | `0x40c620` |
+| Esc key down (`WM_KEYDOWN` or `WM_SYSKEYDOWN`) | `+0x34(0)`: windowed; the key is still delivered to the game | key translator `0x484770`, engine key `0x10` (table `0x5d3228`: `0x1b`) |
+| Maximize (`WM_SIZE`, `SIZE_MAXIMIZED`) | `+0x34(1)`: fullscreen | `0x484036` |
+
+- **There is no Alt+Enter.** The translator's only modifier check is Ctrl+P (`0x5d3114` = `VK_CONTROL`,
+  message `0x601`). The window procedure handles no `WM_SYSKEYDOWN` / `WM_SYSCOMMAND` of its own. The
+  renderer loads `d3d9.dll` / `ddraw.dll`, neither of which adds Alt+Enter. A scan of the whole
+  executable found no other caller of the setter through `[0x5fdea0]`.
+- **Port deviation:** Alt+Enter toggles the window mode and saves it to `settings.txt` (the user's choice
+  on 2026-10-14). The original Esc and maximize shortcuts are not ported: Esc keeps opening the pause menu.
+
+Evidence: `ev_3aba74211b0566c537bff5aa1bb483e505f8ed72805ff11b5181f2b0d452a913` (window ctor),
+`ev_f68b85a9df92a2795e664a20cce08b6e0f3f81cdf40322e8ce67bac27dfcd071` (WndProc entry bytes; the body was read
+with `objdump` on the same SHA-256 file, since Ghidra defines no function there),
+`ev_aac3f1f9207e7e38b348c1884eca4252fdb4b7a66d8cc96e13cb2ca53989600a` (key translator),
+`ev_59931fce2ea19ee97906b5e0729427b3e0ea3f2ac2bbbcc4f328666869e4b501` (key table),
+`ev_dfc3c46687e02c004ceff56f48a91351a88a5b1777d750116935464454b09973` (`VK_CONTROL`),
+`ev_7921652f82cfa97b132442994717c96b3aac08bb27c04d86fcd1c3bcafe35475` (Settings OK),
+`ev_f84f3f119c006d479b543c7b7c3cd7cf47db99503d55f2c8eb29446277279d7e` (`GetKeyState` callers).
+
 ## 4. Dialog keys (bounded negative, REA batch B2)
 
 Dialogs take **no keyboard shortcuts**. The input listener of `DialogSettings`
