@@ -571,7 +571,7 @@ public:
         if (dialog_open()) return dialog_pointer_hot(dialog_);
         for (const auto& b : buttons_)
             if (b.hover && b.enabled && b.sprite.visible) return true;
-        return false;
+        return ball_hot_;
     }
 
     void mouse_move(float x, float y) {
@@ -585,6 +585,10 @@ public:
             b.hover = over;
             if (!over) b.pressed = false;
         }
+        // 0x427a60: the pointer over any letter ball (either row, any
+        // phase) only switches to the hand cursor; the ball itself does
+        // not change.
+        ball_hot_ = ball_at(x, y) >= 0;
     }
     void mouse_down(float x, float y) {
         if (settings_) { settings_->mouse_down(x, y); return; }
@@ -611,14 +615,23 @@ public:
         // 0x427680: a click on an available ball plays it; a click on the
         // last played ball takes it back.
         if (phase_ == GamePhase::Playing) {
-            for (std::size_t i = 0; i < balls_.size(); ++i) {
-                const auto& b = balls_[i];
-                if (std::fabs(x - b.target_x) <= BALL_HALF && std::fabs(y - b.target_y) <= BALL_HALF) {
-                    if (!b.played) { place(i); return; }
-                    if (is_last_played(i)) { unplace(i); return; }
-                }
+            const int i = ball_at(x, y);
+            if (i >= 0) {
+                const auto k = static_cast<std::size_t>(i);
+                if (!balls_[k].played) { place(k); return; }
+                if (is_last_played(k)) { unplace(k); return; }
             }
         }
+    }
+
+    // The ball under (x, y), or -1: the 69x69 cell it is heading to.
+    int ball_at(float x, float y) const {
+        for (std::size_t i = 0; i < balls_.size(); ++i) {
+            const auto& b = balls_[i];
+            if (std::fabs(x - b.target_x) <= BALL_HALF && std::fabs(y - b.target_y) <= BALL_HALF)
+                return static_cast<int>(i);
+        }
+        return -1;
     }
 
     // A scene button (also used by the keyboard shortcuts and tests).
@@ -1015,6 +1028,7 @@ private:
             case GameDialog::None: dialog_ = Dialog{}; break;
         }
         for (auto& b : buttons_) b.hover = b.pressed = false;
+        ball_hot_ = false;
     }
     void close_dialog() { open_dialog(GameDialog::None); }
 
@@ -1213,6 +1227,7 @@ private:
     std::optional<SettingsDialog> settings_; // DIALOG_SETTINGS while open
     std::vector<LetterBall> dialog_balls_;   // DIALOG_NEXTROUND letterballs
     std::vector<MenuButton> buttons_;
+    bool ball_hot_ = false;   // pointer over a letter ball (hand cursor)
     SpriteState popup_;
     std::optional<PopupKind> popup_kind_;    // set while a popup is up (+0x348)
     std::deque<PopupKind> popup_waiting_;    // 0x428e20 queue (+0x334)

@@ -137,6 +137,25 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   ENTER *button* (`0x425b60`) calls `0x424730` directly, so with nothing typed it does nothing.
 - `0x427680` (mouse): a click on an available ball plays it (`SOUND_letter_place`); a click
   on the **last** played ball takes it back (`SOUND_letter_clear`).
+- `0x427a60` (mouse move, CONFIRMED): the scene's mouse interface (vtable `0x590a50`: key
+  `0x427560`, move `0x427a60`, down `0x427680`) hit-tests every `LetterBall` in the
+  `GFVector<LetterBall*>` that `0x4396e0` builds (`+0x10` items, `+0x14` count; the
+  `+0x4c` hit test), in either row and with no phase check, then the found words
+  (`0x433500(0)`). On a hit it only sets the hot flag `+0x90` and bumps the hand-cursor count
+  at `0x5fdf00`. **Balls have no hover frame, scale or sound**; the pointer becomes the hand
+  and nothing else changes (`ev_3fba3d2df5a1d4006777eddf2eb5d182fe27690c37b83af5b5b8c39317e7c467`,
+  `ev_44cb03845ebe64efc330368a5848148a7b2810fc4eeb8f8f76df83569b8d5538`).
+- Found-word lookup (CONFIRMED, `0x433500`, not built yet): for a found slot (`+0x1b0 != 0`)
+  under the pointer, `0x433500(1)` (a click, from `0x427680`) copies the slot word (`+0x19c`)
+  and opens `http://dictionary.reference.com/browse/` (`0x58feec`) plus the word with
+  `ShellExecuteA("open")`; `0x433500(0)` (a move) only reports the hit, so found words get
+  the hand cursor too (`ev_b15a2994b5caf2ff82d32d9b73a95b311a65fd6b423ce6e08abcd9136ac20cd3`).
+  This is what popup 10 ("click a found word to look it up") points at.
+- Score label (CONFIRMED, `0x424730`): after a correct word the score `+0x308` goes through
+  `0x449c90` (`sprintf("%d")`) straight into `LABEL_Score` (`+0x23c`, cached by `0x423a20`)
+  via its set-text slot `+0xc4`. There is **no count-up**: the label jumps to the new total
+  (`ev_e7f08e2c9eafb9f3ee109e9c87349a34776e6be1dafadff3ee385925c698ea1a`,
+  `ev_488899f05a1dfe7dbf4db291b05209127fbc1f4dfe54b84d557d940a73f9db53`).
 - Twist: INFERRED as a `std::random_shuffle` of the available balls with the game LCG
   (`0x43d950`); counted in `TRACKER/TWISTS`.
 

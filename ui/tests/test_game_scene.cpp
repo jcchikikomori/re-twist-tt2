@@ -403,6 +403,24 @@ TEST(clear_lastword_and_twist_buttons) {
     ASSERT_EQ(f.profile.twists, twists + 2);
 }
 
+// 0x424730 -> 0x449c90: the score label is set with sprintf("%d") right
+// after the score changes; there is no count-up, so the text matches the
+// new total before any time passes.
+TEST(score_label_jumps_to_the_new_total) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    ASSERT_EQ(s.score_text(), std::string("0"));
+    f.type("car");
+    s.key_return();
+    ASSERT_EQ(s.score_text(), std::string("90"));          // no update() needed
+    s.update(16);
+    ASSERT_EQ(s.score_text(), std::string("90"));          // and it stays put
+    s.key_return();                                        // recall "car": no score change
+    s.key_return();                                        // a repeat word scores nothing
+    ASSERT_EQ(s.score(), 90);
+    ASSERT_EQ(s.score_text(), std::string("90"));
+}
+
 // 0x427560: Return on an empty played row is LAST WORD, so the player
 // can submit a word, press Return again to get it back, and extend it
 // ("scalar" -> "scalars" in the original; "car" -> "cart" here).
@@ -1085,6 +1103,43 @@ TEST(pointer_hot_tracks_button_hover) {
     ASSERT_TRUE(s.pointer_over_clickable());
     s.mouse_move(0, 0);
     ASSERT_TRUE(!s.pointer_over_clickable());
+}
+
+// 0x427a60: over any letter ball the cursor turns to the hand, and that is
+// all; the ball keeps its frame, scale and row, and no sound plays.
+TEST(pointer_hot_over_letter_balls_without_changing_them) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    const auto& b0 = s.balls()[0];
+    const int frame = b0.frame;
+    f.sounds.clear();
+    s.mouse_move(b0.target_x, b0.target_y);
+    ASSERT_TRUE(s.pointer_over_clickable());
+    ASSERT_EQ(b0.frame, frame);
+    ASSERT_TRUE(!b0.played);
+    ASSERT_TRUE(f.sounds.empty());
+    s.mouse_up(b0.target_x, b0.target_y);                 // play it: the played row is hot too
+    ASSERT_TRUE(b0.played);
+    s.mouse_move(b0.target_x, b0.target_y);
+    ASSERT_TRUE(s.pointer_over_clickable());
+    s.mouse_move(1, 1);                                    // empty space
+    ASSERT_TRUE(!s.pointer_over_clickable());
+}
+
+TEST(ball_hover_clears_when_a_dialog_opens) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    const auto& b0 = s.balls()[0];
+    s.mouse_move(b0.target_x, b0.target_y);
+    ASSERT_TRUE(s.pointer_over_clickable());
+    s.press("BUTTON_Menu");                                // pause menu
+    ASSERT_TRUE(s.dialog_open());
+    s.dialog_press("BUTTON_RESUME");
+    ASSERT_TRUE(!s.dialog_open());
+    ASSERT_TRUE(!s.pointer_over_clickable());              // stale hover dropped
+    ASSERT_EQ(s.ball_at(1, 1), -1);
+    ASSERT_EQ(s.ball_at(b0.target_x, b0.target_y), 0);
+    ASSERT_EQ(s.ball_at(b0.target_x, b0.target_y - BALL_HALF - 1), -1);   // just above the cell
 }
 
 // ---- ball animation (0x43a4c0 / 0x43a820 / 0x43c370) -----------------------
