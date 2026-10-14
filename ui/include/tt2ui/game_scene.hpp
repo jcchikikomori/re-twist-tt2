@@ -358,10 +358,24 @@ enum class GamePhase {
 // Passed: PASS or GIVE UP answered YES (0x4253a0 -> 0x425420(0)).
 enum class RoundEnd { None, AllWords, TimeUpQualified, TimeUpMissed, NextRound, Passed };
 
+// 0x433500: a clicked word goes to this page (string at 0x58feec) with the
+// word appended as is; the slot words are already lowercase a-z.
+inline constexpr const char* DEFINITION_URL_PREFIX = "http://dictionary.reference.com/browse/";
+inline std::string definition_url(const std::string& word) { return DEFINITION_URL_PREFIX + word; }
+
 struct SlotView {
     std::string word;
     bool found = false;
     bool revealed = false;   // shown at the end of a lost round
+    // The original tests the length of the shown word (+0x1b0, the size of
+    // the std::string at +0x19c), so guessed and revealed words both count.
+    bool shown() const { return found || revealed; }
+    // 0x431740: a hit on any of the word's 20x20 tiles.
+    bool contains(float px, float py) const {
+        return px >= static_cast<float>(x) && py >= static_cast<float>(y) &&
+               px < static_cast<float>(x + static_cast<int>(word.size()) * ANAGRAM_TILE_W) &&
+               py < static_cast<float>(y + ANAGRAM_TILE_H);
+    }
     int x = 0, y = 0;        // screen position of the first tile
     int flip_ms = -1;        // time into the word-appear flip; -1 = not started
     bool flip_together = false;   // restored words flip every letter at once (0x433090)
@@ -390,6 +404,9 @@ public:
         LineBreaker wrap_text;
         // DIALOG_SETTINGS: live volumes, OK commit, fullscreen support.
         SettingsHost settings;
+        // 0x433500: clicking a shown word opens its definition in the
+        // browser (ShellExecuteA "open"); the front end owns the browser.
+        std::function<void(const std::string&)> open_url;
         // No pause hook: the pause menu leaves the music playing (DialogMenu
         // show 0x40aa30 has no stream call; game-scene.md §6, REA batch A).
     };
@@ -571,7 +588,7 @@ public:
         if (dialog_open()) return dialog_pointer_hot(dialog_);
         for (const auto& b : buttons_)
             if (b.hover && b.enabled && b.sprite.visible) return true;
-        return ball_hot_;
+        return ball_hot_ || word_hot_;
     }
 
     void mouse_move(float x, float y) {
@@ -589,6 +606,7 @@ public:
         // phase) only switches to the hand cursor; the ball itself does
         // not change.
         ball_hot_ = ball_at(x, y) >= 0;
+        word_hot_ = shown_slot_at(x, y) >= 0;   // 0x433500(0): hover only reports the hit
     }
     void mouse_down(float x, float y) {
         if (settings_) { settings_->mouse_down(x, y); return; }
@@ -612,6 +630,14 @@ public:
                 return;
             }
         }
+        // 0x427680 asks 0x433500(1) first: a click on a shown word looks
+        // it up (the original acts on mouse down; the port's grid and balls
+        // both act on release).
+        const int w = shown_slot_at(x, y);
+        if (w >= 0) {
+            if (services_.open_url) services_.open_url(definition_url(slots_[static_cast<std::size_t>(w)].word));
+            return;
+        }
         // 0x427680: a click on an available ball plays it; a click on the
         // last played ball takes it back.
         if (phase_ == GamePhase::Playing) {
@@ -622,6 +648,13 @@ public:
                 if (is_last_played(k)) { unplace(k); return; }
             }
         }
+    }
+
+    // The slot under (x, y) that shows a word, or -1 (0x433500 / 0x431740).
+    int shown_slot_at(float x, float y) const {
+        for (std::size_t i = 0; i < slots_.size(); ++i)
+            if (slots_[i].shown() && slots_[i].contains(x, y)) return static_cast<int>(i);
+        return -1;
     }
 
     // The ball under (x, y), or -1: the 69x69 cell it is heading to.
@@ -1028,7 +1061,7 @@ private:
             case GameDialog::None: dialog_ = Dialog{}; break;
         }
         for (auto& b : buttons_) b.hover = b.pressed = false;
-        ball_hot_ = false;
+        ball_hot_ = word_hot_ = false;
     }
     void close_dialog() { open_dialog(GameDialog::None); }
 
@@ -1228,6 +1261,7 @@ private:
     std::vector<LetterBall> dialog_balls_;   // DIALOG_NEXTROUND letterballs
     std::vector<MenuButton> buttons_;
     bool ball_hot_ = false;   // pointer over a letter ball (hand cursor)
+    bool word_hot_ = false;   // pointer over a shown word (hand cursor)
     SpriteState popup_;
     std::optional<PopupKind> popup_kind_;    // set while a popup is up (+0x348)
     std::deque<PopupKind> popup_waiting_;    // 0x428e20 queue (+0x334)

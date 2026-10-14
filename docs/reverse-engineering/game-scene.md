@@ -145,12 +145,20 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   at `0x5fdf00`. **Balls have no hover frame, scale or sound**; the pointer becomes the hand
   and nothing else changes (`ev_3fba3d2df5a1d4006777eddf2eb5d182fe27690c37b83af5b5b8c39317e7c467`,
   `ev_44cb03845ebe64efc330368a5848148a7b2810fc4eeb8f8f76df83569b8d5538`).
-- Found-word lookup (CONFIRMED, `0x433500`, not built yet): for a found slot (`+0x1b0 != 0`)
-  under the pointer, `0x433500(1)` (a click, from `0x427680`) copies the slot word (`+0x19c`)
+- Found-word lookup (CONFIRMED, `0x433500`): for a slot that shows a word under the pointer, `0x433500(1)` (a click, from `0x427680`) copies the slot word (`+0x19c`)
   and opens `http://dictionary.reference.com/browse/` (`0x58feec`) plus the word with
   `ShellExecuteA("open")`; `0x433500(0)` (a move) only reports the hit, so found words get
   the hand cursor too (`ev_b15a2994b5caf2ff82d32d9b73a95b311a65fd6b423ce6e08abcd9136ac20cd3`).
-  This is what popup 10 ("click a found word to look it up") points at.
+  This is what popup 10 ("click a found word to look it up") points at. `+0x1b0` is the length
+  of the slot's word string (`+0x19c` + `0x14`, MSVC `std::string`); both fill paths, the
+  guess `0x432b20` and the round-end reveal `0x4333a0`, write it through `0x431880` only
+  when it is 0, so **revealed words are links too** (`ev_0610cba93e93f292786cc731a1077352610db5abdd9fe19a15c1c791b98ce2e0`,
+  `ev_a82e114324b902b512e6fa7a54c0c77159385b31d1ed2095242830e7c01b0132`). The hit test
+  `0x431740` asks each of the slot's tile sprites (`+0x190` items, `+0x194` count), so the
+  link is exactly the word's 20×20 tiles (`ev_1ad1091b984c1710a0261de8a812dcfec1fcc42275c16d332e45481f3cbfb93d`).
+  Port: `GameScene::shown_slot_at()` and `Services::open_url` (`SDL_OpenURL`; a headless run
+  only logs the URL). The port acts on mouse release, like its balls; the original acts on
+  press.
 - Score label (CONFIRMED, `0x424730`): after a correct word the score `+0x308` goes through
   `0x449c90` (`sprintf("%d")`) straight into `LABEL_Score` (`+0x23c`, cached by `0x423a20`)
   via its set-text slot `+0xc4`. There is **no count-up**: the label jumps to the new total

@@ -1218,6 +1218,16 @@ int main(int argc, char** argv) {
         GameScene::Services gs;
         gs.play_sound = [&](SoundId id) { assets.play_sound(id); };
         gs.on_profile_change = pservices.on_change;
+        gs.open_url = [](const std::string& url) {
+            // Headless runs (SDL_VIDEODRIVER=dummy) only log: no browser
+            // should pop up from a smoke test.
+            const char* driver = SDL_GetCurrentVideoDriver();
+            const bool headless = driver && !std::strcmp(driver, "dummy");
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+            if (!headless && SDL_OpenURL(url.c_str()) == 0) return;
+#endif
+            std::printf("game: look up %s\n", url.c_str());
+        };
         gs.wrap_text = wrap_message;
         gs.settings = settings_host;
         gs.on_exit = [&] { pending_exit = true; game_fade_out = GAME_FADE_HALF_MS; };

@@ -43,6 +43,7 @@ struct Fixture {
     tt2::Random hs_rng{1};
     tt2::HighScoreManager hs{names, hs_rng};
     std::vector<SoundId> sounds;
+    std::vector<std::string> urls;
     int saves = 0;
     int exits = 0;
     int discards = 0;
@@ -59,6 +60,7 @@ struct Fixture {
         s.on_exit = [this] { ++exits; };
         s.save_game = [this](const tt2::SavedGame& g) { saved.push_back(g); };
         s.discard_save = [this] { ++discards; };
+        s.open_url = [this](const std::string& u) { urls.push_back(u); };
         s.settings.current = [this] { return settings; };
         s.settings.apply_sound_volume = [this](float v) { fx_applied.push_back(v); };
         s.settings.apply_music_volume = [this](float v) { music_applied.push_back(v); };
@@ -1124,6 +1126,66 @@ TEST(pointer_hot_over_letter_balls_without_changing_them) {
     ASSERT_TRUE(s.pointer_over_clickable());
     s.mouse_move(1, 1);                                    // empty space
     ASSERT_TRUE(!s.pointer_over_clickable());
+}
+
+// 0x433500: a shown word under the pointer gets the hand cursor, and a
+// click opens http://dictionary.reference.com/browse/<word> (0x58feec).
+static const SlotView* slot_with(const GameScene& s, bool (*pick)(const SlotView&)) {
+    for (const auto& v : s.slots()) if (pick(v)) return &v;
+    return nullptr;
+}
+
+TEST(clicking_a_found_word_opens_its_definition) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type("car");
+    s.key_return();
+    const SlotView* car = slot_with(s, [](const SlotView& v) { return v.found; });
+    ASSERT_TRUE(car != nullptr);
+    ASSERT_EQ(car->word, std::string("car"));
+    const float lx = car->x + ANAGRAM_TILE_W * 2.5f;       // the last tile, 'r'
+    const float ly = car->y + ANAGRAM_TILE_H * 0.5f;
+    s.mouse_move(lx, ly);
+    ASSERT_TRUE(s.pointer_over_clickable());
+    f.sounds.clear();
+    s.mouse_up(lx, ly);
+    ASSERT_EQ(f.urls.size(), std::size_t{1});
+    ASSERT_EQ(f.urls[0], std::string("http://dictionary.reference.com/browse/car"));
+    ASSERT_TRUE(s.typed().empty());                        // no ball moved
+    ASSERT_TRUE(f.sounds.empty());                         // and no sound
+}
+
+TEST(hidden_words_and_gaps_open_nothing) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type("car");
+    s.key_return();
+    const SlotView* hidden = slot_with(s, [](const SlotView& v) { return !v.shown(); });
+    ASSERT_TRUE(hidden != nullptr);
+    const float hx = hidden->x + ANAGRAM_TILE_W * 0.5f, hy = hidden->y + ANAGRAM_TILE_H * 0.5f;
+    s.mouse_move(hx, hy);
+    ASSERT_TRUE(!s.pointer_over_clickable());              // an unguessed word is not a link
+    s.mouse_up(hx, hy);
+    const SlotView* car = slot_with(s, [](const SlotView& v) { return v.found; });
+    const float right = static_cast<float>(car->x + 3 * ANAGRAM_TILE_W);   // one past 'r'
+    s.mouse_up(right, car->y + 5.0f);
+    s.mouse_up(car->x + 5.0f, car->y + ANAGRAM_TILE_H);   // just below the tiles
+    ASSERT_TRUE(f.urls.empty());
+}
+
+TEST(revealed_words_are_links_too) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type(s.rack());
+    s.key_return();
+    s.press("BUTTON_NextRound");                           // reveal the missed words
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    const SlotView* missed = slot_with(s, [](const SlotView& v) { return v.revealed; });
+    ASSERT_TRUE(missed != nullptr);
+    const std::string word = missed->word;
+    s.mouse_up(missed->x + 5.0f, missed->y + 5.0f);
+    ASSERT_EQ(f.urls.size(), std::size_t{1});
+    ASSERT_EQ(f.urls[0], definition_url(word));
 }
 
 TEST(ball_hover_clears_when_a_dialog_opens) {
