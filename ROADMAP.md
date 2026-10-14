@@ -17,8 +17,18 @@ This document describes the current status and the upcoming milestones of this p
 1. Successful initial boot
 2. The boot sequence must be 1:1 with the original game
 3. Focus on first 2 modes (Untimed & Timed)
-4. Other game modes such as Lightning, Bingo, etc.
-5. On Linux, the build must be on a `AppImage` file
+4. Resume system for Untimed
+5. Other game modes such as Lightning, Bingo, etc.
+6. On Linux, the build must be on a `AppImage` file
+7. The game feedback look & feel (focus on Untimed first)
+8. Clickable links on the succeeded words (redirects to the definition of the word from the dictionary online)
+9. Pause menu & confirmation screen when exiting the game
+10. "How to Play" screen
+
+## Identified bugs
+
+1. The word (that can advance to the next round) during starting the level (or next level) was shown, ended up cheating.
+2. No animations during the game.
 
 ## Success stories (what we made, so far)
 
@@ -53,3 +63,4 @@ This document describes the current status and the upcoming milestones of this p
 1. Widescreen support
 2. User will be able to use custom dictionaries, for fun!
 3. Automatically make a build for Linux using GitHub Actions
+4. Being able to play the game on a Web Browser
