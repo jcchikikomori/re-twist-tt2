@@ -455,14 +455,15 @@ public:
 
     void update(int dt_ms) {
         // Fade: `fade_out_left` counts down to black, then the scene
-        // switches and `fade_in_left` counts up from black. INFERRED
-        // split of FadeBlackTransition's `time` (half out, half in).
+        // switches and `fade_in_left` counts up from black. Each half
+        // takes the transition's full `time` (+0x21c): ModifierAlpha 0 -> 1
+        // at 0x46c362 and 1 -> 0 at 0x46c78f both load EDX = [esi+0x21c].
         if (fade_out_left_ > 0) {
             fade_out_left_ -= dt_ms;
             if (fade_out_left_ <= 0) {
                 fade_out_left_ = 0;
                 switch_to(pending_);
-                fade_in_left_ = fade_half_ms_;
+                fade_in_left_ = fade_ms_;
             }
             if (!pending_wait_) update_current(dt_ms);   // wait="false": keep running
             return;
@@ -476,8 +477,8 @@ public:
 
     // 0 = no black overlay, 1 = fully black.
     float black_alpha() const {
-        if (fade_out_left_ > 0) return 1.0f - static_cast<float>(fade_out_left_) / fade_half_ms_;
-        if (fade_in_left_ > 0) return static_cast<float>(fade_in_left_) / fade_half_ms_;
+        if (fade_out_left_ > 0) return 1.0f - static_cast<float>(fade_out_left_) / fade_ms_;
+        if (fade_in_left_ > 0) return static_cast<float>(fade_in_left_) / fade_ms_;
         return 0.0f;
     }
 
@@ -506,8 +507,8 @@ public:
     void transition(SceneId to, int ms, bool wait) override {
         pending_ = to;
         pending_wait_ = wait;
-        fade_half_ms_ = ms > 1 ? ms / 2 : 1;
-        fade_out_left_ = fade_half_ms_;
+        fade_ms_ = ms > 0 ? ms : 1;
+        fade_out_left_ = fade_ms_;
     }
     bool loader_done() override { return services_.loader_done(); }
     float loader_progress() override { return services_.loader_progress(); }
@@ -544,7 +545,7 @@ private:
     SceneId current_ = SceneId::Splash;
     SceneId pending_ = SceneId::Splash;
     bool pending_wait_ = true;
-    int fade_half_ms_ = 250;
+    int fade_ms_ = 500;
     int fade_out_left_ = 0;
     int fade_in_left_ = 0;
     std::unique_ptr<SplashScene> splash_;

@@ -523,22 +523,27 @@ TEST(flow_runs_splash_load_menu_with_fades) {
     flow.update(2101);                       // splash finished, fade starts
     ASSERT_TRUE(flow.current() == SceneId::Splash);
     ASSERT_TRUE(flow.black_alpha() == 0.0f);
-    flow.update(125);
+    // Each half takes the transition's full 500 ms (0x46c362 / 0x46c78f).
+    flow.update(250);
     ASSERT_EQ(flow.black_alpha(), 0.5f);
-    flow.update(125);                        // black: switch to Load
+    flow.update(250);                        // black: switch to Load
     ASSERT_TRUE(flow.current() == SceneId::Load);
     ASSERT_EQ(flow.black_alpha(), 1.0f);
     ASSERT_EQ(streams.size(), std::size_t{1});
     ASSERT_TRUE(streams[0] == SoundId::MusicGameLoad);
-    flow.update(250);                        // faded in; LoadScene has run 125 + 250 ms
+    flow.update(250);
+    ASSERT_EQ(flow.black_alpha(), 0.5f);                  // half way back in
+    flow.update(250);                        // faded in; LoadScene has run 250 + 500 ms
     ASSERT_EQ(flow.black_alpha(), 0.0f);
-    ASSERT_EQ(flow.load()->elapsed_ms(), 375);
+    ASSERT_EQ(flow.load()->elapsed_ms(), 750);
     // loader_done defaults to true: 3500 ms hold then fade to the menu.
-    for (int i = 0; i < 31; ++i) flow.update(100);   // 3475 ms: still holding
+    for (int i = 0; i < 27; ++i) flow.update(100);   // 3450 ms: still holding
     ASSERT_TRUE(!flow.load()->finished());
-    flow.update(100);                        // 3575 ms: finished, fade starts
+    flow.update(100);                        // 3550 ms: finished, fade starts
     ASSERT_TRUE(flow.load()->finished());
     ASSERT_TRUE(flow.current() == SceneId::Load);
+    flow.update(250);
+    ASSERT_TRUE(flow.current() == SceneId::Load);         // 500 ms to black, not 250
     flow.update(250);                        // black: switch to the menu
     ASSERT_TRUE(flow.current() == SceneId::Selection);
     ASSERT_EQ(streams.size(), std::size_t{2});
@@ -556,12 +561,12 @@ TEST(flow_pointer_busy_during_load_only) {
     // Splash is not "loading": the pointer stays the arrow.
     ASSERT_TRUE(!flow.pointer_busy());
     flow.update(2101);                        // splash finished, fade starts
-    flow.update(125);
-    flow.update(125);                         // black: switch to Load
+    flow.update(250);
+    flow.update(250);                         // black: switch to Load
     ASSERT_TRUE(flow.current() == SceneId::Load);
     ASSERT_TRUE(flow.pointer_busy());         // hourglass while loading
     for (int i = 0; i < 35; ++i) flow.update(100);
-    flow.update(250);                         // black: switch to the menu
+    flow.update(500);                         // black: switch to the menu
     ASSERT_TRUE(flow.current() == SceneId::Selection);
     ASSERT_TRUE(!flow.pointer_busy());
 }
@@ -575,7 +580,7 @@ TEST(flow_menu_action_reaches_services) {
     flow.update(250);
     flow.update(250);
     for (int t = 0; t < 3600; t += 100) flow.update(100);
-    flow.update(250);
+    flow.update(500);
     ASSERT_TRUE(flow.current() == SceneId::Selection);
     auto* play = flow.selection()->button("BUTTON_PLAY");
     const float cx = play->sprite.x + 60, cy = play->sprite.y + 60;

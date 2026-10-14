@@ -206,7 +206,8 @@ struct LetterBall {
     float x = 0, y = 0;     // current centre on screen
     float target_x = 0, target_y = 0;
     // Slide: a straight line from (start_x, start_y) to the target over
-    // move_ms (ModifierLocationLine; linear easing INFERRED).
+    // move_ms (ModifierLocationLine, easing 0x4513d0 = smoothstep, set at
+    // 0x43a601 / 0x43a797 in 0x43a4c0).
     float start_x = 0, start_y = 0;
     int move_ms = 0, move_elapsed_ms = 0;
     // Round-start flip: wait reveal_delay_ms, then frames 0..11.
@@ -220,7 +221,7 @@ struct LetterBall {
     bool tick(int dt) {
         if (move_ms > 0 && move_elapsed_ms < move_ms) {
             move_elapsed_ms = std::min(move_ms, move_elapsed_ms + dt);
-            const float t = static_cast<float>(move_elapsed_ms) / static_cast<float>(move_ms);
+            const float t = ease(Easing::Smoothstep, static_cast<float>(move_elapsed_ms) / static_cast<float>(move_ms));
             x = start_x + (target_x - start_x) * t;
             y = start_y + (target_y - start_y) * t;
         } else {
@@ -421,7 +422,15 @@ public:
     float table_y() const { return TABLE_Y; }
     const std::vector<SlotView>& slots() const { return slots_; }
     const std::vector<LetterBall>& balls() const { return balls_; }
-    std::vector<SpriteState> letter_boxes() const { return tt2ui::letter_boxes(static_cast<int>(balls_.size())); }
+    // USER-OBSERVED (not traced in the binary): an available cell's gold
+    // dot stays hidden while its ball deals in, and shows once it rests.
+    std::vector<SpriteState> letter_boxes() const {
+        const int n = static_cast<int>(balls_.size());
+        std::vector<SpriteState> out = tt2ui::letter_boxes(n);
+        for (const auto& b : balls_)
+            if (!b.played && b.revealing() && b.slot >= 0 && b.slot < n) out[n + b.slot].visible = false;
+        return out;
+    }
     // DIALOG_NEXTROUND letterballs, dialog-local; empty for other dialogs.
     const std::vector<LetterBall>& dialog_balls() const { return dialog_balls_; }
     // DIALOG_HELP page state; meaningful while dialog_kind() == HowToPlay.

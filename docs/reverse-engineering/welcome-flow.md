@@ -40,6 +40,12 @@ repository.
 - `FadeBlackTransition`: `TRANSITION_DEFAULT` = 500 ms, `TRANSITION_SPLASH`
   = 500 ms with `wait="false"` (the next scene starts loading while the
   fade runs). **XML**
+- Each half of the fade takes the **full** `time`, so a 500 ms transition
+  is 500 ms to black plus 500 ms back in (1 s in all), not 250 + 250.
+  The XML parser `0x46bd90` stores `time` at `+0x21c` (ctor `0x46bbf0`
+  defaults it to 1000). The fade out `0x46c2f0` builds a `ModifierAlpha`
+  0 → 1 at `0x46c362` and the fade in `0x46c740` builds 1 → 0 at
+  `0x46c78f`; both pass `[esi+0x21c]` as the duration. **CONFIRMED**
 
 ## 1. SceneSplash (`SCENE_SPLASH`, section `splash`)
 

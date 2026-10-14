@@ -294,6 +294,26 @@ TEST(scene_letter_boxes_follow_the_rack_not_the_balls) {
     }
 }
 
+// USER-OBSERVED: the available row's gold dot under a ball stays hidden
+// while that ball deals in (round-start flip) and shows once it rests.
+TEST(available_dots_hide_while_their_ball_deals_in) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    const std::size_t n = s.balls().size();
+    auto boxes = s.letter_boxes();
+    for (std::size_t i = 0; i < n; ++i) ASSERT_TRUE(boxes[i].visible);       // played row: sockets stay
+    for (std::size_t i = n; i < 2 * n; ++i) ASSERT_TRUE(!boxes[i].visible);  // every ball still dealing
+    // Ball 0 settles after 12 frames * 60 ms; the last one waits (n-1) * 120 ms more.
+    s.update((BALL_IDLE_FRAME + 1) * BALL_REVEAL_FRAME_MS);
+    boxes = s.letter_boxes();
+    int shown = 0;
+    for (std::size_t i = n; i < 2 * n; ++i) if (boxes[i].visible) ++shown;
+    ASSERT_EQ(shown, 1);
+    s.update(5000);
+    boxes = s.letter_boxes();
+    for (std::size_t i = n; i < 2 * n; ++i) ASSERT_TRUE(boxes[i].visible);
+}
+
 TEST(typing_moves_balls_to_played_row_and_back) {
     Fixture f(false);
     auto& s = *f.scene;
@@ -1087,6 +1107,9 @@ TEST(ball_flip_runs_frames_0_to_11_then_rests_as_a_pearl) {
     ASSERT_EQ(b.sheet_frame(), 2 * BALL_FRAMES_PER_LETTER + BALL_IDLE_FRAME);
 }
 
+// 0x43a4c0: ModifierLocationLine with easing 0x4513d0 (smoothstep).
+// Worked example: a quarter of the time in, (3 - 0.5) * 0.0625 = 0.15625
+// of the way; half way is still the midpoint.
 TEST(ball_slides_in_a_straight_line_over_its_duration) {
     LetterBall b;
     b.letter = 'a';
@@ -1095,7 +1118,9 @@ TEST(ball_slides_in_a_straight_line_over_its_duration) {
     b.target_x = 200;
     b.target_y = 200;
     b.move_ms = BALL_MOVE_MS;
-    b.tick(BALL_MOVE_MS / 2);
+    b.tick(BALL_MOVE_MS / 4);
+    ASSERT_TRUE(b.x == 115.625f && b.y == 284.375f);       // slow start, not 125 / 275
+    b.tick(BALL_MOVE_MS / 4);
     ASSERT_TRUE(b.x == 150.0f && b.y == 250.0f);
     b.tick(BALL_MOVE_MS);
     ASSERT_TRUE(b.x == 200.0f && b.y == 200.0f);

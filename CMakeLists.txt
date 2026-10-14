@@ -72,7 +72,7 @@ if(TT2_BUILD_UI)
     set(TT2_SDL_OK OFF)
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
-        pkg_check_modules(SDL2 QUIET IMPORTED_TARGET sdl2)
+        pkg_check_modules(SDL2 QUIET IMPORTED_TARGET sdl2>=2.0.10)   # SDL_RenderCopyExF
         pkg_check_modules(SDL2_IMAGE QUIET IMPORTED_TARGET SDL2_image)
         pkg_check_modules(SDL2_MIXER QUIET IMPORTED_TARGET SDL2_mixer)
         if(SDL2_FOUND AND SDL2_IMAGE_FOUND AND SDL2_MIXER_FOUND)

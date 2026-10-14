@@ -23,6 +23,10 @@
 #include <SDL_image.h>
 #include <SDL_mixer.h>
 
+#if !SDL_VERSION_ATLEAST(2, 0, 10)
+#error "tt2 needs SDL 2.0.10 or newer (float rects for SDL_RenderCopyExF)"
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -557,26 +561,33 @@ Uint8 pixel_alpha(const Image& img, const SpriteState& s, float px, float py) {
 
 void draw_sprite(SDL_Renderer* ren, Assets& assets, const SpriteState& s, float ox = 0, float oy = 0) {
     if (!s.visible || s.alpha <= 0.0f) return;
+    // Float destination rects: the scene moves sprites in fractions of a
+    // pixel (eased ball slides, scales), and truncating each frame to whole
+    // logical pixels made slow motion step once the 800x600 canvas is
+    // scaled up to the window. Textures keep nearest sampling, so art stays
+    // crisp; only the placement gets finer.
     if (s.sheet.image_id.empty()) {
         // Image-less sprite (the splash cover): a black quad.
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren, 0, 0, 0, static_cast<Uint8>(s.alpha * 255));
-        SDL_Rect dst{static_cast<int>(s.left() + ox), static_cast<int>(s.top() + oy), s.sheet.frame_w, s.sheet.frame_h};
-        SDL_RenderFillRect(ren, &dst);
+        SDL_FRect dst{s.left() + ox, s.top() + oy, static_cast<float>(s.sheet.frame_w),
+                      static_cast<float>(s.sheet.frame_h)};
+        SDL_RenderFillRectF(ren, &dst);
         return;
     }
     Image& img = assets.image(s.sheet);
     if (!img.texture) return;
     SDL_Rect src{s.sheet.frame_x(s.frame), s.sheet.frame_y(s.frame), s.sheet.frame_w, s.sheet.frame_h};
-    SDL_Rect dst{static_cast<int>(s.left() + ox), static_cast<int>(s.top() + oy), s.sheet.frame_w, s.sheet.frame_h};
+    SDL_FRect dst{s.left() + ox, s.top() + oy, static_cast<float>(s.sheet.frame_w),
+                  static_cast<float>(s.sheet.frame_h)};
     if (s.scale != 1.0f || s.scale_y != 1.0f) {
         // Scale about the anchor point (x, y); clipped sprites never scale.
         const float sx = s.scale, sy = s.scale * s.scale_y;
         if (sx <= 0.0f || sy <= 0.0f) return;
-        dst.x = static_cast<int>(s.x + ox + (s.left() - s.x) * sx);
-        dst.y = static_cast<int>(s.y + oy + (s.top() - s.y) * sy);
-        dst.w = static_cast<int>(s.sheet.frame_w * sx);
-        dst.h = static_cast<int>(s.sheet.frame_h * sy);
+        dst.x = s.x + ox + (s.left() - s.x) * sx;
+        dst.y = s.y + oy + (s.top() - s.y) * sy;
+        dst.w = s.sheet.frame_w * sx;
+        dst.h = s.sheet.frame_h * sy;
     }
     if (s.has_clip) {
         src.x += static_cast<int>(s.clip.x);
@@ -585,8 +596,8 @@ void draw_sprite(SDL_Renderer* ren, Assets& assets, const SpriteState& s, float 
         src.h = static_cast<int>(s.clip.h);
         dst.x += static_cast<int>(s.clip.x);
         dst.y += static_cast<int>(s.clip.y);
-        dst.w = src.w;
-        dst.h = src.h;
+        dst.w = static_cast<float>(src.w);
+        dst.h = static_cast<float>(src.h);
         if (src.w <= 0 || src.h <= 0) return;
     }
     int flip = SDL_FLIP_NONE;
@@ -595,7 +606,7 @@ void draw_sprite(SDL_Renderer* ren, Assets& assets, const SpriteState& s, float 
     SDL_SetTextureAlphaMod(img.texture, static_cast<Uint8>(s.alpha * 255));
     SDL_SetTextureColorMod(img.texture, (s.tint >> 16) & 0xFF, (s.tint >> 8) & 0xFF, s.tint & 0xFF);
     SDL_SetTextureBlendMode(img.texture, s.additive ? SDL_BLENDMODE_ADD : SDL_BLENDMODE_BLEND);
-    SDL_RenderCopyEx(ren, img.texture, &src, &dst, 0.0, nullptr, static_cast<SDL_RendererFlip>(flip));
+    SDL_RenderCopyExF(ren, img.texture, &src, &dst, 0.0, nullptr, static_cast<SDL_RendererFlip>(flip));
     SDL_SetTextureColorMod(img.texture, 255, 255, 255);
     SDL_SetTextureBlendMode(img.texture, SDL_BLENDMODE_BLEND);
 }
@@ -1104,9 +1115,10 @@ int main(int argc, char** argv) {
     services.loader_progress = [] { return 1.0f; };
     services.preloading_done = [] { return true; };
     // Game scene and the fade-to-black around entering / leaving it
-    // (TRANSITION_DEFAULT: 500 ms, half out, half in).
+    // (TRANSITION_DEFAULT: 500 ms to black, then 500 ms back; each half
+    // uses FadeBlackTransition's full `time`, 0x46c362 / 0x46c78f).
     std::unique_ptr<GameScene> game;
-    constexpr int GAME_FADE_HALF_MS = 250;
+    constexpr int GAME_FADE_HALF_MS = 500;
     int game_fade_out = 0, game_fade_in = 0;
     bool pending_start = false, pending_timed = false, pending_exit = false;
     // Saved game to continue in the next start_game (0x4242a0 / 0x42a460).

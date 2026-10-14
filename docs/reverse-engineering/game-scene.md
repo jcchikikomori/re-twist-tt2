@@ -105,6 +105,10 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   "set frame". Crossword rows use `XwordBox` instead, and the ctor also builds hidden
   `IMAGE_BLITZDOT`, `IMAGE_XWORD_OVERLAY` and `IMAGE_HINT_LETTERS` sprites for the other
   modes. `letterBox_shadow.png` has no `resources.xml` entry, so the game never loads it.
+- Gold dot during the deal (USER-OBSERVED, not traced): in the original the available-row
+  dot stays hidden while its ball is still flipping in, and shows only once that ball has
+  settled. No toggle for it was found around `0x4396e0`, `0x43bad0` or `0x43ab90`, so the
+  port hides the dot from its own `LetterBall::revealing()` state instead.
 - `0x43bad0` / `0x43c370`: inside a container a ball sits at `(i * 69 + 34.5, 34.5)`; with
   index `-1` a ball goes to the **first empty cell** of the row.
 - `0x439d00` (`LetterBall`): sprite `IMAGE_LETTERBALL_ANIM` (`letterball_anim.png`
