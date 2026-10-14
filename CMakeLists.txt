@@ -12,6 +12,17 @@ option(TT2_BUILD_TESTS "Build the engine unit tests" ON)
 option(TT2_WARN_AS_ERROR "Treat warnings as errors" OFF)
 option(TT2_BUILD_UI "Build the SDL2 desktop UI (needs SDL2, SDL2_image, SDL2_mixer)" ON)
 
+# Install layout. The game finds its dictionaries next to itself
+# (ui/include/tt2ui/data_paths.hpp): Windows ships a flat folder with
+# data/ beside tt2.exe; Unix (and the AppImage) uses the usual prefix tree.
+if(WIN32)
+    set(TT2_BIN_INSTALL_DIR ".")
+    set(TT2_DATA_INSTALL_DIR "data")
+else()
+    set(TT2_BIN_INSTALL_DIR "bin")
+    set(TT2_DATA_INSTALL_DIR "share/tt2/data")
+endif()
+
 # ----------------------------------------------------------------------------
 # Engine (header-only library) + platform shim (compiled once per target)
 # ----------------------------------------------------------------------------
@@ -110,7 +121,11 @@ if(TT2_BUILD_UI)
         target_compile_definitions(tt2_app PRIVATE
             TT2_IMPORTED_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/imported-assets"
             TT2_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
-        install(TARGETS tt2_app RUNTIME DESTINATION bin)
+        install(TARGETS tt2_app RUNTIME DESTINATION ${TT2_BIN_INSTALL_DIR})
+        if(UNIX AND NOT APPLE)
+            install(FILES packaging/linux/tt2.desktop DESTINATION share/applications)
+            install(FILES packaging/linux/tt2.svg DESTINATION share/icons/hicolor/scalable/apps)
+        endif()
     else()
         message(STATUS "SDL2/SDL2_image/SDL2_mixer not found: skipping the tt2 UI binary")
     endif()
@@ -149,6 +164,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_game_scene.cpp
         ui/tests/test_help_dialog.cpp
         ui/tests/test_settings_dialog.cpp
+        ui/tests/test_data_paths.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)
@@ -156,11 +172,13 @@ if(TT2_BUILD_TESTS)
 endif()
 
 # ----------------------------------------------------------------------------
-# Install (rough sketch; refined when a real UI is added)
+# Install
 # ----------------------------------------------------------------------------
 install(TARGETS tt2_engine_app
-    RUNTIME DESTINATION bin
+    RUNTIME DESTINATION ${TT2_BIN_INSTALL_DIR}
 )
-install(DIRECTORY data/ DESTINATION share/games/texttwist2/data
-    OPTIONAL
+# Only the open-license dictionaries. data/ may also hold the user's own
+# GameHouse common.tree / full.tree (gitignored); those never get packaged.
+install(FILES data/open-common.tree data/open-full.tree data/LICENSE.md
+    DESTINATION ${TT2_DATA_INSTALL_DIR}
 )

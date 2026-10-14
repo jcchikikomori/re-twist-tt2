@@ -1,0 +1,127 @@
+# Release builds: a Linux AppImage and a Windows zip (tt2.exe + DLLs +
+# data/). Runs on pushes to main, on version tags (v*), and by hand.
+# The packages carry only the open-license dictionaries and the
+# procedural placeholder art; GameHouse assets are never part of a build.
+name: Packages
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # A tag names the package after itself; any other run uses the short SHA.
+  PACKAGE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+
+jobs:
+  appimage:
+    name: Linux AppImage
+    # The oldest supported runner: an AppImage only runs on glibc versions
+    # at least as new as the one it was built against.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ pkg-config \
+            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev
+
+      - name: Build and install into AppDir
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr -DTT2_BUILD_TESTS=OFF
+          cmake --build build
+          DESTDIR="$PWD/AppDir" cmake --install build
+
+      - name: Bundle with linuxdeploy
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"   # runners have no FUSE
+        run: |
+          curl -fsSL -o linuxdeploy \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy
+          LINUXDEPLOY_OUTPUT_VERSION="${PACKAGE_VERSION:0:12}" ./linuxdeploy \
+            --appdir AppDir \
+            --executable AppDir/usr/bin/tt2 \
+            --desktop-file AppDir/usr/share/applications/tt2.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/scalable/apps/tt2.svg \
+            --output appimage
+
+      - name: Smoke run the AppImage (headless)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: >
+          ./Re-Twist_TT2-*-x86_64.AppImage --save-dir "$RUNNER_TEMP/save"
+          --player CI --seed 5 --play untimed --type 'ab|' --exit-after 9000
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: re-twist-tt2-linux-x86_64-appimage
+          path: Re-Twist_TT2-*-x86_64.AppImage
+          if-no-files-found: error
+
+  windows:
+    name: Windows zip
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-SDL2
+            mingw-w64-ucrt-x86_64-SDL2_image
+            mingw-w64-ucrt-x86_64-SDL2_mixer
+
+      - name: Build and install into dist/
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/dist" -DTT2_BUILD_TESTS=OFF
+          cmake --build build
+          cmake --install build
+          cp LICENSE dist/
+
+      - name: Copy the runtime DLLs next to tt2.exe
+        run: |
+          # Every DLL the game links that comes from the MSYS2 prefix
+          # (SDL2, SDL2_image, SDL2_mixer, their codecs, the GCC runtime).
+          for exe in dist/tt2.exe dist/tt2_engine.exe; do
+            ldd "$exe" | awk '/\/ucrt64\// {print $3}'
+          done | sort -u | xargs -r cp -t dist/
+          ls dist
+
+      - name: Smoke run (headless)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: >
+          ./dist/tt2.exe --save-dir "$RUNNER_TEMP/save" --player CI --seed 5
+          --play untimed --type 'ab|' --exit-after 9000
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: re-twist-tt2-windows-x86_64
+          path: dist/
+          if-no-files-found: error

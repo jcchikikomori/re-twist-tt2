@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Re-Twist TT2
+GenericName=Word Game
+Comment=Unscramble the letters to find every word
+Exec=tt2
+Icon=tt2
+Terminal=false
+Categories=Game;LogicGame;
+Keywords=word;anagram;puzzle;

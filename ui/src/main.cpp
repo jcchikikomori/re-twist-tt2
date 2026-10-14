@@ -33,18 +33,21 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "tt2/profile.hpp"
 #include "tt2/profile_store.hpp"
 #include "tt2/word_tree.hpp"
 #include "tt2ui/bitmap_font.hpp"
+#include "tt2ui/data_paths.hpp"
 #include "tt2ui/game_scene.hpp"
 #include "tt2ui/help_dialog.hpp"
 #include "tt2ui/settings_dialog.hpp"
@@ -983,6 +986,7 @@ int main(int argc, char** argv) {
     int dump_fps = 12;
     std::string debug_player;
     std::string data_dir = TT2_DATA_DIR;
+    bool data_dir_given = false;
     std::string auto_play;     // --play untimed|timed: start a game as soon as the menu is up
     std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
                                // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP, '>' NEXT ROUND,
@@ -998,7 +1002,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--dump-frames") && i + 1 < argc) dump_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--fps") && i + 1 < argc) dump_fps = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--player") && i + 1 < argc) debug_player = argv[++i];
-        else if (!std::strcmp(argv[i], "--data-dir") && i + 1 < argc) data_dir = argv[++i];
+        else if (!std::strcmp(argv[i], "--data-dir") && i + 1 < argc) { data_dir = argv[++i]; data_dir_given = true; }
         else if (!std::strcmp(argv[i], "--play") && i + 1 < argc) auto_play = argv[++i];
         else if (!std::strcmp(argv[i], "--type") && i + 1 < argc) auto_type = argv[++i];
         else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc) debug_seed = std::atol(argv[++i]);
@@ -1029,6 +1033,20 @@ int main(int argc, char** argv) {
                 players.count(), players.count() == 1 ? "" : "s");
 
     // Dictionaries: the trees must outlive every round (non-owning pointers).
+    // Packaged builds (AppImage, Windows zip) carry their dictionaries next
+    // to the executable; a source build falls back to TT2_DATA_DIR.
+    if (!data_dir_given) {
+        std::string exe_dir;
+        if (char* base = SDL_GetBasePath()) {
+            exe_dir = base;
+            SDL_free(base);
+        }
+        data_dir = tt2ui::pick_data_dir(tt2ui::data_dir_candidates(exe_dir, data_dir), [](const std::string& d) {
+            std::error_code ec;
+            return std::filesystem::exists(std::filesystem::path(d) / "open-common.tree", ec) ||
+                   std::filesystem::exists(std::filesystem::path(d) / "common.tree", ec);
+        });
+    }
     tt2::WordTree common_tree, full_tree;
     if (!load_tree(data_dir, "common.tree", "open-common.tree", common_tree) ||
         !load_tree(data_dir, "full.tree", "open-full.tree", full_tree)) {

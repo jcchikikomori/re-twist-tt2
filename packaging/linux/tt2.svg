@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Original icon for re-twist-tt2 (MIT, like the code): a pearl letter
+     ball on a blue tile. Drawn for this project; no GameHouse art. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f7be6"/>
+      <stop offset="1" stop-color="#0b2f8a"/>
+    </linearGradient>
+    <radialGradient id="pearl" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.55" stop-color="#e8ebf3"/>
+      <stop offset="1" stop-color="#a9b1c4"/>
+    </radialGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="url(#tile)"/>
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="none" stroke="#f7c531" stroke-width="8"/>
+  <circle cx="128" cy="132" r="84" fill="url(#pearl)"/>
+  <!-- A blocky "T" built from rectangles so no font is needed. -->
+  <rect x="84" y="86" width="88" height="22" rx="6" fill="#1240b0"/>
+  <rect x="117" y="86" width="22" height="94" rx="6" fill="#1240b0"/>
+  <ellipse cx="100" cy="92" rx="26" ry="14" fill="#ffffff" opacity="0.55"/>
+</svg>

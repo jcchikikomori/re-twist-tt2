@@ -69,6 +69,19 @@ game looks like the 2008 release. Without this step the game boots with placehol
 | `--exit-after MS` | Quit after `MS` simulated milliseconds |
 | `--dump-frames DIR` | Write `frame_NNNN.bmp` at `--fps N` (headless with `SDL_VIDEODRIVER=dummy`) |
 
+## CI and downloads
+
+GitHub Actions runs two workflows:
+
+- **CI** (`.github/workflows/ci.yml`), on every push to `main` and every pull request: the unit tests on Linux (GCC,
+  warnings as errors, plus an AddressSanitizer / UBSan run) and on Windows (MSYS2 UCRT64), each followed by a headless
+  smoke run of the game.
+- **Packages** (`.github/workflows/packages.yml`), on pushes to `main`, `v*` tags and by hand: a Linux **AppImage**
+  and a Windows **zip** (`tt2.exe`, its DLLs and `data/`). Download them from the run's *Artifacts* section.
+
+The packages carry only the open-license dictionaries and the placeholder art. A packaged game finds its dictionaries
+next to itself (`data/` beside `tt2.exe`, or `share/tt2/data` inside the AppImage); `--data-dir DIR` overrides that.
+
 ## Where things live
 
 ```text
@@ -89,6 +102,8 @@ game looks like the 2008 release. Without this step the game boots with placehol
 ├── data/                     # runtime dictionaries (open-*.tree committed)
 ├── data-src/                 # raw word lists for rebuilding the open dictionaries
 ├── scripts/import-original.sh
+├── packaging/linux/          # desktop entry and original icon for the AppImage
+├── .github/workflows/        # CI (tests) and Packages (AppImage, Windows zip)
 └── docs/
     ├── reverse-engineering/  # evidence from the original: format specs, scene layouts, timings
     ├── design/               # original-look brief

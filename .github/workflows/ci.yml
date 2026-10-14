@@ -1,0 +1,108 @@
+# Unit tests on every push to main and every pull request.
+#
+# - Linux: GCC with warnings as errors, plus an AddressSanitizer /
+#   UndefinedBehaviorSanitizer run of the tests (the engine stores
+#   non-owning pointers, see CLAUDE.md "Engine ownership").
+# - Windows: MSYS2 UCRT64 (MinGW-w64 GCC), the same toolchain the
+#   Windows package uses.
+# Each job also smoke-runs the game headless when the UI was built.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.name }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc
+            ui: "ON"
+            cxxflags: ""
+          - name: asan-ubsan
+            ui: "OFF"   # the tests are headless; skip SDL so the sanitizers only see our code
+            cxxflags: "-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ pkg-config \
+            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DTT2_WARN_AS_ERROR=ON
+          -DTT2_BUILD_UI=${{ matrix.ui }}
+          -DCMAKE_CXX_FLAGS="${{ matrix.cxxflags }}"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Smoke run (headless)
+        if: matrix.ui == 'ON'
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: >
+          ./build/tt2 --save-dir "$RUNNER_TEMP/save" --player CI --seed 5
+          --play untimed --type 'ab|' --exit-after 9000
+
+  windows:
+    name: Windows (MSYS2 UCRT64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-SDL2
+            mingw-w64-ucrt-x86_64-SDL2_image
+            mingw-w64-ucrt-x86_64-SDL2_mixer
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DTT2_WARN_AS_ERROR=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Smoke run (headless)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: >
+          ./build/tt2.exe --save-dir "$RUNNER_TEMP/save" --player CI --seed 5
+          --play untimed --type 'ab|' --exit-after 9000
