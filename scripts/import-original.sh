@@ -36,6 +36,7 @@ copy_dir images/loadscene
 copy_dir images/selectionscene
 copy_dir images/gui
 copy_dir images/gamescene
+copy_dir images/trophyscene   # IMAGE_BURST (round-end sparkle)
 copy_dir fonts
 copy_dir music
 copy_dir sound

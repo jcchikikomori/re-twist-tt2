@@ -818,7 +818,7 @@ TEST(pause_menu_plays_only_the_button_click) {
     for (auto id : f.sounds) ASSERT_TRUE(id == SoundId::Button);
 }
 
-TEST(pause_menu_help_and_settings_are_not_available_yet) {
+TEST(pause_menu_settings_is_not_available_yet) {
     Fixture f(false);
     auto& s = *f.scene;
     s.press("BUTTON_Menu");
@@ -826,11 +826,35 @@ TEST(pause_menu_help_and_settings_are_not_available_yet) {
     ASSERT_TRUE(s.dialog_kind() == GameDialog::NotAvailable);
     s.key_escape();
     ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
-    s.dialog_press("BUTTON_HOWTOPLAY");
-    ASSERT_TRUE(s.dialog_kind() == GameDialog::NotAvailable);
+    s.dialog_press("BUTTON_SETTINGS");
     s.dialog_press("BUTTON_OK");
     ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
     s.dialog_press("BUTTON_DOES_NOT_EXIST");               // ignored
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+}
+
+TEST(pause_menu_how_to_play_pages_and_returns) {
+    Fixture f(true);
+    auto& s = *f.scene;
+    s.update(1000);
+    const int time_left = s.time_left_ms();
+    s.press("BUTTON_Menu");
+    s.dialog_press("BUTTON_HOWTOPLAY");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::HowToPlay);
+    ASSERT_TRUE(s.paused());
+    ASSERT_EQ(s.dialog().w, HELP_W);
+    s.dialog_press("BUTTON_PREV");                         // hidden on page 0
+    ASSERT_EQ(s.help().page, 0);
+    s.dialog_press("BUTTON_NEXT");
+    ASSERT_EQ(s.help().page, 1);
+    s.update(HELP_FADE_MS);                                 // the fade runs while paused
+    ASSERT_TRUE(!s.help().fading());
+    ASSERT_EQ(s.time_left_ms(), time_left);                 // the clock does not
+    s.dialog_press("BUTTON_OK");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+    s.dialog_press("BUTTON_HOWTOPLAY");
+    ASSERT_EQ(s.help().page, 0);                            // reopens on page 1
+    s.key_escape();
     ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
 }
 

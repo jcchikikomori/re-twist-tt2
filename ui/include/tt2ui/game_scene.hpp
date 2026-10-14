@@ -23,6 +23,7 @@
 #include "tt2/saved_game.hpp"
 #include "tt2/word_tree.hpp"
 #include "tt2ui/game_dialogs.hpp"
+#include "tt2ui/help_dialog.hpp"
 #include "tt2ui/modifier.hpp"
 #include "tt2ui/sprite.hpp"
 #include "tt2ui/welcome_flow.hpp"
@@ -305,6 +306,8 @@ public:
     const std::vector<LetterBall>& balls() const { return balls_; }
     // DIALOG_NEXTROUND letterballs, dialog-local; empty for other dialogs.
     const std::vector<LetterBall>& dialog_balls() const { return dialog_balls_; }
+    // DIALOG_HELP page state; meaningful while dialog_kind() == HowToPlay.
+    const HelpPager& help() const { return help_; }
     std::vector<MenuButton>& buttons() { return buttons_; }
     const std::vector<MenuButton>& buttons() const { return buttons_; }
     MenuButton* button(const std::string& name) {
@@ -323,7 +326,8 @@ public:
     // The clock and the animations stand still while one of these is up.
     bool paused() const {
         return dialog_kind_ == GameDialog::PauseMenu || dialog_kind_ == GameDialog::ConfirmExit ||
-               dialog_kind_ == GameDialog::ConfirmGiveUp || dialog_kind_ == GameDialog::NotAvailable;
+               dialog_kind_ == GameDialog::ConfirmGiveUp || dialog_kind_ == GameDialog::NotAvailable ||
+               dialog_kind_ == GameDialog::HowToPlay;
     }
     const char* save_mode() const { return tt2::save_mode_name(mode()); }
 
@@ -411,7 +415,8 @@ public:
             case GameDialog::PauseMenu: dialog_press("BUTTON_RESUME"); break;
             case GameDialog::ConfirmExit:
             case GameDialog::ConfirmGiveUp: dialog_press("BUTTON_NO"); break;
-            case GameDialog::NotAvailable: dialog_press("BUTTON_OK"); break;
+            case GameDialog::NotAvailable:
+            case GameDialog::HowToPlay: dialog_press("BUTTON_OK"); break;
             default: break;   // round-end dialogs need a choice
         }
     }
@@ -486,15 +491,21 @@ public:
     // A button of the open dialog (mouse, keyboard and tests).
     void dialog_press(const std::string& name) {
         const MenuButton* b = dialog_.button(name);
-        if (!dialog_open() || !b || !b->enabled) return;
+        if (!dialog_open() || !b || !b->enabled || !b->sprite.visible) return;
         play(SoundId::Button);
         switch (dialog_kind_) {
             case GameDialog::PauseMenu:
                 if (name == "BUTTON_RESUME") close_dialog();
                 else if (name == "BUTTON_STOP") open_dialog(GameDialog::ConfirmExit);
-                else open_dialog(GameDialog::NotAvailable);   // HOWTOPLAY / SETTINGS: not built yet
+                else if (name == "BUTTON_HOWTOPLAY") open_dialog(GameDialog::HowToPlay);   // 0x408180
+                else open_dialog(GameDialog::NotAvailable);   // SETTINGS: not built yet
                 break;
             case GameDialog::NotAvailable: open_dialog(GameDialog::PauseMenu); break;
+            case GameDialog::HowToPlay:
+                // OK (0x408c00) closes the help; the pause menu is still under it.
+                if (name == "BUTTON_OK") open_dialog(GameDialog::PauseMenu);
+                else help_.turn(dialog_, name == "BUTTON_PREV" ? -1 : 1);
+                break;
             case GameDialog::ConfirmExit:
                 // 0x408320: YES leaves (the round is saved on the way out,
                 // 0x427b20); NO goes back to the menu (INFERRED).
@@ -522,6 +533,7 @@ public:
     // ---- simulation -------------------------------------------------
     void update(int dt_ms) {
         if (finished_) return;
+        if (dialog_kind_ == GameDialog::HowToPlay) help_.tick(dialog_, dt_ms);
         if (dialog_open()) dialog_tick(dialog_, dt_ms);
         for (auto& b : dialog_balls_)
             if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43a820 flag 1 -> 0x43a940
@@ -812,6 +824,10 @@ private:
                 dialog_ = build_yes_no(game_strings::NOT_AVAILABLE_HEADER, game_strings::NOT_AVAILABLE, true,
                                        services_.wrap_text);
                 break;
+            case GameDialog::HowToPlay:
+                dialog_ = build_help();
+                help_ = HelpPager{};
+                break;
             case GameDialog::NextRound:
                 dialog_ = build_next_round();
                 dialog_balls_ = next_round_balls(NEXT_ROUND_LETTERBALLS);
@@ -976,6 +992,7 @@ private:
     TableLayout table_;
     std::vector<SlotView> slots_;
     std::vector<LetterBall> balls_;
+    HelpPager help_;                         // DIALOG_HELP page state
     std::vector<LetterBall> dialog_balls_;   // DIALOG_NEXTROUND letterballs
     std::vector<MenuButton> buttons_;
     SpriteState commentary_, game_over_, popup_bingo_, popup_all_;

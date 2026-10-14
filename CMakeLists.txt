@@ -146,6 +146,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_bitmap_font.cpp
         ui/tests/test_profile_dialogs.cpp
         ui/tests/test_game_scene.cpp
+        ui/tests/test_help_dialog.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)

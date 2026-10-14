@@ -32,6 +32,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -41,6 +42,7 @@
 #include "tt2/word_tree.hpp"
 #include "tt2ui/bitmap_font.hpp"
 #include "tt2ui/game_scene.hpp"
+#include "tt2ui/help_dialog.hpp"
 #include "tt2ui/profile_dialogs.hpp"
 #include "tt2ui/welcome_flow.hpp"
 
@@ -135,6 +137,13 @@ const std::map<std::string, std::string> kImageFiles = {
     {"BUTTON_END_MENU", "images/gui/button_end_menu.png"},
     {"BUTTON_END_PLAYAGAIN", "images/gui/button_end_playagain.png"},
     {"IMAGE_BURST", "images/trophyscene/burst.png"},
+    // DIALOG_HELP (help-and-settings.md §2).
+    {"BUTTON_PREV", "images/gui/dialoghelp/button_prev.png"},
+    {"BUTTON_NEXT", "images/gui/dialoghelp/button_next.png"},
+    {"IMAGE_HELP_PAGE01", "images/gui/dialoghelp/image_help_page01.png"},
+    {"IMAGE_HELP_PAGE02", "images/gui/dialoghelp/image_help_page02.png"},
+    {"IMAGE_HELP_PAGE03", "images/gui/dialoghelp/image_help_page03.png"},
+    {"IMAGE_HELP_PAGE04", "images/gui/dialoghelp/image_help_page04.png"},
     {"INPUT_BOX", "images/gui/inputlabel.png"},
     {"CURSOR", "images/gui/cursor.png"},
     {"NAME_SELECT_BUTTON", "images/gui/name_select_button.png"},
@@ -147,6 +156,7 @@ struct FontFile { const char* xml; int placeholder_scale; };
 const std::map<std::string, FontFile> kFontFiles = {
     {"FONT_FONT_UIBAR", {"fonts/font_uibar.xml", 4}},
     {"FONT_SETTINGSTEXT", {"fonts/font_settingstext.xml", 3}},
+    {"FONT_DIALOG_HEADERS", {"fonts/font_dialog_headers.xml", 4}},
     {"FONT_DIALOG_HEADERS2", {"fonts/font_dialog_headers2.xml", 4}},
     {"FONT_UI_LABELS", {"fonts/font_uibar_labels.xml", 2}},
     {"FONT_UI_NUMBERS", {"fonts/font_uibar_numbers.xml", 3}},
@@ -720,6 +730,29 @@ void draw_sprite_or_label(SDL_Renderer* ren, Assets& assets, const SpriteState& 
                         sp.top() + sp.sheet.frame_h * 0.5f, line_h);
 }
 
+// DIALOG_HELP over draw_dialog(): without the imported page pictures the
+// placeholder build prints its own short page text (help_strings) on the
+// page that is mostly faded in.
+void draw_help(SDL_Renderer* ren, Assets& assets, const Dialog& d) {
+    draw_dialog(ren, assets, d);
+    for (int i = 0; i < HELP_PAGE_COUNT; ++i) {
+        const SpriteState* page = nullptr;
+        for (const SpriteState& s : d.sprites) if (s.name == help_page_name(i)) page = &s;
+        if (!page || page->alpha < 0.5f || !assets.image(page->sheet).placeholder) continue;
+        const std::string text = wrap_text(assets.font("PLACEHOLDER_2").font,
+                                           help_strings::PLACEHOLDER_PAGES[static_cast<std::size_t>(i)],
+                                           HELP_PAGE_W - 80);
+        float y = page->top() + d.top() + 40.0f;
+        std::string line;
+        std::istringstream lines(text);
+        while (std::getline(lines, line)) {
+            draw_text(ren, assets, "PLACEHOLDER_2", line, page->left() + d.left() + 40.0f, y, TextAlign::Left,
+                      Anchor::TopLeft, -1);
+            y += 22.0f;
+        }
+    }
+}
+
 void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
     draw_sprite(ren, assets, sprite("BACKGROUND", sheet(g.background_id(), SCREEN_W, SCREEN_H), 0, 0));
 
@@ -837,7 +870,8 @@ int main(int argc, char** argv) {
     std::string data_dir = TT2_DATA_DIR;
     std::string auto_play;     // --play untimed|timed: start a game as soon as the menu is up
     std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
-                               // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP, '>' NEXT ROUND
+                               // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP, '>' NEXT ROUND,
+                               // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_dir = argv[++i];
@@ -962,6 +996,15 @@ int main(int argc, char** argv) {
     const LineBreaker wrap_message = [&assets](const std::string& text, int max_width) {
         return wrap_text(assets.font("FONT_SETTINGSTEXT").font, text, max_width);
     };
+    // The main menu's HOW TO PLAY (0x42ee90 -> DIALOG_HELP).
+    std::optional<HelpDialog> menu_help;
+    auto menu_help_press = [&](const std::string& name) {
+        if (!menu_help) return;
+        const MenuButton* b = menu_help->dialog().button(name);
+        if (!b || !b->sprite.visible) return;
+        assets.play_sound(SoundId::Button);
+        if (menu_help->press(name)) menu_help.reset();
+    };
     // "Continue the game?" (CTEXT_START_SAVEGAME, 0x42dc80) on the menu.
     Dialog menu_dialog;
     bool menu_dialog_open = false;
@@ -999,6 +1042,7 @@ int main(int argc, char** argv) {
         else if (name == "BUTTON_CHANGENAME") profile.open_player_select();
         else if (name == "BUTTON_PLAY_UNTIMED") request_game(false);
         else if (name == "BUTTON_PLAY") request_game(true);
+        else if (name == "BUTTON_HOWTOPLAY") menu_help.emplace();
         else std::printf("menu: %s (not implemented yet)\n", name.c_str());
     };
     WelcomeFlow flow(services, static_cast<std::uint32_t>(SDL_GetTicks() + 1));
@@ -1103,6 +1147,16 @@ int main(int argc, char** argv) {
                     menu_dialog_press(dialog_mouse_up(menu_dialog, e.button.x, e.button.y));
                 continue;
             }
+            if (menu_help) {
+                // Deviation: Esc closes the help (the original dialogs take no keys).
+                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) menu_help_press("BUTTON_OK");
+                if (e.type == SDL_MOUSEMOTION) dialog_mouse_move(menu_help->dialog(), e.motion.x, e.motion.y);
+                if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
+                    dialog_mouse_down(menu_help->dialog(), e.button.x, e.button.y);
+                if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)
+                    menu_help_press(dialog_mouse_up(menu_help->dialog(), e.button.x, e.button.y));
+                continue;
+            }
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = false;
             if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0) {
                 auto* menu = flow.selection();
@@ -1119,6 +1173,7 @@ int main(int argc, char** argv) {
         bool hot = false;
         if (profile.open()) hot = profile.pointer_over_clickable();
         else if (menu_dialog_open) hot = dialog_pointer_hot(menu_dialog);
+        else if (menu_help) hot = dialog_pointer_hot(menu_help->dialog());
         else if (game) hot = game->pointer_over_clickable();
         else if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             hot = flow.selection()->pointer_over_clickable();
@@ -1159,6 +1214,20 @@ int main(int argc, char** argv) {
                 menu_dialog_press(c == '|' ? "BUTTON_YES" : "BUTTON_NO");
             }
         }
+        // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK.
+        if (!game && auto_play.empty() && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
+            flow.current() == SceneId::Selection && game_fade_out == 0) {
+            auto_type_ms += dt;
+            if (auto_type_ms >= 300) {
+                auto_type_ms = 0;
+                const char c = auto_type.front();
+                auto_type.erase(0, 1);
+                if (c == '?') services.menu_action("BUTTON_HOWTOPLAY");
+                else if (c == '<') menu_help_press("BUTTON_PREV");
+                else if (c == '>') menu_help_press("BUTTON_NEXT");
+                else if (c == '~') menu_help_press("BUTTON_OK");
+            }
+        }
         if (game) {
             game->update(dt);
             // --type: one key every 300 ms while a round is being played.
@@ -1171,7 +1240,12 @@ int main(int argc, char** argv) {
                 else if (c == ' ') game->key_space();
                 else if (c == '~') game->key_escape();                  // pause menu / back
                 else if (c == '$') game->dialog_press("BUTTON_STOP");   // pause menu STOP
-                else if (c == '>') game->press("BUTTON_NextRound");     // NEXT ROUND once qualified
+                else if (c == '?') game->dialog_press("BUTTON_HOWTOPLAY");   // pause menu HOW TO PLAY
+                else if (c == '<') game->dialog_press("BUTTON_PREV");       // help: previous page
+                else if (c == '>') {
+                    if (game->dialog_kind() == GameDialog::HowToPlay) game->dialog_press("BUTTON_NEXT");
+                    else game->press("BUTTON_NextRound");                   // NEXT ROUND once qualified
+                }
                 else game->type_letter(c);
             }
         } else {
@@ -1179,6 +1253,7 @@ int main(int argc, char** argv) {
         }
         profile.update(dt);
         if (menu_dialog_open) dialog_tick(menu_dialog, dt);
+        if (menu_help) menu_help->tick(dt);
         simulated_ms += dt;
         if (flow.current() != last_scene) {
             last_scene = flow.current();
@@ -1205,12 +1280,15 @@ int main(int argc, char** argv) {
                           Anchor::Center, 2);
             }
         }
-        if (game && game->dialog_open()) {
+        if (game && game->dialog_kind() == GameDialog::HowToPlay) {
+            draw_help(ren, assets, game->dialog());
+        } else if (game && game->dialog_open()) {
             draw_dialog(ren, assets, game->dialog());
             for (const LetterBall& b : game->dialog_balls())
                 draw_letter_ball(ren, assets, b, game->dialog().left(), game->dialog().top());
         }
         if (menu_dialog_open) draw_dialog(ren, assets, menu_dialog);
+        if (menu_help) draw_help(ren, assets, menu_help->dialog());
         if (profile.open()) draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
         float black = flow.black_alpha();
         if (game_fade_out > 0) black = std::max(black, 1.0f - static_cast<float>(game_fade_out) / GAME_FADE_HALF_MS);

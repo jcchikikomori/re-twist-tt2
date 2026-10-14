@@ -38,7 +38,9 @@ inline constexpr const char* CONGRATS_BODY = "Congratulations!\nYou earned a\nne
 }  // namespace game_strings
 
 // Kinds used by the game scene (the profile kinds stay in DialogKind).
-enum class GameDialog { None, PauseMenu, ConfirmExit, ConfirmGiveUp, NotAvailable, NextRound, EndGame, Congrats };
+enum class GameDialog {
+    None, PauseMenu, ConfirmExit, ConfirmGiveUp, NotAvailable, HowToPlay, NextRound, EndGame, Congrats
+};
 
 inline int text_line_count(const std::string& s) {
     int n = 1;
