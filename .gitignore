@@ -61,3 +61,6 @@ opencode.json
 # Imported original-game assets (opt-in, end-user's legal liability)
 imported-assets/
 
+# My prompts
+docs/prompts/
+
