@@ -4,8 +4,10 @@
 #include "test_harness.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -74,6 +76,11 @@ struct Fixture {
         scene->press(skip_button());
         scene->dialog_press("BUTTON_YES");
         scene->update(REVEAL_MS + 20);
+    }
+    // Let update() pick up the queued popup and report what is on screen.
+    std::optional<PopupKind> shown() {
+        scene->update(0);
+        return scene->popup_kind();
     }
     bool played(SoundId id) const {
         for (auto s : sounds) if (s == id) return true;
@@ -435,11 +442,14 @@ TEST(guess_outcomes_score_and_commentary) {
     s.key_return();
     ASSERT_EQ(s.score(), 90);
     ASSERT_TRUE(f.played(SoundId::WordReject));
-    ASSERT_EQ(s.commentary().frame, static_cast<int>(Comment::AlreadyGuessed));
-    // Not a word.
+    ASSERT_TRUE(f.shown() == PopupKind::AlreadyGuessed);
+    // Not a word: queued behind the popup that is up (0x428e20).
     f.type("cra");
     s.key_return();
-    ASSERT_EQ(s.commentary().frame, static_cast<int>(Comment::NotListed));
+    ASSERT_EQ(s.popups_waiting(), std::size_t{1});
+    s.update(popup_duration_ms(PopupKind::AlreadyGuessed));
+    s.update(1);                                           // the clean-up step runs a frame later
+    ASSERT_TRUE(f.shown() == PopupKind::NotListed);
     // Valid in the full list but not a board word ("cart"): the
     // original places it in the first empty slot of its length and
     // shows the guessed word there (0x432b20 / 0x431880), flagged
@@ -457,11 +467,6 @@ TEST(guess_outcomes_score_and_commentary) {
     ASSERT_TRUE(f.sounds.empty());
     ASSERT_TRUE(s.typed().empty());
     ASSERT_EQ(s.score(), 90 + 160);
-    // Commentary fades in, holds, fades out.
-    s.update(COMMENT_FADE_MS);
-    ASSERT_TRUE(s.commentary().alpha > 0.9f);
-    s.update(COMMENT_SHOW_MS + COMMENT_FADE_MS + 50);
-    ASSERT_TRUE(s.commentary().alpha < 0.05f);
 }
 
 TEST(no_room_comment_depends_on_length_slots) {
@@ -476,8 +481,9 @@ TEST(no_room_comment_depends_on_length_slots) {
     f.sounds.clear();
     f.type("tec");
     s.key_return();
-    ASSERT_EQ(s.commentary().frame, static_cast<int>(Comment::EnoughOfLength));
-    ASSERT_TRUE(f.played(SoundId::WordReject));
+    ASSERT_TRUE(f.shown() == PopupKind::EnoughOfLength);
+    ASSERT_EQ(s.popup().sheet.image_id, std::string("IMAGE_IMAGE_POPUP_5"));
+    ASSERT_TRUE(!f.played(SoundId::WordReject));            // 0x424730 case 2: no sound
 }
 
 TEST(uncommon_guess_takes_the_first_empty_slot) {
@@ -501,8 +507,82 @@ TEST(uncommon_guess_takes_the_first_empty_slot) {
     f.sounds.clear();
     f.type("cart");
     s.key_return();
-    ASSERT_EQ(s.commentary().frame, static_cast<int>(Comment::AlreadyGuessed));
+    ASSERT_TRUE(f.shown() == PopupKind::AlreadyGuessed);
     ASSERT_TRUE(f.played(SoundId::WordReject));
+}
+
+// 0x428ec0, one message popup step by step. Worked example: 150 ms
+// fade in, 250 ms grow to 1.2 (smoothstep: half way = 0.6), 100 ms
+// settle to 1.0, 900 ms hold, 250 ms fade out = 1650 ms.
+TEST(message_popup_fades_grows_settles_holds_and_fades) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type("cra");
+    s.key_return();
+    ASSERT_TRUE(!s.popup_kind());                          // queued, not up yet
+    ASSERT_TRUE(f.shown() == PopupKind::NotListed);
+    const SpriteState& p = s.popup();
+    ASSERT_EQ(p.sheet.image_id, std::string("IMAGE_IMAGE_POPUP_0"));
+    ASSERT_TRUE(p.x == POPUP_X && p.y == POPUP_Y && p.anchor == Anchor::Center);
+    ASSERT_TRUE(p.alpha == 0.0f && p.scale == 0.0f);
+    s.update(POPUP_FADE_IN_MS);
+    ASSERT_TRUE(p.alpha == 1.0f && p.scale == 0.0f);       // grows only after the fade
+    s.update(POPUP_GROW_MS / 2);
+    ASSERT_TRUE(std::fabs(p.scale - 0.6f) < 0.001f);
+    s.update(POPUP_GROW_MS / 2);
+    ASSERT_TRUE(std::fabs(p.scale - POPUP_OVERSHOOT) < 0.001f);
+    s.update(POPUP_SETTLE_MS / 2);
+    ASSERT_TRUE(std::fabs(p.scale - 1.1f) < 0.001f);       // linear settle
+    s.update(POPUP_SETTLE_MS / 2);
+    ASSERT_TRUE(p.scale == 1.0f);
+    s.update(POPUP_MESSAGE_HOLD_MS - 1);
+    ASSERT_TRUE(p.alpha == 1.0f && p.visible);             // boundary: still holding
+    s.update(1);
+    s.update(POPUP_FADE_OUT_MS / 2);
+    ASSERT_TRUE(std::fabs(p.alpha - 0.5f) < 0.001f);
+    s.update(POPUP_FADE_OUT_MS / 2);
+    ASSERT_TRUE(p.alpha == 0.0f);
+    s.update(1);
+    ASSERT_TRUE(!s.popup_kind() && !p.visible);
+    ASSERT_EQ(popup_duration_ms(PopupKind::NotListed), 1650);
+}
+
+TEST(banner_popup_runs_its_frames_at_50_ms) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type(s.rack());
+    s.key_return();
+    ASSERT_TRUE(f.shown() == PopupKind::Bingo);
+    s.update(POPUP_FADE_IN_MS);
+    s.update(POPUP_GROW_MS);
+    s.update(POPUP_SETTLE_MS);
+    ASSERT_EQ(s.popup().frame, 0);
+    s.update(POPUP_BANNER_FRAME_MS * 3);
+    ASSERT_EQ(s.popup().frame, 3);
+    s.update(POPUP_BANNER_FRAME_MS * 12);
+    ASSERT_EQ(s.popup().frame, 14);                        // one pass, rests on the last frame
+    ASSERT_EQ(popup_duration_ms(PopupKind::Bingo), 2500);
+    ASSERT_EQ(popup_duration_ms(PopupKind::AllWords), 150 + 250 + 100 + 18 * 50 + 1000 + 250);
+}
+
+TEST(correct_words_queue_no_popup) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type("car");
+    s.key_return();
+    ASSERT_TRUE(!f.shown());
+    ASSERT_EQ(s.popups_waiting(), std::size_t{0});
+}
+
+// 0x425c50 -> 0x42ace0: a new round drops the popups still waiting.
+TEST(new_round_drops_waiting_popups) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    for (const char* w : {"cra", "rca", "atc"}) { f.type(w); s.key_return(); }
+    ASSERT_EQ(s.popups_waiting(), std::size_t{3});
+    f.skip();                                              // PASS, YES, 3 s reveal, round 2
+    ASSERT_EQ(s.round_number(), 2);
+    ASSERT_EQ(s.popups_waiting(), std::size_t{0});
 }
 
 TEST(bingo_qualifies_with_popup_and_bonus) {
@@ -513,17 +593,22 @@ TEST(bingo_qualifies_with_popup_and_bonus) {
     ASSERT_TRUE(s.qualified());
     ASSERT_EQ(s.score(), 250 + 1000);
     ASSERT_TRUE(f.played(SoundId::WordBingo));
-    ASSERT_TRUE(s.popup_bingo().visible);
-    ASSERT_EQ(s.commentary().frame, static_cast<int>(Comment::Bingo));
-    s.update(POPUP_FRAME_MS * 15 + 100);
+    ASSERT_TRUE(f.shown() == PopupKind::Bingo);
+    ASSERT_EQ(s.popup().sheet.image_id, std::string("IMAGE_POPUP_BINGO"));
+    ASSERT_EQ(s.popups_waiting(), std::size_t{0});          // the banner only, no extra message
+    s.update(popup_duration_ms(PopupKind::Bingo));
     s.update(16);
-    ASSERT_TRUE(!s.popup_bingo().visible);
+    ASSERT_TRUE(!s.popup_kind());
+    ASSERT_TRUE(!s.popup().visible);
     // A second bingo-length word is just 10*len^2 (no second bonus).
     std::string other;
     for (const auto& v : s.slots()) if (v.word.size() == 5 && v.word != s.rack()) { other = v.word; break; }
+    f.sounds.clear();
     f.type(other);
     s.key_return();
     ASSERT_EQ(s.score(), 1250 + 250);
+    ASSERT_TRUE(f.played(SoundId::WordBingo));
+    ASSERT_TRUE(!f.shown());                               // no second banner
 }
 
 TEST(all_words_ends_round_and_next_round_starts) {
@@ -535,7 +620,9 @@ TEST(all_words_ends_round_and_next_round_starts) {
     ASSERT_TRUE(s.phase() == GamePhase::Reveal);
     ASSERT_TRUE(s.last_round_end() == RoundEnd::AllWords);
     ASSERT_TRUE(f.played(SoundId::AllWords));
-    ASSERT_TRUE(s.popup_all_words().visible);
+    // The bingo banner came first; ALL WORDS waits for it (one at a time).
+    ASSERT_TRUE(f.shown() == PopupKind::Bingo);
+    ASSERT_EQ(s.popups_waiting(), std::size_t{1});
     ASSERT_EQ(f.profile.rounds_completed[static_cast<std::size_t>(tt2::GameMode::Untimed)], 1);
     const std::int32_t score = s.score();
     ASSERT_TRUE(score >= 1000 + 100 * static_cast<std::int32_t>(words.size()));
@@ -697,11 +784,9 @@ TEST(three_misses_end_the_game_with_high_score) {
     ASSERT_EQ(s.round_number(), 4);
     ASSERT_TRUE(s.phase() == GamePhase::GameOver);
     ASSERT_EQ(f.discards, 1);                              // the save goes with the game
-    ASSERT_TRUE(s.game_over_sprite().alpha == 1.0f);
     ASSERT_TRUE(s.dialog_kind() == GameDialog::Congrats);  // a new high score
     s.key_return();
     ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);
-    ASSERT_EQ(s.game_over_sprite().frame, 0);
     ASSERT_TRUE(f.played(SoundId::HighScoreAchieved));
     const auto& table = f.hs.table(tt2::GameMode::Timed);
     bool found = false;

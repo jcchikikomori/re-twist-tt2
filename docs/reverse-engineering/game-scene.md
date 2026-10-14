@@ -27,8 +27,8 @@ carry is hard-coded in the exe. The `LETTERS_*` / `ANAGRAM_Height` / `ANAGRAM_Le
 | `BUTTON_Menu` | `BUTTON_MENU` 119×200 (4 rows) | (10, 554) | |
 | `BUTTON_Twist` / `Clear` / `LastWord` / `Enter` | 119×200 sheets | y 407, x 147 / 273 / 399 / 525 | |
 | `BUTTON_NextRound` / `GiveUp` / `Pass` / `Pass_2` / `WOTD_DONE` | 157×208 sheets | (317, 473) | all share one spot |
-| `COMMENTARY` | `COMMENTS` 189×648, 9 frames | (316, 106), alpha 0 | see §5 |
-| `GAME_OVER` | `GAME_OVER` 234×116, 2 frames | (291, 264), alpha 0 | frame 0 "GAME OVER" |
+| `COMMENTARY` | `COMMENTS` 189×648, 9 frames | (316, 106), alpha 0 | never shown, see §5.1 |
+| `GAME_OVER` | `GAME_OVER` 234×116, 2 frames | (291, 264), alpha 0 | never shown, see §5.1 |
 | `PANEL_*` | `panel_*.png` | re-positioned at runtime | §3 |
 | `ANAGRAMS` | code component | re-positioned at runtime | §2 |
 
@@ -123,16 +123,59 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   (`gameplay-notes.md` §2); the board from §2 above; `SOUND_letter_load` plays.
 - Timer (CONFIRMED, `gameplay-notes.md` §3): only Timed / WOTD tick; the last 10 s play
   `SOUND_game_clock_countdown` once per second; 0 plays `SOUND_game_clock_timeup`.
-- Guess (CONFIRMED return codes, `0x432850`): not a word → `SOUND_word_reject` + commentary
-  frame 0; duplicate → frame 3; valid but no free slot → frame 5 (frame 8 when the board has
-  no slot of that length at all); accepted → `SOUND_word_correct`, `+10·len²`; first bingo
-  → `SOUND_word_bingo`, `+1000`, qualified, `IMAGE_POPUP_BINGO` (380×140, 15 frames) and
-  commentary frame 2; all words → `SOUND_game_all_words_submitted`, `+100·slots`,
-  `IMAGE_POPUP_ALLWORDS` (18 frames), commentary frame 1, round ends.
-  `tt_commentary.png` rows: 0 "not one of the listed words", 1 "all the words", 2 "longest
-  word / next round", 3 "already guessed", 4 crossword intersection, 5 "enough words of
-  that length", 6 "correct, extra time" (Lightning), 7 "only the hinted letter" (Lightning),
-  8 "don't need any words of that length".
+- Guess (CONFIRMED, ENTER `0x424730` on the `0x432850` return code,
+  `ev_e7f08e2c9eafb9f3ee109e9c87349a34776e6be1dafadff3ee385925c698ea1a`): not a word →
+  `SOUND_word_reject` + popup 0; duplicate → `SOUND_word_reject` + popup 3; valid but no free
+  slot → popup 5, or popup 8 when the board has no slot of that length at all, and **no
+  sound**; accepted → `SOUND_word_correct`, `+10·len²`; any bingo → `SOUND_word_bingo`, and
+  the first one (round not yet qualified) adds `+1000`, qualifies and queues popup 2 (the
+  `IMAGE_POPUP_BINGO` banner); all words → `SOUND_game_all_words_submitted`, `+100·slots`,
+  popup 1 (the `IMAGE_POPUP_ALLWORDS` banner), round ends. The first plain correct word of
+  a scene also queues popup 10 ("click words for their definition"); the port leaves it out
+  because it has no definition lookup.
+
+### 5.1 Popups (CONFIRMED, `0x428ec0`)
+
+`0x428e20(kind)` appends to a queue (`+0x334`); the scene update `0x426860` starts the next
+one only when no popup is up (`+0x348`), so popups show **one at a time**. Round start
+`0x425c50` clears the queue (`0x42ace0`). Kind 2 loads `IMAGE_POPUP_BINGO`, kind 1
+`IMAGE_POPUP_ALLWORDS`, any other kind `"IMAGE_IMAGE_POPUP_" + kind`
+(`image_popup_<kind>.png`): 0 not in the dictionary, 3 already guessed, 4 crossword
+intersection, 5 enough words of that length, 6 extra time, 7 hint letter, 8 no words of
+that length, 9 no unplayed word fits, 10 definitions, 11 word of the day found.
+Evidence: `ev_fee25d6c7c52d1b7d3176d91079a74a1e4e5191c146c3dc125f1fbd6731b35c6`,
+`ev_2a0a784f296abacbdd700854063bd701eee8a8dd23e7cda3b9e635e12f78f042`,
+`ev_faa42e184823a6f1cb814bcda1ce22fb7171ed5f5d9f154bb2232d012abcaa66`.
+
+The popup is centred (anchor 4) at `(400, 150)` (`0x423a20`: `+0x34c = [0x59b984]`,
+`+0x350 = [0x59b980]`, `ev_79be952146c636bd4321e15aa343e208c6b3be945c4d64b9e56d243ba488c1ca`,
+`ev_df42ad34f8cafc42f596ce90c4fcadccdcca4ebcffe3414eda24444b50b4e2e3`) and starts at alpha 0,
+scale 0. Its modifiers are chained through `0x4506b0`, each one a child of the previous, so
+they run in order (durations are passed in `EDX` / `ESI`):
+
+| Step | Modifier | Value |
+| --- | --- | --- |
+| 1 | `ModifierAlpha` 0 → 1 | 150 ms (`0x96`) |
+| 2 | `ModifierScale` 0 → 1.2 | 250 ms (`0xfa`), easing `0x4513d0` (smoothstep); 1.2 is `[0x59b998]` |
+| 3 | `ModifierScale` 1.2 → 1 | 100 ms (`0x64`), linear |
+| 4a | banners: `ModifierFrame` one pass | 50 ms per frame (`0x32`), then `ModifierDelay` 1000 ms |
+| 4b | messages: `ModifierDelay` | 900 ms (`0x384`) |
+| 5 | `ModifierAlpha` 1 → 0 | 250 ms (`0xfa`) |
+| 6 | method `0x4235c0` | clears `+0x348`, so the next popup can start |
+
+The frame-step reading (one pass, 50 ms) matches the ball flip `0x43a820`, which fills the
+same `ModifierFrame` fields with 1 and 60 ms
+(`ev_7a7dd1dff5b4343cd7ef6ecd83fae05dca724cab28fd8459c9bdf8b4215ada0e`). Worked example: a
+message is up for `150 + 250 + 100 + 900 + 250 = 1650` ms; the 15-frame bingo banner for
+`150 + 250 + 100 + 750 + 1000 + 250 = 2500` ms.
+
+The `COMMENTARY` (`COMMENTS`, `tt_commentary.png`) and `GAME_OVER` (`tt_gameover.PNG`)
+sprites in `dialogs.xml` stay at `alpha="0"`: the exe has no `COMMENTS`, `COMMENTARY` or
+`GAME_OVER` string to look them up with
+(`ev_cc4ffff180f91c369e5edfda823138752aa26b1778e8ceac1fcb9233ccbeadeb`,
+`ev_7deed8d25288c6415fd9568bd9abbf9dba4de2b65e19d98d452a12dc2f8155cf`; bounded to Ghidra's
+defined strings). They are leftovers from the first game (`docs/design/original-look-brief.md`
+§7), and the port draws neither.
 - End of round: `0x428840` (all words) / `0x425420` (time up without a bingo): the missing
   words are revealed (`SOUND_word_pass_reveal`, `ModifierDelay(3000)`); a miss increments
   `+0x1e8` and plays `SOUND_game_lose_life`; the **third** miss marks the game over
@@ -184,9 +227,7 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   and opens `DIALOG_CONGRATS` when it ranks, else `DIALOG_ENDGAME`. Game over deletes the
   saved game (`0x427cc0`).
 - NEXT ROUND (CONFIRMED, `0x425b60`) calls `0x428840(3000)`, which ends the round early.
-- INFERRED: the clock labels are hidden in Untimed; the GAME OVER sprite fades in over
-  500 ms and a click returns to the menu; the commentary fades 250 ms in, holds 2 s,
-  fades 250 ms out; popups run one pass at 60 ms per frame.
+- INFERRED: the clock labels are hidden in Untimed.
 - Our port follows this table (plan phase 7): `BUTTON_Pass_2` (image `BUTTON_PASS2`,
   "PASSES: 2"), `BUTTON_Pass` and GIVE UP all count a miss through `RoundEnd::Passed`.
 - High scores: `HighScoreManager::submit(mode, name, score, round)` on game over
@@ -288,6 +329,9 @@ All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
 | `0x43e070` | Recursive `.tree` node reader (letters, `0`/`1`, children); anchor check 2026-10-14 `ev_b0fd200dbf3523b14f18941871fe88b17c0aed2eac8ed5f6991650daf2055e70` |
 | `0x425c50` | Round start: timer / round / score reset, rack pick, `AnagramTable` ctor |
 | `0x426360` | After setup: timer label text, panel pieces fitted to the grid |
+| `0x424730` | ENTER: guess, sounds, score, popup kind per result |
+| `0x428e20` / `0x428e60` | Popup queue push / pop (`+0x334`) |
+| `0x428ec0` | Popup: sprite by kind at (400, 150), fade / scale / hold / fade chain |
 | `0x427680` | Mouse down on the letter rows (place / take back) |
 | `0x431e50` | `AnagramTable` layout (columns / rows) |
 | `0x430800` | One word of the grid (tiles + small letters) |

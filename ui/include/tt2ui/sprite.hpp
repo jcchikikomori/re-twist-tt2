@@ -48,6 +48,7 @@ struct SpriteState {
     float y = 0;
     int frame = 0;
     float alpha = 1.0f;
+    float scale = 1.0f;     // drawn scaled about (x, y), the anchor point
     bool visible = true;
     Flip flip = Flip::None;
     Anchor anchor = Anchor::TopLeft;

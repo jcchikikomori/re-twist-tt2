@@ -107,6 +107,32 @@ TEST(alpha_modifier_interpolates_and_clamps) {
     ASSERT_TRUE(q.empty());
 }
 
+// 0x4513d0 smoothstep: (3 - 2t) * t^2. t = 0.25 -> 0.15625.
+TEST(easing_linear_and_smoothstep) {
+    ASSERT_EQ(ease(Easing::Linear, 0.25f), 0.25f);
+    ASSERT_EQ(ease(Easing::Smoothstep, 0.0f), 0.0f);
+    ASSERT_EQ(ease(Easing::Smoothstep, 0.25f), 0.15625f);
+    ASSERT_EQ(ease(Easing::Smoothstep, 0.5f), 0.5f);
+    ASSERT_EQ(ease(Easing::Smoothstep, 1.0f), 1.0f);
+}
+
+TEST(scale_modifier_eases_and_clamps) {
+    SpriteState s;
+    ModifierQueue q;
+    q.push_scale(&s, 0.0f, 2.0f, 400, Easing::Smoothstep);
+    q.update(100);
+    ASSERT_EQ(s.scale, 2.0f * 0.15625f);
+    q.update(1000);                                        // past the end: clamps to `to`
+    ASSERT_EQ(s.scale, 2.0f);
+    ASSERT_TRUE(q.empty());
+    SpriteState z;
+    ModifierQueue q2;
+    q2.push_scale(&z, 1.0f, 3.0f, 0);                      // zero length: jumps, never divides by 0
+    q2.update(16);
+    ASSERT_EQ(z.scale, 3.0f);
+    ASSERT_TRUE(q2.empty());
+}
+
 TEST(frame_modifier_steps_all_frames_and_passes) {
     SpriteState s = sprite("L", sheet("IMAGE_LOGO_ANIM", 5700, 864, 12, 2, 24), 0, 0);
     ModifierQueue q;

@@ -1,7 +1,8 @@
 // GF2 "modifiers": small time-based actions chained on a queue.
 //
 // The original engine (see docs/reverse-engineering/welcome-flow.md §0)
-// has ModifierDelay, ModifierAlpha, ModifierFrame and ModifierMethod.
+// has ModifierDelay, ModifierAlpha, ModifierScale, ModifierFrame and
+// ModifierMethod.
 // A queue runs them one after another; each modifier has its own
 // target sprite, so one queue can fade one sprite, wait, then animate
 // another. Leftover time from a modifier that finishes mid-frame is
@@ -59,6 +60,39 @@ private:
     int elapsed_ = 0;
 };
 
+// Easing passed to a modifier ctor in EDX; 0 means linear. 0x4513d0 is
+// smoothstep, f(t) = (3 - 2t) * t^2 (game-scene.md §4).
+enum class Easing { Linear, Smoothstep };
+
+inline float ease(Easing e, float t) {
+    if (e == Easing::Smoothstep) return (3.0f - 2.0f * t) * t * t;
+    return t;
+}
+
+// ModifierScale (vtable 0x59700c, ctor 0x47ece0): scale from -> to over
+// `ms` with an easing.
+class ScaleModifier : public Modifier {
+public:
+    ScaleModifier(SpriteState* target, float from, float to, int ms, Easing easing)
+        : target_(target), from_(from), to_(to), ms_(ms), easing_(easing) {}
+    int update(int dt) override {
+        elapsed_ += dt;
+        if (ms_ <= 0 || elapsed_ >= ms_) {
+            target_->scale = to_;
+            return ms_ <= 0 ? dt : elapsed_ - ms_;
+        }
+        const float t = ease(easing_, static_cast<float>(elapsed_) / ms_);
+        target_->scale = from_ + (to_ - from_) * t;
+        return -1;
+    }
+private:
+    SpriteState* target_;
+    float from_, to_;
+    int ms_;
+    Easing easing_;
+    int elapsed_ = 0;
+};
+
 // ModifierFrame (0x4793c0 / 0x479420): step frames first..last at
 // `ms_per_frame`, `passes` times. last == -1 means the sheet's last
 // frame.
@@ -102,6 +136,9 @@ public:
     void push_delay(int ms) { push(std::make_unique<DelayModifier>(ms)); }
     void push_alpha(SpriteState* t, float from, float to, int ms) {
         push(std::make_unique<AlphaModifier>(t, from, to, ms));
+    }
+    void push_scale(SpriteState* t, float from, float to, int ms, Easing easing = Easing::Linear) {
+        push(std::make_unique<ScaleModifier>(t, from, to, ms, easing));
     }
     void push_frames(SpriteState* t, int first, int last, int ms_per_frame, int passes = 1) {
         push(std::make_unique<FrameModifier>(t, first, last, ms_per_frame, passes));

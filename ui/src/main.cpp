@@ -112,8 +112,10 @@ const std::map<std::string, std::string> kImageFiles = {
     {"BUTTON_GiveUp", "images/gamescene/button_giveup.png"},
     {"BUTTON_Pass", "images/gamescene/button_pass.png"},
     {"BUTTON_PASS2", "images/gamescene/button_pass2.png"},
-    {"COMMENTS", "images/gamescene/tt_commentary.png"},
-    {"GAME_OVER", "images/gamescene/tt_gameover.PNG"},
+    {"IMAGE_IMAGE_POPUP_0", "images/gamescene/image_popup_0.png"},
+    {"IMAGE_IMAGE_POPUP_3", "images/gamescene/image_popup_3.png"},
+    {"IMAGE_IMAGE_POPUP_5", "images/gamescene/image_popup_5.png"},
+    {"IMAGE_IMAGE_POPUP_8", "images/gamescene/image_popup_8.png"},
     {"IMAGE_POPUP_BINGO", "images/gamescene/popup_bingo.png"},
     {"IMAGE_POPUP_ALLWORDS", "images/gamescene/popup_allwords.png"},
     {"ANAGRAM_TILE", "images/gamescene/anagramTile.png"},
@@ -326,8 +328,9 @@ SDL_Surface* make_placeholder(const SheetSpec& spec) {
     else if (spec.image_id == "IMAGE_LETTERBALL_ANIM") { r = g = b = 0xf8; }
     else if (spec.image_id.rfind("IMAGE_PANEL", 0) == 0) { r = 0x7f; g = 0x9a; b = 0xdc; }
     else if (spec.image_id == "IMAGE_UI_BAR") { r = 0x02; g = 0x2e; b = 0xa8; }
-    else if (spec.image_id == "COMMENTS" || spec.image_id == "GAME_OVER" ||
-             spec.image_id.rfind("IMAGE_POPUP", 0) == 0) { r = 0x16; g = 0x9c; b = 0xd8; }
+    else if (spec.image_id.rfind("IMAGE_POPUP", 0) == 0 || spec.image_id.rfind("IMAGE_IMAGE_POPUP", 0) == 0) {
+        r = 0x16; g = 0x9c; b = 0xd8;
+    }
 
     if (spec.image_id == "IMAGE_LETTERBALL_ANIM" || spec.image_id == "IMAGE_BURST" || spec.image_id == "LetterBox") {
         SDL_FillRect(s, nullptr, SDL_MapRGBA(s->format, 0, 0, 0, 0));
@@ -565,6 +568,14 @@ void draw_sprite(SDL_Renderer* ren, Assets& assets, const SpriteState& s, float 
     if (!img.texture) return;
     SDL_Rect src{s.sheet.frame_x(s.frame), s.sheet.frame_y(s.frame), s.sheet.frame_w, s.sheet.frame_h};
     SDL_Rect dst{static_cast<int>(s.left() + ox), static_cast<int>(s.top() + oy), s.sheet.frame_w, s.sheet.frame_h};
+    if (s.scale != 1.0f) {
+        // Scale about the anchor point (x, y); clipped sprites never scale.
+        if (s.scale <= 0.0f) return;
+        dst.x = static_cast<int>(s.x + ox + (s.left() - s.x) * s.scale);
+        dst.y = static_cast<int>(s.y + oy + (s.top() - s.y) * s.scale);
+        dst.w = static_cast<int>(s.sheet.frame_w * s.scale);
+        dst.h = static_cast<int>(s.sheet.frame_h * s.scale);
+    }
     if (s.has_clip) {
         src.x += static_cast<int>(s.clip.x);
         src.y += static_cast<int>(s.clip.y);
@@ -758,14 +769,19 @@ void draw_letter_ball(SDL_Renderer* ren, Assets& assets, const LetterBall& b, fl
     }
 }
 
-// tt_commentary.png rows, for the placeholder build (the sheet carries the text).
-const char* kCommentText[9] = {
-    "SORRY, THAT'S\nNOT ONE OF THE\nLISTED WORDS", "CONGRATULATIONS!\nYOU GOT\nALL THE WORDS!",
-    "YOU GOT THE\nLONGEST WORD!\nYOU QUALIFY FOR\nTHE NEXT ROUND!", "YOU'VE ALREADY\nGUESSED\nTHAT WORD!",
-    "SORRY, YOU'VE ALREADY\nUSED THAT LETTER IN THE\nINTERSECTION WORD.", "YOU ALREADY HAVE\nENOUGH WORDS OF\nTHAT LENGTH!",
-    "CORRECT!!\nYOU'VE EARNED EXTRA TIME!", "SORRY, ONLY THE\nHINTED LETTER WORKS\nIN THIS SPACE",
-    "YOU DONT NEED\nANY WORDS OF\nTHAT LENGTH",
-};
+// Placeholder-build text for each popup (our own wording; the imported
+// PNGs carry the original text).
+const char* popup_placeholder_text(PopupKind k) {
+    switch (k) {
+        case PopupKind::NotListed: return "NOT IN THE\nDICTIONARY";
+        case PopupKind::AllWords: return "ALL WORDS!";
+        case PopupKind::Bingo: return "BINGO!\nNEXT ROUND!";
+        case PopupKind::AlreadyGuessed: return "ALREADY\nFOUND";
+        case PopupKind::EnoughOfLength: return "THAT LENGTH\nIS FULL";
+        case PopupKind::NoneOfLength: return "NO WORDS OF\nTHAT LENGTH";
+    }
+    return "";
+}
 
 // Stretch one image over a rectangle (the panel strips are 1 px sheets).
 void draw_stretched(SDL_Renderer* ren, Assets& assets, const char* id, int w, int h, SDL_Rect dst) {
@@ -904,11 +920,12 @@ void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
         }
     }
 
-    const SpriteState& c = g.commentary();
-    draw_sprite_or_label(ren, assets, c, kCommentText[c.frame % 9], "PLACEHOLDER_2", 12);
-    draw_sprite_or_label(ren, assets, g.popup_bingo(), "BINGO!\nNEXT ROUND!", "PLACEHOLDER_3", 20);
-    draw_sprite_or_label(ren, assets, g.popup_all_words(), "ALL WORDS!", "PLACEHOLDER_3", 20);
-    draw_sprite_or_label(ren, assets, g.game_over_sprite(), "GAME OVER", "PLACEHOLDER_4", 24);
+    // 0x428ec0: one popup at a time; the label waits until it has grown.
+    if (g.popup_kind()) {
+        const SpriteState& p = g.popup();
+        draw_sprite_or_label(ren, assets, p, p.scale >= 0.9f ? popup_placeholder_text(*g.popup_kind()) : "",
+                             "PLACEHOLDER_3", 20);
+    }
 }
 
 // Prefer the user's own common.tree / full.tree (symlinks to the original

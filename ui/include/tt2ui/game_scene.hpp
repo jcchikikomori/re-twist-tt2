@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -250,20 +251,60 @@ constexpr int ROUND_MS = 120000;          // 0x425c50: +0x2fc
 constexpr int WARNING_MS = 10000;         // 0x425c50: +0x304 (countdown starts at 10 s)
 constexpr int LIVES = 3;                  // 0x425420: game over when the miss counter reaches 3
 constexpr int REVEAL_MS = 3000;           // 0x428840 / 0x425420 / 0x428c80: ModifierDelay(3000) after the reveal
-constexpr int COMMENT_SHOW_MS = 2000;     // INFERRED: commentary fade timing
-constexpr int COMMENT_FADE_MS = 250;
-constexpr int POPUP_FRAME_MS = 60;        // INFERRED: bingo / all-words popup frame time
 
-
-// Frames of images/gamescene/tt_commentary.png (189x648, 9 rows).
-enum class Comment {
-    NotListed = 0,       // "SORRY, THAT'S NOT ONE OF THE LISTED WORDS"
-    AllWords = 1,        // "CONGRATULATIONS! YOU GOT ALL THE WORDS!"
-    Bingo = 2,           // "YOU GOT THE LONGEST WORD! YOU QUALIFY FOR THE NEXT ROUND!"
-    AlreadyGuessed = 3,  // "YOU'VE ALREADY GUESSED THAT WORD!"
-    EnoughOfLength = 5,  // "YOU ALREADY HAVE ENOUGH WORDS OF THAT LENGTH!"
-    NoneOfLength = 8,    // "YOU DONT NEED ANY WORDS OF THAT LENGTH"
+// ---------------------------------------------------------------------------
+// Popups (0x428ec0, game-scene.md §5)
+// ---------------------------------------------------------------------------
+// Every message and banner in the scene is one popup, queued by
+// 0x428e20(kind) and shown one at a time. Kind 2 is IMAGE_POPUP_BINGO,
+// kind 1 IMAGE_POPUP_ALLWORDS, any other kind IMAGE_IMAGE_POPUP_<kind>.
+// The COMMENTS (tt_commentary.png) and GAME_OVER (tt_gameover.PNG)
+// sprites in dialogs.xml are never looked up by the exe and stay at
+// alpha 0, so the port does not draw them.
+enum class PopupKind {
+    NotListed = 0,       // image_popup_0: the word isn't in the dictionary
+    AllWords = 1,        // IMAGE_POPUP_ALLWORDS banner
+    Bingo = 2,           // IMAGE_POPUP_BINGO banner
+    AlreadyGuessed = 3,  // image_popup_3
+    EnoughOfLength = 5,  // image_popup_5
+    NoneOfLength = 8,    // image_popup_8
 };
+
+constexpr float POPUP_X = 400.0f;          // 0x423a20: +0x34c = [0x59b984]
+constexpr float POPUP_Y = 150.0f;          // 0x423a20: +0x350 = [0x59b980]
+constexpr int POPUP_FADE_IN_MS = 150;      // ModifierAlpha(0 -> 1, 0x96)
+constexpr int POPUP_GROW_MS = 250;         // ModifierScale(0 -> 1.2, 0xfa, smoothstep 0x4513d0)
+constexpr float POPUP_OVERSHOOT = 1.2f;    // [0x59b998]
+constexpr int POPUP_SETTLE_MS = 100;       // ModifierScale(1.2 -> 1, 0x64, linear)
+constexpr int POPUP_BANNER_FRAME_MS = 50;  // ModifierFrame(one pass, 0x32)
+constexpr int POPUP_BANNER_HOLD_MS = 1000; // ModifierDelay(0x3e8) after the frames
+constexpr int POPUP_MESSAGE_HOLD_MS = 900; // ModifierDelay(0x384)
+constexpr int POPUP_FADE_OUT_MS = 250;     // ModifierAlpha(1 -> 0, 0xfa)
+
+inline bool popup_is_banner(PopupKind k) { return k == PopupKind::Bingo || k == PopupKind::AllWords; }
+
+// Banner sheets from resources.xml; the message sizes are the PNG sizes.
+inline SheetSpec popup_sheet(PopupKind k) {
+    switch (k) {
+        case PopupKind::Bingo: return sheet("IMAGE_POPUP_BINGO", 1900, 420, 5, 3, 15);
+        case PopupKind::AllWords: return sheet("IMAGE_POPUP_ALLWORDS", 2280, 420, 6, 3, 18);
+        case PopupKind::NotListed: return sheet("IMAGE_IMAGE_POPUP_0", 254, 97);
+        case PopupKind::AlreadyGuessed: return sheet("IMAGE_IMAGE_POPUP_3", 295, 97);
+        case PopupKind::EnoughOfLength: return sheet("IMAGE_IMAGE_POPUP_5", 339, 103);
+        case PopupKind::NoneOfLength: return sheet("IMAGE_IMAGE_POPUP_8", 301, 102);
+    }
+    return SheetSpec{};
+}
+
+// Fade in, grow to 1.2 and settle, hold (a banner runs its frames
+// first), fade out. Worked example: a message is on screen for
+// 150 + 250 + 100 + 900 + 250 = 1650 ms; the 15-frame bingo banner for
+// 150 + 250 + 100 + 15*50 + 1000 + 250 = 2500 ms.
+inline int popup_duration_ms(PopupKind k) {
+    const int frames = popup_is_banner(k) ? popup_sheet(k).frames * POPUP_BANNER_FRAME_MS + POPUP_BANNER_HOLD_MS
+                                          : POPUP_MESSAGE_HOLD_MS;
+    return POPUP_FADE_IN_MS + POPUP_GROW_MS + POPUP_SETTLE_MS + frames + POPUP_FADE_OUT_MS;
+}
 
 enum class GamePhase {
     Playing,
@@ -308,16 +349,7 @@ public:
         : common_(common), full_(full), profile_(profile), highscores_(highscores), timed_(timed),
           services_(std::move(services)), rng_(rng_seed), bag_(common, profile.bag) {
         build_buttons();
-        commentary_ = sprite("COMMENTARY", sheet("COMMENTS", 189, 648, 1, 9, 9), 316, 106);
-        commentary_.alpha = 0.0f;
-        game_over_ = sprite("GAME_OVER", sheet("GAME_OVER", 234, 116, 1, 2, 2), 291, 264);
-        game_over_.alpha = 0.0f;
-        popup_bingo_ = sprite("POPUP_BINGO", sheet("IMAGE_POPUP_BINGO", 1900, 420, 5, 3, 15), 400, 150);
-        popup_bingo_.anchor = Anchor::Center;
-        popup_bingo_.visible = false;
-        popup_all_ = sprite("POPUP_ALLWORDS", sheet("IMAGE_POPUP_ALLWORDS", 2280, 420, 6, 3, 18), 400, 150);
-        popup_all_.anchor = Anchor::Center;
-        popup_all_.visible = false;
+        popup_.visible = false;
         if (!(resume && resume_game(*resume))) start_round(1);
     }
 
@@ -349,10 +381,10 @@ public:
         for (auto& b : buttons_) if (b.sprite.name == name) return &b;
         return nullptr;
     }
-    const SpriteState& commentary() const { return commentary_; }
-    const SpriteState& game_over_sprite() const { return game_over_; }
-    const SpriteState& popup_bingo() const { return popup_bingo_; }
-    const SpriteState& popup_all_words() const { return popup_all_; }
+    // The popup on screen (hidden when none), its kind, and how many wait.
+    const SpriteState& popup() const { return popup_; }
+    std::optional<PopupKind> popup_kind() const { return popup_kind_; }
+    std::size_t popups_waiting() const { return popup_waiting_.size(); }
     const char* background_id() const { return timed_ ? "gamescene/BACKGROUND_TIMED" : "gamescene/BACKGROUND"; }
     bool dialog_open() const { return dialog_kind_ != GameDialog::None; }
     GameDialog dialog_kind() const { return dialog_kind_; }
@@ -597,7 +629,12 @@ public:
         if (paused()) return;
         const int round_before = round_number_;
         queue_.update(dt_ms);
-        comment_queue_.update(dt_ms);
+        // 0x426860: when no popup is up, the next queued one starts.
+        if (!popup_kind_ && !popup_waiting_.empty()) {
+            const PopupKind next = popup_waiting_.front();
+            popup_waiting_.pop_front();
+            start_popup(next);
+        }
         popup_queue_.update(dt_ms);
         for (auto& b : balls_)
             if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43a940 after each flip
@@ -693,7 +730,7 @@ private:
             b.reveal_elapsed_ms = 0;
             balls_.push_back(b);
         }
-        game_over_.alpha = 0.0f;
+        popup_waiting_.clear();   // 0x425c50 -> 0x42ace0: queued popups are dropped
         refresh_buttons();
     }
 
@@ -724,22 +761,24 @@ private:
         if (word.empty()) return;
         last_word_ = word;
         return_all_letters();
+        const bool was_qualified = qualified();
         const auto rep = round_->guess(word);
         using tt2::GuessStatus;
         switch (rep.status) {
+            // 0x424730 switch on 0x432850: 0 and -1 play SOUND_word_reject;
+            // the no-room case (2) plays no sound, only the popup.
             case GuessStatus::NotAWord:
                 play(SoundId::WordReject);
-                show_comment(Comment::NotListed);
+                queue_popup(PopupKind::NotListed);
                 return;
             case GuessStatus::Duplicate:
                 play(SoundId::WordReject);
-                show_comment(Comment::AlreadyGuessed);
+                queue_popup(PopupKind::AlreadyGuessed);
                 return;
             case GuessStatus::NoRoom: {
-                play(SoundId::WordReject);
                 bool any = false;
                 for (const auto& s : slots_) if (s.word.size() == word.size()) any = true;
-                show_comment(any ? Comment::EnoughOfLength : Comment::NoneOfLength);
+                queue_popup(any ? PopupKind::EnoughOfLength : PopupKind::NoneOfLength);
                 return;
             }
             case GuessStatus::Accepted:
@@ -757,13 +796,13 @@ private:
         }
         if (rep.filled_last) {
             play(SoundId::AllWords);
-            show_popup(popup_all_);
-            show_comment(Comment::AllWords);
+            queue_popup(PopupKind::AllWords);
             end_round(RoundEnd::AllWords);
         } else if (rep.bingo) {
+            // 0x424730: every bingo plays the sound; the banner only marks
+            // the first one, the one that qualifies the round.
             play(SoundId::WordBingo);
-            show_popup(popup_bingo_);
-            show_comment(Comment::Bingo);
+            if (!was_qualified) queue_popup(PopupKind::Bingo);
         } else {
             play(SoundId::WordCorrect);
         }
@@ -824,14 +863,7 @@ private:
         play(SoundId::WordPassReveal);
         phase_ = GamePhase::Reveal;
         refresh_buttons();
-        if (after == After::GameOver) {
-            game_over_.frame = 0;
-            game_over_.alpha = 0.0f;
-            queue_.push_alpha(&game_over_, 0.0f, 1.0f, 500);
-            queue_.push_delay(REVEAL_MS - 500);
-        } else {
-            queue_.push_delay(REVEAL_MS);
-        }
+        queue_.push_delay(REVEAL_MS);
         queue_.push_method([this, after] {
             switch (after) {
                 case After::NextDialog:
@@ -1010,22 +1042,33 @@ private:
     }
 
     // ---- presentation helpers --------------------------------------
-    void show_comment(Comment c) {
-        commentary_.frame = static_cast<int>(c);
-        comment_queue_.clear();
-        commentary_.alpha = 0.0f;
-        comment_queue_.push_alpha(&commentary_, 0.0f, 1.0f, COMMENT_FADE_MS);
-        comment_queue_.push_delay(COMMENT_SHOW_MS);
-        comment_queue_.push_alpha(&commentary_, 1.0f, 0.0f, COMMENT_FADE_MS);
-    }
-    // One pass through the sheet, then hidden again.
-    void show_popup(SpriteState& p) {
+    // 0x428e20: add to the popup queue; update() shows it when the
+    // screen is free.
+    void queue_popup(PopupKind k) { popup_waiting_.push_back(k); }
+    // 0x428ec0: centred at (400, 150), alpha 0 and scale 0, then the
+    // modifier chain (each step starts when the previous one ends).
+    void start_popup(PopupKind k) {
+        popup_kind_ = k;
+        popup_ = sprite("POPUP", popup_sheet(k), POPUP_X, POPUP_Y);
+        popup_.anchor = Anchor::Center;
+        popup_.alpha = 0.0f;
+        popup_.scale = 0.0f;
         popup_queue_.clear();
-        popup_bingo_.visible = popup_all_.visible = false;
-        p.visible = true;
-        p.frame = 0;
-        popup_queue_.push_frames(&p, 0, -1, POPUP_FRAME_MS);
-        popup_queue_.push_method([&p] { p.visible = false; });
+        popup_queue_.push_alpha(&popup_, 0.0f, 1.0f, POPUP_FADE_IN_MS);
+        popup_queue_.push_scale(&popup_, 0.0f, POPUP_OVERSHOOT, POPUP_GROW_MS, Easing::Smoothstep);
+        popup_queue_.push_scale(&popup_, POPUP_OVERSHOOT, 1.0f, POPUP_SETTLE_MS);
+        if (popup_is_banner(k)) {
+            popup_queue_.push_frames(&popup_, 0, -1, POPUP_BANNER_FRAME_MS);
+            popup_queue_.push_delay(POPUP_BANNER_HOLD_MS);
+        } else {
+            popup_queue_.push_delay(POPUP_MESSAGE_HOLD_MS);
+        }
+        popup_queue_.push_alpha(&popup_, 1.0f, 0.0f, POPUP_FADE_OUT_MS);
+        // 0x4235c0 clears the "popup up" flag (+0x348).
+        popup_queue_.push_method([this] {
+            popup_.visible = false;
+            popup_kind_.reset();
+        });
     }
     void play(SoundId id) { if (services_.play_sound) services_.play_sound(id); }
 
@@ -1088,8 +1131,10 @@ private:
     std::optional<SettingsDialog> settings_; // DIALOG_SETTINGS while open
     std::vector<LetterBall> dialog_balls_;   // DIALOG_NEXTROUND letterballs
     std::vector<MenuButton> buttons_;
-    SpriteState commentary_, game_over_, popup_bingo_, popup_all_;
-    ModifierQueue queue_, comment_queue_, popup_queue_;
+    SpriteState popup_;
+    std::optional<PopupKind> popup_kind_;    // set while a popup is up (+0x348)
+    std::deque<PopupKind> popup_waiting_;    // 0x428e20 queue (+0x334)
+    ModifierQueue queue_, popup_queue_;
     GameDialog dialog_kind_ = GameDialog::None;
     Dialog dialog_;
 };
