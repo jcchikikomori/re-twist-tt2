@@ -64,3 +64,6 @@ imported-assets/
 # My prompts
 docs/prompts/
 
+
+# AI work plans (local only, never committed)
+docs/plans/
