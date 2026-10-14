@@ -493,7 +493,10 @@ public:
         particle_rng_.set_seed(rng_seed + 1);
         build_buttons();
         popup_.visible = false;
-        if (!(resume && resume_game(*resume))) start_round(1);
+        if (!(resume && resume_game(*resume))) {
+            start_round(1);
+            open_tutorial_once();
+        }
     }
 
     // ---- state for the renderer -------------------------------------
@@ -552,7 +555,7 @@ public:
         return dialog_kind_ == GameDialog::PauseMenu || dialog_kind_ == GameDialog::ConfirmExit ||
                dialog_kind_ == GameDialog::ConfirmPass || dialog_kind_ == GameDialog::ConfirmGiveUp ||
                dialog_kind_ == GameDialog::HowToPlay ||
-               dialog_kind_ == GameDialog::Settings;
+               dialog_kind_ == GameDialog::Settings || dialog_kind_ == GameDialog::Tutorial;
     }
     const char* save_mode() const { return tt2::save_mode_name(mode()); }
 
@@ -770,13 +773,21 @@ public:
             case GameDialog::PauseMenu:
                 if (name == "BUTTON_RESUME") close_dialog();
                 else if (name == "BUTTON_STOP") open_dialog(GameDialog::ConfirmExit);
-                else if (name == "BUTTON_HOWTOPLAY") open_dialog(GameDialog::HowToPlay);   // 0x408180
+                else if (name == "BUTTON_HOWTOPLAY") open_help(GameDialog::PauseMenu);   // 0x408180
                 else if (name == "BUTTON_SETTINGS") open_dialog(GameDialog::Settings);   // 0x408250
                 break;
             case GameDialog::HowToPlay:
-                // OK (0x408c00) closes the help; the pause menu is still under it.
-                if (name == "BUTTON_OK") open_dialog(GameDialog::PauseMenu);
+                // OK (0x408c00) closes the help; the dialog that opened it
+                // (pause menu or tutorial) is still under it.
+                if (name == "BUTTON_OK") open_dialog(help_under_);
                 else help_.turn(dialog_, name == "BUTTON_PREV" ? -1 : 1);
+                break;
+            case GameDialog::Tutorial:
+                // READ MORE 0x40e1f0 opens DIALOG_HELP over the tutorial;
+                // PLAY 0x40e1c0 -> GameScene 0x427b10 clears the block
+                // flag +0x260 and refreshes the buttons.
+                if (name == "BUTTON_HELP") open_help(GameDialog::Tutorial);
+                else close_dialog();
                 break;
             case GameDialog::ConfirmExit:
                 // 0x408320: YES leaves (the round is saved on the way out,
@@ -950,6 +961,23 @@ private:
         misses_ = 0;
         last_word_.clear();
         start_round(1);
+        open_tutorial_once();
+    }
+
+    // 0x425c50 (a fresh game, not a resumed one): the player's TRACKER flag
+    // for this mode (profile +0xc0 + mode) is read and set; a clear flag
+    // sends the scene to state 5, DIALOG_TUTORIAL.
+    void open_tutorial_once() {
+        bool& seen = profile_.mode_flags[static_cast<std::size_t>(mode())];
+        if (seen) return;
+        seen = true;
+        if (services_.on_profile_change) services_.on_profile_change();
+        open_dialog(GameDialog::Tutorial);
+    }
+
+    void open_help(GameDialog under) {
+        help_under_ = under;
+        open_dialog(GameDialog::HowToPlay);
     }
 
     void submit() {
@@ -1154,6 +1182,7 @@ private:
             case GameDialog::EndGame: dialog_ = build_end_game(); break;
             case GameDialog::Congrats: dialog_ = build_congrats(); break;
             case GameDialog::PassRound: dialog_ = build_pass_round(); break;
+            case GameDialog::Tutorial: dialog_ = build_tutorial(static_cast<int>(mode())); break;
             case GameDialog::None: dialog_ = Dialog{}; break;
         }
         for (auto& b : buttons_) b.hover = b.pressed = false;
@@ -1369,6 +1398,7 @@ private:
     std::vector<SlotView> slots_;
     std::vector<LetterBall> balls_;
     HelpPager help_;                         // DIALOG_HELP page state
+    GameDialog help_under_ = GameDialog::PauseMenu;   // where the help's OK returns
     std::optional<SettingsDialog> settings_; // DIALOG_SETTINGS while open
     std::vector<LetterBall> dialog_balls_;   // DIALOG_NEXTROUND letterballs
     std::vector<Particle> dialog_particles_;

@@ -289,6 +289,21 @@ defined strings). They are leftovers from the first game (`docs/design/original-
   question above; 5 opens `DIALOG_TUTORIAL`, which round start `0x425c50` selects on a
   player's first game (`ev_48575bcd821545fb8381f5848f6747d5854fdb32bc35c8f13f433c9eb23b69d8`);
   6 opens `DIALOG_PASSROUND`.
+- Tutorial (CONFIRMED, REA batch G). The fresh-game start `0x425c50` (not the resume
+  `0x42a460`) reads the current player's byte at profile `+0xc0 + mode` (`TRACKER/0..4`,
+  mode = global `0x5fdea8`, 0 Timed, 1 Untimed, 4 Word of the Day), sets it to 1, and when
+  it was 0 sets state 5 (`0x425d0b`). The dispatcher `0x426860` sets the block flag
+  `+0x260` for every dialog state, so the game waits. `0x40e040` fills `HEADER` /
+  `BODY_TEXT` from `TEXT_TUTORIAL_TITLE_<mode>` / `TEXT_TUTORIAL_BODY_<mode>`. The ctor wires
+  `BUTTON_HELP` (READ MORE) to `0x40e1f0`, which opens `DIALOG_HELP` over the tutorial, and
+  `BUTTON_OK` (PLAY) to `0x40e1c0`: owner slot `+0xe0` (`GameScene` `0x427b10`: clear
+  `+0x260`, refresh buttons) then hide. No sound plays.
+  Evidence: `ev_696c1eec946fd882da1004c3caa5472df86e869d992e6266982a512597efe619`,
+  `ev_d5cddee1e91269b84e960bb0d6ae972266cbd9b74f86789cb3d16430ea972126`,
+  `ev_6abbbc7a006f8a101cb1f06fdc54304116b153a16d66ad38fb244a3891bee54b`; the flag test and
+  state store come from the `objdump` listing of `0x425cd7`-`0x425d0b`.
+  Port: `GameDialog::Tutorial`, `build_tutorial()`, `PlayerProfile::mode_flags`. INFERRED:
+  Esc does not skip it (no Esc handler was traced).
 - `DIALOG_PASSROUND` is Timed only (CONFIRMED, REA batch B2). After the switch, the
   per-frame path at `0x426fc7` checks the mode against `CLASSIC_TIMED`; when the round's
   `[+0x1f4]+0x88` flag is clear it calls `0x425420(1)`. That is the time-up miss: reveal
@@ -361,6 +376,7 @@ All are `autocenter` and `dodarkenbackground="true"`.
 | `DIALOG_MENU` (pause) | 322×390 | `PAUSE_HEADER` "PAUSE MENU" at (163, 19); 181×208 buttons HOW TO PLAY (162, 87), SETTINGS (163, 155), STOP (163, 224), RESUME (163, 290) |
 | `DIALOG_YESNO` | 400×180 min | `HEADER`, `MESSAGE` (`FONT_SETTINGSTEXT`, `width="390"`, `wrapstyle="wordwrap"`, line height 30); `0x40b470` moves YES / NO down by the message height and grows the **height** only |
 | `DIALOG_NEXTROUND` | 380×320 | `IMAGE_BURST` sparkle (frametime 40, `#FFA800`, additive) at (191, 154); "Click to continue to the next round!"; OK at (190, 239) |
+| `DIALOG_TUTORIAL` | 444×320 | `HEADER` `FONT_DIALOG_HEADERS2` (221, 16); `BODY_TEXT` `FONT_TUTORIAL` centred at (224, 155), line height 32; READ MORE `IMAGE_BUTTON_READMORE` (135, 235); PLAY `IMAGE_BUTTON_PLAY` (317, 235) |
 | `DIALOG_PASSROUND` | 380×280 | `TEXT_PASS_ROUND_TITLE` "Round Passed" (191, 16); `TEXT_PASS_ROUND_BODY` (192, 85); OK (189, 199) |
 | `DIALOG_ENDGAME` | 380×260 | "GAME OVER" (190, 14); body (192, 88), line height 38; PLAY AGAIN (271, 173), MENU (109, 173) |
 | `DIALOG_CONGRATS` | 380×320 | sparkle frame 4 at (191, 138); "Congratulations! You earned a new high score!" (193, 107) |

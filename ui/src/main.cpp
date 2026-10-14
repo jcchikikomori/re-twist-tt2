@@ -151,6 +151,8 @@ const std::map<std::string, std::string> kImageFiles = {
     {"BUTTON_PAUSE_HELP", "images/gui/button_pause_help.png"},
     {"BUTTON_END_MENU", "images/gui/button_end_menu.png"},
     {"BUTTON_END_PLAYAGAIN", "images/gui/button_end_playagain.png"},
+    {"IMAGE_BUTTON_READMORE", "images/gui/button_readmore.png"},
+    {"IMAGE_BUTTON_PLAY", "images/gui/button_play.png"},
     {"IMAGE_BURST", "images/trophyscene/burst.png"},
     {"IMAGE_PARTICLEBALL", "images/gamescene/particleball.png"},
     // DIALOG_HELP (help-and-settings.md §2).
@@ -183,6 +185,7 @@ const std::map<std::string, FontFile> kFontFiles = {
     {"FONT_UI_LABELS", {"fonts/font_uibar_labels.xml", 2}},
     {"FONT_UI_NUMBERS", {"fonts/font_uibar_numbers.xml", 3}},
     {"FONT_NEXTROUND02", {"fonts/font_nextround02.xml", 4}},
+    {"FONT_TUTORIAL", {"fonts/font_tutorial01.xml", 3}},
 };
 
 const std::map<SoundId, std::string> kSoundFiles = {
@@ -700,7 +703,11 @@ void draw_dialog_frame(SDL_Renderer* ren, Assets& assets, const Dialog& d) {
 }
 
 // Upper-case label for a placeholder button: "BUTTON_PAUSE_RESUME" -> "RESUME".
-std::string placeholder_button_label(const std::string& name) {
+// DIALOG_TUTORIAL's buttons are named BUTTON_HELP / BUTTON_OK, so their
+// images name them instead.
+std::string placeholder_button_label(const std::string& name, const std::string& image = {}) {
+    if (image == "IMAGE_BUTTON_READMORE") return "READ MORE";
+    if (image == "IMAGE_BUTTON_PLAY") return "PLAY";
     std::string label = name.rfind("BUTTON_", 0) == 0 ? name.substr(7) : name;
     for (auto& c : label) c = c == '_' ? ' ' : static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     return label;
@@ -748,7 +755,7 @@ void draw_dialog(SDL_Renderer* ren, Assets& assets, const Dialog& d, const std::
             continue;
         }
         if (placeholder && b.sprite.name.rfind("NAME_", 0) != 0)
-            draw_text(ren, assets, "PLACEHOLDER_2", placeholder_button_label(b.sprite.name),
+            draw_text(ren, assets, "PLACEHOLDER_2", placeholder_button_label(b.sprite.name, b.sprite.sheet.image_id),
                       b.sprite.left() + ox + b.sprite.sheet.frame_w * 0.5f,
                       b.sprite.top() + oy + b.sprite.sheet.frame_h * 0.5f, TextAlign::Center, Anchor::Center, -1);
     }

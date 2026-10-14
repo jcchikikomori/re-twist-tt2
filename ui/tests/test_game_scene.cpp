@@ -53,7 +53,10 @@ struct Fixture {
     int settings_commits = 0;
     std::unique_ptr<GameScene> scene;
 
-    explicit Fixture(bool timed, bool with_hs = true, std::int64_t seed = 0) {
+    // `tutorial_seen`: the player has had DIALOG_TUTORIAL for every mode,
+    // so most tests start straight at the rack.
+    explicit Fixture(bool timed, bool with_hs = true, std::int64_t seed = 0, bool tutorial_seen = true) {
+        profile.mode_flags.fill(tutorial_seen);
         GameScene::Services s;
         s.play_sound = [this](SoundId id) { sounds.push_back(id); };
         s.on_profile_change = [this] { ++saves; };
@@ -1536,6 +1539,7 @@ TEST(scene_yes_no_dialogs_use_the_wrap_service) {
     tt2::WordTree com = common();
     tt2::WordTree ful = full();
     tt2::PlayerProfile profile = tt2::PlayerProfile::create("Mugwump", 7u);
+    profile.mode_flags.fill(true);                         // no tutorial
     int calls = 0;
     GameScene::Services sv;
     sv.play_sound = [](SoundId) {};
@@ -1845,4 +1849,68 @@ TEST(round_end_dialogs_carry_the_sparkle) {
     ASSERT_EQ(e.h, 260);
     ASSERT_EQ(e.button("BUTTON_REPLAY")->sprite.sheet.frame_h, 52);
     ASSERT_EQ(text_line_count("a\nb\nc"), 3);
+}
+
+TEST(first_game_in_a_mode_opens_the_tutorial_once) {
+    Fixture f(true, true, 0, false);
+    auto& s = *f.scene;
+    // 0x425c50: the TRACKER flag for Timed was clear, so it is set and the
+    // scene opens DIALOG_TUTORIAL; the other modes keep theirs.
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::Tutorial);
+    ASSERT_TRUE(f.profile.mode_flags[static_cast<std::size_t>(tt2::GameMode::Timed)]);
+    ASSERT_TRUE(!f.profile.mode_flags[static_cast<std::size_t>(tt2::GameMode::Untimed)]);
+    ASSERT_TRUE(f.saves > 0);                              // the flag is saved
+    const Dialog& d = s.dialog();
+    ASSERT_EQ(d.w, 444);
+    ASSERT_EQ(d.h, 320);
+    ASSERT_EQ(d.label("HEADER")->text, std::string("Timed Mode"));   // TEXT_TUTORIAL_TITLE_0
+    ASSERT_EQ(d.label("BODY_TEXT")->font_id, std::string("FONT_TUTORIAL"));
+    ASSERT_EQ(d.button("BUTTON_HELP")->sprite.sheet.image_id, std::string("IMAGE_BUTTON_READMORE"));
+    ASSERT_EQ(d.button("BUTTON_OK")->sprite.sheet.image_id, std::string("IMAGE_BUTTON_PLAY"));
+    // The game waits: no clock, no typing.
+    ASSERT_TRUE(s.paused());
+    s.update(30000);
+    ASSERT_EQ(s.time_left_ms(), ROUND_MS);
+    s.key_return();                                        // PLAY
+    ASSERT_TRUE(!s.dialog_open());
+    ASSERT_TRUE(!s.paused());
+    s.update(1000);
+    ASSERT_EQ(s.time_left_ms(), ROUND_MS - 1000);
+}
+
+TEST(tutorial_uses_the_untimed_text_in_untimed) {
+    Fixture f(false, true, 0, false);
+    ASSERT_TRUE(f.scene->dialog_kind() == GameDialog::Tutorial);
+    ASSERT_EQ(f.scene->dialog().label("HEADER")->text, std::string("Untimed Mode"));   // TEXT_TUTORIAL_TITLE_1
+    ASSERT_EQ(f.scene->dialog().label("BODY_TEXT")->text,
+              std::string(game_strings::TUTORIAL_BODIES[1]));
+}
+
+TEST(tutorial_read_more_opens_help_and_returns) {
+    Fixture f(true, true, 0, false);
+    auto& s = *f.scene;
+    s.dialog_press("BUTTON_HELP");                         // READ MORE 0x40e1f0
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::HowToPlay);
+    s.dialog_press("BUTTON_OK");                           // the tutorial is still under it
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::Tutorial);
+    s.key_escape();                                        // Esc does not skip it
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::Tutorial);
+    s.dialog_press("BUTTON_OK");                           // PLAY
+    ASSERT_TRUE(!s.dialog_open());
+    // The pause menu's help still goes back to the pause menu.
+    s.press("BUTTON_Menu");
+    s.dialog_press("BUTTON_HOWTOPLAY");
+    s.dialog_press("BUTTON_OK");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+}
+
+TEST(resumed_game_never_shows_the_tutorial) {
+    Fixture f(false);
+    tt2::SavedGame g = f.scene->snapshot();
+    g.round = 3;
+    f.profile.mode_flags.fill(false);
+    GameScene::Services sv;
+    GameScene s(f.com, f.ful, f.profile, nullptr, false, sv, 0, &g);
+    ASSERT_TRUE(!s.dialog_open());                         // 0x42a460 skips 0x425c50
+    ASSERT_TRUE(!f.profile.mode_flags[static_cast<std::size_t>(tt2::GameMode::Untimed)]);
 }

@@ -67,7 +67,7 @@ the fields below; `0x40f060` is the "new player" initializer and
 | +0xa4 | `TRACKER/SOLVED` | 0 | words spelled |
 | +0xa8 | `TRACKER/HARD_SOLVED` | 0 | uncommon words spelled |
 | +0xac..+0xbc | `TRACKER/0..4` | 0 | five counters, one per game mode (INFERRED: rounds completed) |
-| +0xc0..+0xc4 | `TRACKER/0..4` (bool) | 0 | five flags, one per mode (INFERRED: tutorial seen) |
+| +0xc0..+0xc4 | `TRACKER/0..4` (bool) | 0 | five flags, one per mode: tutorial seen (CONFIRMED, `0x425c50`; see `game-scene.md` §5) |
 
 The serializer writes the counters with `sprintf("%d")` keys
 (`0x449c90`), so the node looks like `TRACKER/0 … TRACKER/4` twice: once

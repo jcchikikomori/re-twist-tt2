@@ -10,6 +10,7 @@
 // show / hide fade (dialog_fade.hpp) exactly as for the profile dialogs.
 #pragma once
 
+#include <algorithm>
 #include <functional>
 #include <string>
 
@@ -35,6 +36,20 @@ inline constexpr const char* NEXT_ROUND_BODY = "Click to continue\nto the next r
 inline constexpr const char* GAME_OVER_HEADER = "GAME OVER";
 inline constexpr const char* ENDGAME_BODY = "Sorry, you didn't qualify\nfor the next round.";   // TEXT_ENDGAME_BODY
 inline constexpr const char* CONGRATS_BODY = "Congratulations!\nYou earned a\nnew high score!";  // TEXT_CONGRATS_BODY
+// TEXT_TUTORIAL_TITLE_n / TEXT_TUTORIAL_BODY_n, n = the mode index
+// (0x40e040 reads the global 0x5fdea8): Timed, Untimed, Lightning,
+// Crossword, Word of the Day.
+inline constexpr const char* TUTORIAL_TITLES[] = {"Timed Mode", "Untimed Mode", "Lightning Mode", "Crossword Mode",
+                                                  "Word of the Day"};
+inline constexpr const char* TUTORIAL_BODIES[] = {
+    "Form words from the letters\nprovided.  Find the bingo word to\ngo to the next round before\ntime runs out!",
+    "Form words from the letters\nprovided.  Find the bingo word to\ngo to the next round!",
+    "Find all the bingo words before\nthe time runs out to progress to\nthe next round!  Solving words\ngives you "
+    "more time.",
+    "Fill every position in the\ncrossword with a word from\nthe same set of letters.\nHINT: fill the bingo word "
+    "first.",
+    "A quick game with a new word\neach day! Find as many words\nas you can before the time expires.",
+};
 inline constexpr const char* PASS_ROUND_TITLE = "Round Passed";              // TEXT_PASS_ROUND_TITLE
 inline constexpr const char* PASS_ROUND_BODY =
     "One of your passes will\nbe used to progress to\nthe next round.";      // TEXT_PASS_ROUND_BODY
@@ -43,7 +58,7 @@ inline constexpr const char* PASS_ROUND_BODY =
 // Kinds used by the game scene (the profile kinds stay in DialogKind).
 enum class GameDialog {
     None, PauseMenu, ConfirmExit, ConfirmPass, ConfirmGiveUp, HowToPlay, Settings, NextRound, EndGame, Congrats,
-    PassRound
+    PassRound, Tutorial
 };
 
 inline int text_line_count(const std::string& s) {
@@ -167,6 +182,27 @@ inline Dialog build_pass_round() {
     body.line_height = 36;
     d.labels.push_back(body);
     d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", 189, 199, Anchor::Top));
+    return d;
+}
+
+// DIALOG_TUTORIAL 444x320: a player's first game in a mode (0x425c50).
+// READ MORE (BUTTON_HELP, 0x40e1f0) opens DIALOG_HELP over it; PLAY
+// (BUTTON_OK, 0x40e1c0) closes it. `mode` is the GameMode index.
+inline Dialog build_tutorial(int mode) {
+    const int n = std::clamp(mode, 0, 4);
+    Dialog d;
+    d.w = 444;
+    d.h = 320;
+    TextLabel header{"HEADER", "FONT_DIALOG_HEADERS2", game_strings::TUTORIAL_TITLES[n], 221, 16, TextAlign::Center,
+                     Anchor::Top, 0};
+    header.line_height = 36;
+    d.labels.push_back(header);
+    TextLabel body{"BODY_TEXT", "FONT_TUTORIAL", game_strings::TUTORIAL_BODIES[n], 224, 155, TextAlign::Center,
+                   Anchor::Center, 0};
+    body.line_height = 32;
+    d.labels.push_back(body);
+    d.buttons.push_back(make_dialog_button("BUTTON_HELP", "IMAGE_BUTTON_READMORE", 135, 235, Anchor::Top, 157, 208));
+    d.buttons.push_back(make_dialog_button("BUTTON_OK", "IMAGE_BUTTON_PLAY", 317, 235, Anchor::Top, 157, 208));
     return d;
 }
 
