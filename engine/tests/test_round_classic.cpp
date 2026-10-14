@@ -160,7 +160,10 @@ TEST(classic_round_uncommon_guess_fills_a_slot) {
     // Pick a full-only word spellable from the rack whose length has
     // slots on the board.
     std::string extra;
-    for (const auto& w : Board::build(res.rack, ful).all()) {
+    // Name the board: `Board::build(...).all()` in the range-for would
+    // reference a temporary that dies before the loop body runs (C++17).
+    const Board board = Board::build(res.rack, ful);
+    for (const auto& w : board.all()) {
         if (w.size() < 3 || w.size() > 8 || com.contains(w)) continue;
         for (const auto& b : res.board_words) {
             if (b.size() == w.size()) { extra = w; break; }

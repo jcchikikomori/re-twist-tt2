@@ -101,12 +101,10 @@ public:
     std::string pick_classic(std::size_t target_length, Random& /*rng*/) {
         std::string best;
         bool have_best = false;
-        int attempts = 0;
         for (int i = 0; i < CLASSIC_ATTEMPTS; ++i) {
             const std::string& word = next_word();
             if (word.size() > target_length) continue;        // free skip
             if (word.size() == target_length) return word;    // exact hit
-            ++attempts;
             if (!have_best || word.size() > best.size()) {
                 best = word;
                 have_best = true;
