@@ -36,7 +36,7 @@ jobs:
             ui: "OFF"   # the tests are headless; skip SDL so the sanitizers only see our code
             cxxflags: "-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
@@ -75,7 +75,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: msys2/setup-msys2@v2
         with:

@@ -39,6 +39,11 @@ target_compile_options(tt2_engine INTERFACE
 if(TT2_WARN_AS_ERROR)
     target_compile_options(tt2_engine INTERFACE
         $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Werror>)
+    # GCC 16 (MSYS2 UCRT64) flags the std::vector<std::string> temporary in
+    # test_word_tree.cpp with -Wfree-nonheap-object, a false positive: the
+    # same test is clean under ASan/UBSan built with GCC 16. Keep it a warning.
+    target_compile_options(tt2_engine INTERFACE
+        $<$<CXX_COMPILER_ID:GNU>:-Wno-error=free-nonheap-object>)
 endif()
 
 # Platform shim — the engine headers declare but do not define

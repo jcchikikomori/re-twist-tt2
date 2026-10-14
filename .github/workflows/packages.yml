@@ -28,7 +28,7 @@ jobs:
     # at least as new as the one it was built against.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
@@ -67,7 +67,7 @@ jobs:
           ./Re-Twist_TT2-*-x86_64.AppImage --save-dir "$RUNNER_TEMP/save"
           --player CI --seed 5 --play untimed --type 'ab|' --exit-after 9000
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: re-twist-tt2-linux-x86_64-appimage
           path: Re-Twist_TT2-*-x86_64.AppImage
@@ -80,7 +80,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -120,7 +120,7 @@ jobs:
           ./dist/tt2.exe --save-dir "$RUNNER_TEMP/save" --player CI --seed 5
           --play untimed --type 'ab|' --exit-after 9000
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: re-twist-tt2-windows-x86_64
           path: dist/
