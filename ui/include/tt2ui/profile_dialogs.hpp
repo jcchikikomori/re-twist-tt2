@@ -210,6 +210,15 @@ public:
     }
 
     // Mouse in screen coordinates (the dialog offset is applied here).
+    // True while the pointer sits on a clickable dialog button (the
+    // SDL front end uses this for the hand cursor). Disabled buttons
+    // and a closed dialog are not clickable.
+    bool pointer_over_clickable() const {
+        if (!open()) return false;
+        for (const auto& b : dialog_.buttons)
+            if (b.hover && b.enabled) return true;
+        return false;
+    }
     void mouse_move(float x, float y) {
         if (!open()) return;
         for (auto& b : dialog_.buttons) {

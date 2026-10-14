@@ -340,3 +340,25 @@ TEST(mouse_outside_buttons_and_disabled_buttons_do_nothing) {
     ASSERT_TRUE(!f.flow.open());
     ASSERT_EQ(f.flow.input_text(), std::string());
 }
+
+TEST(pointer_hot_tracks_clickable_hover) {
+    Fixture f;
+    f.pm.add("A", 1);
+    f.pm.clear_current();          // no current player: Remove is disabled
+    f.flow.open_player_select();
+    ASSERT_TRUE(!f.flow.pointer_over_clickable());
+    // Disabled (Remove): the pointer stays the arrow.
+    auto [rx, ry] = f.centre("BUTTON_REMOVE");
+    f.flow.mouse_move(rx, ry);
+    ASSERT_TRUE(!f.flow.pointer_over_clickable());
+    // Enabled (OK): the hand pointer.
+    auto [x, y] = f.centre("BUTTON_OK");
+    f.flow.mouse_move(x, y);
+    ASSERT_TRUE(f.flow.pointer_over_clickable());
+    f.flow.mouse_move(1, 1);
+    ASSERT_TRUE(!f.flow.pointer_over_clickable());
+    // A closed dialog has nothing to click.
+    f.flow.mouse_move(x, y);
+    f.flow.close();
+    ASSERT_TRUE(!f.flow.pointer_over_clickable());
+}

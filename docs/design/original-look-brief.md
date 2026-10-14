@@ -35,6 +35,7 @@
 - **Loading… / Click here to start**: `loading_wait` / `click_here` — white `#FEFEFE` bold condensed text with navy `#192435` hard shadow; click-here sits centered under the bar once ready.
 - **GH_Branding.png** (313×70): small house-cube + tile wordmark bottom-left; copyright line "Copyright © 2008 GameHouse, Inc." in small white sans.
 - **Flow**: splash (GH, ≥2.1 s) → 500 ms fade → loading (bg + ripple pulse + logo drop + bar fill, held ≥3.5 s) → 500 ms fade → menu. The "Click here to start" sprite exists but is never shown in the shipped build; the scene advances by itself. Timings and addresses: `docs/reverse-engineering/welcome-flow.md`.
+- **Mouse Cursor**: During the loading screen, the mouse cursor will become "hourglass" until the loading sequence is completed.
 
 ## 3. Selection / menu (`selectionscene/`)
 

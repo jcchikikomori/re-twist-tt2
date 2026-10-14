@@ -531,3 +531,14 @@ TEST(mouse_buttons_hover_press_and_fire) {
     s.mouse_up(next->sprite.x + 5, next->sprite.y + 5);
     ASSERT_EQ(s.round_number(), 1);
 }
+
+TEST(pointer_hot_tracks_button_hover) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    ASSERT_TRUE(!s.pointer_over_clickable());
+    auto* twist = s.button("BUTTON_Twist");
+    s.mouse_move(twist->sprite.x + 10, twist->sprite.y + 10);
+    ASSERT_TRUE(s.pointer_over_clickable());
+    s.mouse_move(0, 0);
+    ASSERT_TRUE(!s.pointer_over_clickable());
+}

@@ -363,6 +363,15 @@ public:
     // a rectangle-only predicate).
     using HitTest = std::function<bool(const MenuButton&, float, float)>;
 
+    // True while the pointer sits on a clickable button. The SDL
+    // front end switches to the hand cursor for this; disabled
+    // buttons keep the arrow.
+    bool pointer_over_clickable() const {
+        for (const auto& b : buttons_)
+            if (b.hover && b.enabled) return true;
+        return false;
+    }
+
     void mouse_move(float x, float y, const HitTest& hit) {
         for (auto& b : buttons_) {
             const bool over = b.contains(x, y) && hit(b, x, y);
@@ -468,6 +477,10 @@ public:
     }
 
     SceneId current() const { return current_; }
+
+    // The load screen holds the pointer in the "wait" (hourglass)
+    // state until the loading sequence is done (design brief §2).
+    bool pointer_busy() const { return current_ == SceneId::Load; }
     SplashScene* splash() { return splash_.get(); }
     LoadScene* load() { return load_.get(); }
     SelectionScene* selection() { return selection_.get(); }

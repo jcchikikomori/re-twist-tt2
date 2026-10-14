@@ -795,6 +795,16 @@ int main(int argc, char** argv) {
     if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
     SDL_RenderSetLogicalSize(ren, SCREEN_W, SCREEN_H);
 
+    // Hand pointer over clickable items, hourglass on the load
+    // screen, arrow everywhere else. The original's cursor handling
+    // is not decoded; this uses the platform cursors (no game assets
+    // involved).
+    SDL_Cursor* cursor_arrow = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
+    SDL_Cursor* cursor_hand = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+    SDL_Cursor* cursor_wait = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_WAIT);
+    bool cursor_hot = false;
+    bool cursor_busy = false;
+
     Assets assets(ren, assets_dir);
     const bool audio = Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) == 0;
     if (audio) Mix_Init(MIX_INIT_OGG);
@@ -924,6 +934,21 @@ int main(int argc, char** argv) {
                     menu->mouse_up(e.button.x, e.button.y, hit);
             }
         }
+        // Keep the pointer cursor in sync with the screen and what is
+        // under it: hourglass while loading, hand over a clickable
+        // item, arrow everywhere else.
+        bool hot = false;
+        if (profile.open()) hot = profile.pointer_over_clickable();
+        else if (game) hot = game->pointer_over_clickable();
+        else if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
+            hot = flow.selection()->pointer_over_clickable();
+        const bool busy = flow.pointer_busy();
+        if ((busy != cursor_busy || hot != cursor_hot) &&
+            cursor_arrow && cursor_hand && cursor_wait) {
+            cursor_busy = busy;
+            cursor_hot = hot;
+            SDL_SetCursor(busy ? cursor_wait : (hot ? cursor_hand : cursor_arrow));
+        }
         const Uint32 now = SDL_GetTicks();
         int dt = static_cast<int>(now - last) * speed;
         last = now;
@@ -1013,6 +1038,10 @@ int main(int argc, char** argv) {
         SDL_RenderPresent(ren);
     }
 
+    SDL_SetCursor(SDL_GetDefaultCursor());
+    if (cursor_wait) SDL_FreeCursor(cursor_wait);
+    if (cursor_hand) SDL_FreeCursor(cursor_hand);
+    if (cursor_arrow) SDL_FreeCursor(cursor_arrow);
     if (audio) Mix_CloseAudio();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

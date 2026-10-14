@@ -416,6 +416,23 @@ TEST(selection_hover_press_release_fires_action) {
     ASSERT_EQ(quit->sprite.frame, 0);
 }
 
+TEST(selection_pointer_hot_tracks_clickable_hover) {
+    RecordingHost host;
+    tt2::CrtRandom rng(1);
+    SelectionScene menu(host, rng);
+    ASSERT_TRUE(!menu.pointer_over_clickable());
+    auto* quit = menu.button("BUTTON_QUIT");
+    menu.mouse_move(quit->sprite.x + 10, quit->sprite.y + 10, rect_only);
+    ASSERT_TRUE(menu.pointer_over_clickable());
+    menu.mouse_move(0, 0, rect_only);
+    ASSERT_TRUE(!menu.pointer_over_clickable());
+    // A disabled button is not clickable: the pointer stays the arrow.
+    auto* wotd = menu.button("BUTTON_PLAY_WOD");
+    wotd->enabled = false;
+    menu.mouse_move(wotd->sprite.x + 5, wotd->sprite.y + 5, rect_only);
+    ASSERT_TRUE(!menu.pointer_over_clickable());
+}
+
 TEST(selection_release_outside_or_masked_does_nothing) {
     RecordingHost host;
     tt2::CrtRandom rng(1);
@@ -485,6 +502,24 @@ TEST(flow_runs_splash_load_menu_with_fades) {
     ASSERT_TRUE(flow.load() == nullptr);
     ASSERT_TRUE(flow.splash() == nullptr);
     ASSERT_EQ(flow.draw_list().size(), std::size_t{1 + 12 + 3});
+}
+
+TEST(flow_pointer_busy_during_load_only) {
+    WelcomeFlow::Services s;
+    s.play_stream = [](SoundId) {};
+    s.play_sound = [](SoundId) {};
+    WelcomeFlow flow(s, 1);
+    // Splash is not "loading": the pointer stays the arrow.
+    ASSERT_TRUE(!flow.pointer_busy());
+    flow.update(2101);                        // splash finished, fade starts
+    flow.update(125);
+    flow.update(125);                         // black: switch to Load
+    ASSERT_TRUE(flow.current() == SceneId::Load);
+    ASSERT_TRUE(flow.pointer_busy());         // hourglass while loading
+    for (int i = 0; i < 35; ++i) flow.update(100);
+    flow.update(250);                         // black: switch to the menu
+    ASSERT_TRUE(flow.current() == SceneId::Selection);
+    ASSERT_TRUE(!flow.pointer_busy());
 }
 
 TEST(flow_menu_action_reaches_services) {

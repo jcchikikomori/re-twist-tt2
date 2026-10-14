@@ -275,6 +275,14 @@ public:
         else give_up();
     }
 
+    // True while the pointer sits on a clickable button — the SDL
+    // front end switches to the hand cursor for this.
+    bool pointer_over_clickable() const {
+        for (const auto& b : buttons_)
+            if (b.hover && b.enabled && b.sprite.visible) return true;
+        return false;
+    }
+
     void mouse_move(float x, float y) {
         for (auto& b : buttons_) {
             const bool over = b.sprite.visible && b.enabled && b.contains(x, y);
