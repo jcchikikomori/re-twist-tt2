@@ -87,6 +87,58 @@ enumerates `HKEY_CURRENT_USER\<app key>` (`0x466f70`, REG_SZ and REG_DWORD value
 and fullscreen are global; the max word length lives in the player profile. Our port keeps
 volumes and fullscreen in a plain-text settings file instead of the registry (plan task 6.3).
 
+### 3.1 Values, defaults and ranges (REA batch C, 2026-10-14)
+
+`TextTwist2GameSettings` (vtable `0x58f4f4`, base `0x58f2bc`) is created by the factory `0x40e720`.
+Its getters and setters (vtable slots `+0x14`..`+0x30`) pair one field with one registry value:
+
+| Field | Registry value | Type | Default (`0x40e720`) | Range |
+| --- | --- | --- | --- | --- |
+| `+0x04` | `fullscreen` | bool | 1 | 0 / 1 |
+| `+0x05` | `usehints` | bool | 1 | 0 / 1 (no control in `DIALOG_SETTINGS`) |
+| `+0x08` | `soundvolume` | float | 0.5 | clamped to 0..1 by `0x463db0` |
+| `+0x0c` | `musicvolume` | float | 0.5 | clamped to 0..1 by `0x463e30` |
+| `+0x10` | `onlinescores` | bool | 1 | no control |
+| `+0x11` | `showmoregames` | bool | 1 | no control |
+| `+0x18` | `moregamesurl` | string | empty | no control |
+
+- Load `0x465a80` only overwrites a field whose registry value exists; save `0x465830` writes
+  `fullscreen`, `usehints`, `soundvolume` and `musicvolume`.
+- `DIALOG_SETTINGS` copies the live values into its own instance with `0x466290` and keeps them for CANCEL.
+- **Port deviation:** our `settings.txt` stores `fullscreen`, `soundvolume` and `musicvolume` only, and a
+  first run is **windowed** (the user's choice on 2026-10-14). The other values have no control in this
+  dialog and are not stored.
+
+Evidence: `ev_363422672f773da1de8157b056462c00b71435b19d8b9d3c72c71060ccdbc911` (factory, getters, setters),
+`ev_117a15868e7cbfe1802077f03124cb59329a9c6b4789638bbb7f51f8c84afee2` (vtable),
+`ev_1e8ed9080218046e1bb157e0279205d6df8dbfb306be2f3fcea553ae1489352c` (load and save),
+`ev_faf2da26497fcd65838cd4a36b641d91969d7ae681597f5dcf9140f7c782c1ff` (copy),
+`ev_70c757186b69de6ab97792324b83020f75061b4f995872ffd9a301489256aca4` (clamps).
+
+### 3.2 Slider and switch geometry
+
+- The slider parser `0x467890` reads `minvalue`/`maxvalue` and the knob track `minx`/`miny`/`maxx`/`maxy`.
+  `0x468440` places the knob (a child button, anchor center) at
+  `x = minx + t · (maxx − minx)` with `t = (value − minvalue) / (maxvalue − minvalue)`.
+  Worked example for `SLIDER_MUSICVOL` at (123, 98), track 30..276, y 12: value 0.5 puts the knob centre
+  at dialog-local `(123 + 30 + 0.5 · 246, 98 + 12) = (276, 110)`.
+  Evidence: `ev_7246d3cff0b82457e234633e717d381ad11f5322522f7eb0722765a02038bc87`,
+  `ev_0f56c3eaff2aaadbb4fa6f1cf857e1a0773eea42ddfe9a6de515e50aa1357690`.
+- **INFERRED:** pressing on the track or the knob moves the knob to the pointer; the press handler was
+  not traced.
+- **INFERRED (from the image):** `CHECKBOX02` (`button_check.png`, 24×200, 8 rows of 25) holds the off
+  states in rows 0–3 and the on states in rows 4–7, each as normal, hover, pressed, disabled.
+
+### 3.3 Per-sound volume attribute
+
+`resources.xml` writes `volue="0.5"` on most sounds and streams, but the parsers `0x471ed0` (sound) and
+`0x472590` (stream) look up `volume`, and the string `volue` does not occur in the executable. Those
+sounds therefore play at the resource default; only the entries spelled `volume` (for example
+`SOUND_CHECKBOX_ON`, `SOUND_SLIDER_1`) are set to 0.5. The resource default itself is **UNCONFIRMED**.
+Evidence: `ev_6ff35b71b9d47934d1bf06afbd433db0f2ae0744310c4311589f3d5027cae6d4`,
+`ev_2cec752d01ce146862067d7d2593a01aaf38787e06382d6b083a7a72d5a83fcb`,
+`ev_a1ebda5e7e861433e01015e008026b69222125c68bf8c3122f8002077ad199be`.
+
 ## 4. Dialog keys (bounded negative, REA batch B2)
 
 Dialogs take **no keyboard shortcuts**. The input listener of `DialogSettings`

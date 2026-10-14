@@ -373,6 +373,7 @@ TEST(profiles_text_rejects_garbage) {
         "format=re-twist-tt2 profiles\nversion=1\n[player]\nname=\n",            // empty name
         "format=re-twist-tt2 profiles\nversion=1\n[player]\nname=A\nseed=x\n",
         "format=re-twist-tt2 profiles\nversion=1\n[player]\nname=A\nmax=9\n",
+        "format=re-twist-tt2 profiles\nversion=1\n[player]\nname=A\nmax=5\n",
         "format=re-twist-tt2 profiles\nversion=1\n[player]\nname=A\ntrophies=1,2\n",
         "format=re-twist-tt2 profiles\nversion=1\n[player]\nname=A\nno equals sign\n",
         "format=re-twist-tt2 profiles\nversion=1\n[player]\nname=A\n[player]\nname=A\n",  // duplicate

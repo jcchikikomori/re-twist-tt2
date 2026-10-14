@@ -35,7 +35,7 @@ ctest --test-dir build --output-on-failure    # unit tests
 
 | Path | Owner / purpose |
 | --- | --- |
-| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp`, `round_crossword.hpp`, `profile.hpp` (players, progression, high scores; spec in `docs/reverse-engineering/profiles.md`), `profile_store.hpp` (plain-text save files), `saved_game.hpp` (the resumable Classic game). |
+| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp`, `round_crossword.hpp`, `profile.hpp` (players, progression, high scores; spec in `docs/reverse-engineering/profiles.md`), `profile_store.hpp` (plain-text save files), `settings.hpp` (volumes and window mode, `settings.txt`), `saved_game.hpp` (the resumable Classic game). |
 | `engine/tests/` | Unit tests, one file per header plus `test_main.cpp` (the in-tree test harness). |
 | `src/main.cpp` | The driver / smoke test for the engine. |
 | `tools/tree_cli.cpp` | Dictionary tool: `decode`, `encode`, `merge`, `diff`, `verify`. Replaces the old `tools/tree-cli.ts`. |
@@ -202,11 +202,13 @@ the address-level walkthrough of the gameplay code is in
   format, `profile_dialogs.hpp` for the name-input / player-select
   dialogs, `game_scene.hpp` for the Classic Untimed / Timed scene,
   `game_dialogs.hpp` for its pause menu, confirmations and round-end
-  dialogs),
+  dialogs, `help_dialog.hpp` for HOW TO PLAY, `settings_dialog.hpp`
+  for SETTINGS),
   `ui/src/main.cpp` is the SDL2 front end, and `ui/tests/` holds the
   headless tests. Timings and layout for the welcome flow come from
   `docs/reverse-engineering/welcome-flow.md`, the game scene geometry
-  from `docs/reverse-engineering/game-scene.md`;
+  from `docs/reverse-engineering/game-scene.md`, help and settings from
+  `docs/reverse-engineering/help-and-settings.md`;
   keep the model free of SDL so it stays testable. Original assets are
   never committed: `scripts/import-original.sh` copies them into the
   gitignored `imported-assets/` on the user's machine only.

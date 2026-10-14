@@ -43,6 +43,7 @@
 #include "tt2ui/bitmap_font.hpp"
 #include "tt2ui/game_scene.hpp"
 #include "tt2ui/help_dialog.hpp"
+#include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/profile_dialogs.hpp"
 #include "tt2ui/welcome_flow.hpp"
 
@@ -138,6 +139,12 @@ const std::map<std::string, std::string> kImageFiles = {
     {"BUTTON_END_PLAYAGAIN", "images/gui/button_end_playagain.png"},
     {"IMAGE_BURST", "images/trophyscene/burst.png"},
     // DIALOG_HELP (help-and-settings.md §2).
+    // DIALOG_SETTINGS (help-and-settings.md §3).
+    {"SLIDER_BACK", "images/gui/slider_back.png"},
+    {"SLIDER_BUTTON", "images/gui/slider_button.png"},
+    {"CHECKBOX02", "images/gui/button_check.png"},
+    {"IMAGE_DIFFICULTY_TAB", "images/gui/difficulty_tab.png"},
+    {"BUTTON_INFO", "images/gui/button_info.png"},
     {"BUTTON_PREV", "images/gui/dialoghelp/button_prev.png"},
     {"BUTTON_NEXT", "images/gui/dialoghelp/button_next.png"},
     {"IMAGE_HELP_PAGE01", "images/gui/dialoghelp/image_help_page01.png"},
@@ -187,6 +194,14 @@ const std::map<SoundId, std::string> kSoundFiles = {
     {SoundId::NextRoundAchieved, "sound/game_next_round_acheived.ogg"},
     {SoundId::HighScoreAchieved, "sound/game_high_score_acheived.ogg"},
     {SoundId::MusicInGame1, "music/music_in-game_1.ogg"},
+    {SoundId::CheckboxOn, "sound/checkbox_on.ogg"},
+    {SoundId::CheckboxOff, "sound/checkbox_off.ogg"},
+    {SoundId::Slider, "sound/slider_4.ogg"},
+};
+// The few resources.xml sounds whose attribute is spelled `volume` (the
+// `volue` ones are never read; help-and-settings.md §3.3).
+const std::map<SoundId, float> kSoundVolumes = {
+    {SoundId::CheckboxOn, 0.5f}, {SoundId::CheckboxOff, 0.5f}, {SoundId::Slider, 0.5f},
 };
 
 // DEFAULT_PAINTER (dialogs.xml): corner / edge sizes of the 9-slice.
@@ -421,7 +436,7 @@ public:
         if (!m) return;
         if (current_stream_ == id && Mix_PlayingMusic()) return;   // 0x42b080: keep playing
         Mix_PlayMusic(m, -1);
-        Mix_VolumeMusic(MIX_MAX_VOLUME / 2);                        // volue="0.5"
+        Mix_VolumeMusic(mixer_volume(music_volume_));
         current_stream_ = id;
     }
     void play_sound(SoundId id) {
@@ -434,11 +449,24 @@ public:
                 const std::string path = dir_ + "/" + f->second;
                 if (file_exists(path)) c = Mix_LoadWAV(path.c_str());
             }
+            auto v = kSoundVolumes.find(id);
+            if (c && v != kSoundVolumes.end()) Mix_VolumeChunk(c, mixer_volume(v->second));
             it = chunks_.emplace(id, c).first;
         }
         if (it->second) Mix_PlayChannel(-1, it->second, 0);
     }
     void set_audio(bool on) { audio_ = on; }
+    // GameSettings volumes, 0..1, applied at once (0x463db0 / 0x463e30).
+    // INFERRED: a linear map onto SDL_mixer's 0..128.
+    void set_sound_volume(float v) {
+        sound_volume_ = v;
+        if (audio_) Mix_Volume(-1, mixer_volume(v));
+    }
+    void set_music_volume(float v) {
+        music_volume_ = v;
+        if (audio_) Mix_VolumeMusic(mixer_volume(v));
+    }
+    static int mixer_volume(float v) { return static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * MIX_MAX_VOLUME)); }
 
 private:
     Image& store(const std::string& key, Image img) {
@@ -474,6 +502,8 @@ private:
     SDL_Renderer* renderer_;
     std::string dir_;
     bool audio_ = false;
+    float sound_volume_ = 0.5f;
+    float music_volume_ = 0.5f;
     std::map<std::string, Image> images_;
     std::map<std::string, Font> fonts_;
     std::map<SoundId, Mix_Music*> music_;
@@ -651,7 +681,19 @@ void draw_dialog(SDL_Renderer* ren, Assets& assets, const Dialog& d, const std::
     for (const SpriteState& s : d.sprites) draw_sprite(ren, assets, s, ox, oy);
     for (const MenuButton& b : d.buttons) {
         draw_sprite(ren, assets, b.sprite, ox, oy);
-        if (b.sprite.visible && assets.image(b.sprite.sheet).placeholder && b.sprite.name.rfind("NAME_", 0) != 0)
+        const bool placeholder = b.sprite.visible && assets.image(b.sprite.sheet).placeholder;
+        if (placeholder && b.sprite.name.rfind("SWITCH_", 0) == 0) {
+            // Placeholder switch: no caption (the dialog labels it); a filled
+            // centre marks "on" (rows 4..7).
+            if (b.sprite.frame >= SWITCH_ON_ROW_OFFSET) {
+                SDL_SetRenderDrawColor(ren, 0xff, 0xd0, 0x40, 0xff);
+                SDL_Rect dot{static_cast<int>(b.sprite.left() + ox) + 6, static_cast<int>(b.sprite.top() + oy) + 6,
+                             b.sprite.sheet.frame_w - 12, b.sprite.sheet.frame_h - 12};
+                SDL_RenderFillRect(ren, &dot);
+            }
+            continue;
+        }
+        if (placeholder && b.sprite.name.rfind("NAME_", 0) != 0)
             draw_text(ren, assets, "PLACEHOLDER_2", placeholder_button_label(b.sprite.name),
                       b.sprite.left() + ox + b.sprite.sheet.frame_w * 0.5f,
                       b.sprite.top() + oy + b.sprite.sheet.frame_h * 0.5f, TextAlign::Center, Anchor::Center, -1);
@@ -728,6 +770,18 @@ void draw_sprite_or_label(SDL_Renderer* ren, Assets& assets, const SpriteState& 
     if (assets.image(sp.sheet).placeholder && !label.empty())
         draw_text_lines(ren, assets, font_id, label, sp.left() + sp.sheet.frame_w * 0.5f,
                         sp.top() + sp.sheet.frame_h * 0.5f, line_h);
+}
+
+// DIALOG_SETTINGS: the shared dialog drawing plus the two slider knobs
+// (SLIDER_BUTTON 33x140, 4 rows, anchor centre; 0x468440).
+void draw_settings(SDL_Renderer* ren, Assets& assets, const SettingsDialog& d) {
+    draw_dialog(ren, assets, d.dialog());
+    for (const SettingsSlider& s : d.sliders()) {
+        SpriteState knob = sprite("SLIDER_KNOB", sheet("SLIDER_BUTTON", 33, 140, 1, 4, 4), s.knob_x(), s.knob_y());
+        knob.anchor = Anchor::Center;
+        knob.frame = s.knob_frame();
+        draw_sprite(ren, assets, knob, d.dialog().left(), d.dialog().top());
+    }
 }
 
 // DIALOG_HELP over draw_dialog(): without the imported page pictures the
@@ -871,7 +925,8 @@ int main(int argc, char** argv) {
     std::string auto_play;     // --play untimed|timed: start a game as soon as the menu is up
     std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
                                // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP, '>' NEXT ROUND,
-                               // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages
+                               // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages,
+                               // '#' SETTINGS, '6'..'8' max length, '!' fullscreen switch
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_dir = argv[++i];
@@ -924,13 +979,20 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "warning: %s is unreadable; starting with default high scores\n",
                      store.highscores_path().string().c_str());
 
+    // settings.txt: volumes and window mode (replaces the registry group).
+    tt2::GameSettings settings;
+    if (!save_dir.empty() && !store.load(settings))
+        std::fprintf(stderr, "warning: %s is unreadable; using the default settings\n",
+                     store.settings_path().string().c_str());
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) != 0) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
     IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG);
     SDL_Window* win = SDL_CreateWindow("Text Twist 2", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                       SCREEN_W, SCREEN_H, SDL_WINDOW_SHOWN);
+                                       SCREEN_W, SCREEN_H,
+                                       SDL_WINDOW_SHOWN | (settings.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
     if (!win) {
         std::fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
         return 1;
@@ -953,6 +1015,22 @@ int main(int argc, char** argv) {
     const bool audio = Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) == 0;
     if (audio) Mix_Init(MIX_INIT_OGG);
     assets.set_audio(audio);
+    assets.set_sound_volume(settings.sound_volume);
+    assets.set_music_volume(settings.music_volume);
+    // DIALOG_SETTINGS, from the pause menu and the main menu.
+    SettingsHost settings_host;
+    settings_host.current = [&] { return settings; };
+    settings_host.apply_sound_volume = [&](float v) { assets.set_sound_volume(v); };
+    settings_host.apply_music_volume = [&](float v) { assets.set_music_volume(v); };
+    settings_host.commit = [&](const tt2::GameSettings& g) {
+        if (g.fullscreen != settings.fullscreen)
+            SDL_SetWindowFullscreen(win, g.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+        settings = g;
+        std::printf("settings: sound %.2f, music %.2f, %s\n", settings.sound_volume, settings.music_volume,
+                    settings.fullscreen ? "fullscreen" : "windowed");
+        if (!save_dir.empty() && !store.save(settings))
+            std::fprintf(stderr, "warning: could not write %s\n", store.settings_path().string().c_str());
+    };
     std::printf("assets: %s (%s)\n", assets_dir.c_str(),
                 file_exists(assets_dir + "/images/loadscene/logo_anim.png") ? "imported" : "placeholders");
 
@@ -1005,6 +1083,27 @@ int main(int argc, char** argv) {
         assets.play_sound(SoundId::Button);
         if (menu_help->press(name)) menu_help.reset();
     };
+    // The main menu's SETTINGS (0x42ef5f -> DIALOG_SETTINGS). OK stores the
+    // current player's max word length and saves the players (0x40c620).
+    std::optional<SettingsDialog> menu_settings;
+    auto open_menu_settings = [&] {
+        menu_settings.emplace(settings, players.current() ? players.current()->max_word_length : 6,
+                              settings_host.fullscreen_supported,
+                              SettingsDialog::Services{[&](SoundId id) { assets.play_sound(id); },
+                                                       settings_host.apply_sound_volume,
+                                                       settings_host.apply_music_volume});
+    };
+    auto menu_settings_result = [&](SettingsDialog::Result r) {
+        if (!menu_settings) return;
+        if (r == SettingsDialog::Result::Ok) {
+            if (players.current()) {
+                players.current()->max_word_length = menu_settings->max_word_length();
+                pservices.on_change();
+            }
+            settings_host.commit(menu_settings->values());
+        }
+        if (r == SettingsDialog::Result::Ok || r == SettingsDialog::Result::Cancel) menu_settings.reset();
+    };
     // "Continue the game?" (CTEXT_START_SAVEGAME, 0x42dc80) on the menu.
     Dialog menu_dialog;
     bool menu_dialog_open = false;
@@ -1043,6 +1142,7 @@ int main(int argc, char** argv) {
         else if (name == "BUTTON_PLAY_UNTIMED") request_game(false);
         else if (name == "BUTTON_PLAY") request_game(true);
         else if (name == "BUTTON_HOWTOPLAY") menu_help.emplace();
+        else if (name == "BUTTON_SETTINGS") open_menu_settings();
         else std::printf("menu: %s (not implemented yet)\n", name.c_str());
     };
     WelcomeFlow flow(services, static_cast<std::uint32_t>(SDL_GetTicks() + 1));
@@ -1051,6 +1151,7 @@ int main(int argc, char** argv) {
         gs.play_sound = [&](SoundId id) { assets.play_sound(id); };
         gs.on_profile_change = pservices.on_change;
         gs.wrap_text = wrap_message;
+        gs.settings = settings_host;
         gs.on_exit = [&] { pending_exit = true; game_fade_out = GAME_FADE_HALF_MS; };
         const std::string player = players.current()->name;
         const std::string mode = mode_name(pending_timed);
@@ -1147,6 +1248,21 @@ int main(int argc, char** argv) {
                     menu_dialog_press(dialog_mouse_up(menu_dialog, e.button.x, e.button.y));
                 continue;
             }
+            if (menu_settings) {
+                // Deviation: Esc cancels, Return is OK (the original dialogs take no keys).
+                if (e.type == SDL_KEYDOWN) {
+                    const auto k = e.key.keysym.sym;
+                    if (k == SDLK_ESCAPE) menu_settings_result(menu_settings->press("BUTTON_CANCEL"));
+                    else if (k == SDLK_RETURN || k == SDLK_KP_ENTER)
+                        menu_settings_result(menu_settings->press("BUTTON_OK"));
+                }
+                if (e.type == SDL_MOUSEMOTION) menu_settings->mouse_move(e.motion.x, e.motion.y);
+                if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
+                    menu_settings->mouse_down(e.button.x, e.button.y);
+                if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)
+                    menu_settings_result(menu_settings->mouse_up(e.button.x, e.button.y));
+                continue;
+            }
             if (menu_help) {
                 // Deviation: Esc closes the help (the original dialogs take no keys).
                 if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) menu_help_press("BUTTON_OK");
@@ -1174,6 +1290,7 @@ int main(int argc, char** argv) {
         if (profile.open()) hot = profile.pointer_over_clickable();
         else if (menu_dialog_open) hot = dialog_pointer_hot(menu_dialog);
         else if (menu_help) hot = dialog_pointer_hot(menu_help->dialog());
+        else if (menu_settings) hot = menu_settings->pointer_hot();
         else if (game) hot = game->pointer_over_clickable();
         else if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             hot = flow.selection()->pointer_over_clickable();
@@ -1214,7 +1331,8 @@ int main(int argc, char** argv) {
                 menu_dialog_press(c == '|' ? "BUTTON_YES" : "BUTTON_NO");
             }
         }
-        // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK.
+        // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL;
+        // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '|' OK.
         if (!game && auto_play.empty() && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
             flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
@@ -1223,6 +1341,12 @@ int main(int argc, char** argv) {
                 const char c = auto_type.front();
                 auto_type.erase(0, 1);
                 if (c == '?') services.menu_action("BUTTON_HOWTOPLAY");
+                else if (c == '#') services.menu_action("BUTTON_SETTINGS");
+                else if (menu_settings && c == '~') menu_settings_result(menu_settings->press("BUTTON_CANCEL"));
+                else if (menu_settings && c == '|') menu_settings_result(menu_settings->press("BUTTON_OK"));
+                else if (menu_settings && c == '!') menu_settings->press("SWITCH_FULLSCREEN");
+                else if (menu_settings && c >= '6' && c <= '8')
+                    menu_settings->press(SettingsDialog::length_switch(c - '0'));
                 else if (c == '<') menu_help_press("BUTTON_PREV");
                 else if (c == '>') menu_help_press("BUTTON_NEXT");
                 else if (c == '~') menu_help_press("BUTTON_OK");
@@ -1241,6 +1365,9 @@ int main(int argc, char** argv) {
                 else if (c == '~') game->key_escape();                  // pause menu / back
                 else if (c == '$') game->dialog_press("BUTTON_STOP");   // pause menu STOP
                 else if (c == '?') game->dialog_press("BUTTON_HOWTOPLAY");   // pause menu HOW TO PLAY
+                else if (c == '#') game->dialog_press("BUTTON_SETTINGS");    // pause menu SETTINGS
+                else if (c == '!') game->dialog_press("SWITCH_FULLSCREEN");  // settings: fullscreen
+                else if (c >= '6' && c <= '8') game->dialog_press(SettingsDialog::length_switch(c - '0'));
                 else if (c == '<') game->dialog_press("BUTTON_PREV");       // help: previous page
                 else if (c == '>') {
                     if (game->dialog_kind() == GameDialog::HowToPlay) game->dialog_press("BUTTON_NEXT");
@@ -1254,6 +1381,7 @@ int main(int argc, char** argv) {
         profile.update(dt);
         if (menu_dialog_open) dialog_tick(menu_dialog, dt);
         if (menu_help) menu_help->tick(dt);
+        if (menu_settings) menu_settings->tick(dt);
         simulated_ms += dt;
         if (flow.current() != last_scene) {
             last_scene = flow.current();
@@ -1280,7 +1408,9 @@ int main(int argc, char** argv) {
                           Anchor::Center, 2);
             }
         }
-        if (game && game->dialog_kind() == GameDialog::HowToPlay) {
+        if (game && game->settings_dialog()) {
+            draw_settings(ren, assets, *game->settings_dialog());
+        } else if (game && game->dialog_kind() == GameDialog::HowToPlay) {
             draw_help(ren, assets, game->dialog());
         } else if (game && game->dialog_open()) {
             draw_dialog(ren, assets, game->dialog());
@@ -1289,6 +1419,7 @@ int main(int argc, char** argv) {
         }
         if (menu_dialog_open) draw_dialog(ren, assets, menu_dialog);
         if (menu_help) draw_help(ren, assets, menu_help->dialog());
+        if (menu_settings) draw_settings(ren, assets, *menu_settings);
         if (profile.open()) draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
         float black = flow.black_alpha();
         if (game_fade_out > 0) black = std::max(black, 1.0f - static_cast<float>(game_fade_out) / GAME_FADE_HALF_MS);
@@ -1304,12 +1435,26 @@ int main(int argc, char** argv) {
             const int period = 1000 / (dump_fps > 0 ? dump_fps : 12);
             if (dump_accum_ms >= period) {
                 dump_accum_ms -= period;
+                // ReadPixels(nullptr) returns the viewport in output pixels: 800x600
+                // windowed, larger once the window is fullscreen and scaled. Read at
+                // the output size, then scale the viewport back to 800x600.
+                int out_w = SCREEN_W, out_h = SCREEN_H;
+                SDL_GetRendererOutputSize(ren, &out_w, &out_h);
+                SDL_Rect view{};
+                float scale_x = 1.0f, scale_y = 1.0f;
+                SDL_RenderGetViewport(ren, &view);
+                SDL_RenderGetScale(ren, &scale_x, &scale_y);
+                SDL_Rect read{0, 0, std::min(out_w, static_cast<int>(std::lround(view.w * scale_x))),
+                              std::min(out_h, static_cast<int>(std::lround(view.h * scale_y)))};
+                SDL_Surface* raw = SDL_CreateRGBSurfaceWithFormat(0, out_w, out_h, 24, SDL_PIXELFORMAT_RGB24);
                 SDL_Surface* shot = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_W, SCREEN_H, 24, SDL_PIXELFORMAT_RGB24);
-                if (shot && SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGB24, shot->pixels, shot->pitch) == 0) {
+                if (raw && shot && SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGB24, raw->pixels, raw->pitch) == 0 &&
+                    SDL_BlitScaled(raw, &read, shot, nullptr) == 0) {
                     char name[64];
                     std::snprintf(name, sizeof name, "/frame_%04d.bmp", dump_index++);
                     SDL_SaveBMP(shot, (dump_dir + name).c_str());
                 }
+                if (raw) SDL_FreeSurface(raw);
                 if (shot) SDL_FreeSurface(shot);
             }
         }

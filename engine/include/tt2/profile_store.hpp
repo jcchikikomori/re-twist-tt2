@@ -13,6 +13,7 @@
 
 #include "tt2/profile.hpp"
 #include "tt2/saved_game.hpp"
+#include "tt2/settings.hpp"
 
 namespace tt2 {
 
@@ -61,12 +62,14 @@ class ProfileStore {
 public:
     static constexpr const char* PROFILES_FILE = "profiles.txt";
     static constexpr const char* HIGHSCORES_FILE = "highscores.txt";
+    static constexpr const char* SETTINGS_FILE = "settings.txt";
 
     explicit ProfileStore(std::filesystem::path dir) : dir_(std::move(dir)) {}
 
     const std::filesystem::path& dir() const noexcept { return dir_; }
     std::filesystem::path profiles_path() const { return dir_ / PROFILES_FILE; }
     std::filesystem::path highscores_path() const { return dir_ / HIGHSCORES_FILE; }
+    std::filesystem::path settings_path() const { return dir_ / SETTINGS_FILE; }
 
     // A missing file is not an error: the manager is left empty and
     // `true` is returned. A present but malformed file returns false and
@@ -84,6 +87,16 @@ public:
 
     bool save(const PlayerManager& pm) const { return write_file(profiles_path(), serialize(pm)); }
     bool save(const HighScoreManager& hm) const { return write_file(highscores_path(), serialize(hm)); }
+
+    // settings.txt replaces the registry group "GameSettngs". A missing
+    // file keeps the defaults and returns true; a malformed one returns
+    // false and leaves `s` untouched.
+    bool load(GameSettings& s) const {
+        std::string text;
+        if (!read_file(settings_path(), text)) return true;
+        return parse(text, s);
+    }
+    bool save(const GameSettings& s) const { return write_file(settings_path(), serialize(s)); }
 
     // ---- saved games (saved_game.hpp) ---------------------------------
     // The original keeps one file per player and mode under a

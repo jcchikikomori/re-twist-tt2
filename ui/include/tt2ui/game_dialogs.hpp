@@ -28,9 +28,6 @@ inline constexpr const char* GIVEUP_BODY = "Are you sure you wish\nto end this g
 inline constexpr const char* SAVEGAME_HEADER = "Continue the game?";          // CTEXT_SAVEGAME_HEADER
 inline constexpr const char* SAVEGAME_BODY =
     "Do you want to continue your last played game?\n(Select 'No' to start again.)";   // CTEXT_START_SAVEGAME
-inline constexpr const char* NOT_AVAILABLE_HEADER = "Not available";          // CTEXT_NOT_AVAILABLE_HEADER
-inline constexpr const char* NOT_AVAILABLE =
-    "This option is not available yet.";                                      // CTEXT_NOT_AVAILABLE (first sentence)
 inline constexpr const char* NEXT_ROUND_BODY = "Click to continue\nto the next round!";   // TEXT_NEXT_ROUND_BODY
 inline constexpr const char* GAME_OVER_HEADER = "GAME OVER";
 inline constexpr const char* ENDGAME_BODY = "Sorry, you didn't qualify\nfor the next round.";   // TEXT_ENDGAME_BODY
@@ -39,7 +36,7 @@ inline constexpr const char* CONGRATS_BODY = "Congratulations!\nYou earned a\nne
 
 // Kinds used by the game scene (the profile kinds stay in DialogKind).
 enum class GameDialog {
-    None, PauseMenu, ConfirmExit, ConfirmGiveUp, NotAvailable, HowToPlay, NextRound, EndGame, Congrats
+    None, PauseMenu, ConfirmExit, ConfirmGiveUp, HowToPlay, Settings, NextRound, EndGame, Congrats
 };
 
 inline int text_line_count(const std::string& s) {

@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,7 @@
 #include "tt2/word_tree.hpp"
 #include "tt2ui/game_dialogs.hpp"
 #include "tt2ui/help_dialog.hpp"
+#include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/modifier.hpp"
 #include "tt2ui/sprite.hpp"
 #include "tt2ui/welcome_flow.hpp"
@@ -263,6 +265,8 @@ public:
         // Word wrap for the yes/no MESSAGE (wrapstyle="wordwrap"); empty
         // keeps the strings' own line breaks.
         LineBreaker wrap_text;
+        // DIALOG_SETTINGS: live volumes, OK commit, fullscreen support.
+        SettingsHost settings;
         // No pause hook: the pause menu leaves the music playing (DialogMenu
         // show 0x40aa30 has no stream call; game-scene.md §6, REA batch A).
     };
@@ -321,13 +325,15 @@ public:
     const char* background_id() const { return timed_ ? "gamescene/BACKGROUND_TIMED" : "gamescene/BACKGROUND"; }
     bool dialog_open() const { return dialog_kind_ != GameDialog::None; }
     GameDialog dialog_kind() const { return dialog_kind_; }
-    const Dialog& dialog() const { return dialog_; }
-    Dialog& dialog() { return dialog_; }
+    const Dialog& dialog() const { return settings_ ? settings_->dialog() : dialog_; }
+    Dialog& dialog() { return settings_ ? settings_->dialog() : dialog_; }
+    // DIALOG_SETTINGS while dialog_kind() == Settings, else nullptr.
+    const SettingsDialog* settings_dialog() const { return settings_ ? &*settings_ : nullptr; }
     // The clock and the animations stand still while one of these is up.
     bool paused() const {
         return dialog_kind_ == GameDialog::PauseMenu || dialog_kind_ == GameDialog::ConfirmExit ||
-               dialog_kind_ == GameDialog::ConfirmGiveUp || dialog_kind_ == GameDialog::NotAvailable ||
-               dialog_kind_ == GameDialog::HowToPlay;
+               dialog_kind_ == GameDialog::ConfirmGiveUp || dialog_kind_ == GameDialog::HowToPlay ||
+               dialog_kind_ == GameDialog::Settings;
     }
     const char* save_mode() const { return tt2::save_mode_name(mode()); }
 
@@ -415,8 +421,8 @@ public:
             case GameDialog::PauseMenu: dialog_press("BUTTON_RESUME"); break;
             case GameDialog::ConfirmExit:
             case GameDialog::ConfirmGiveUp: dialog_press("BUTTON_NO"); break;
-            case GameDialog::NotAvailable:
             case GameDialog::HowToPlay: dialog_press("BUTTON_OK"); break;
+            case GameDialog::Settings: dialog_press("BUTTON_CANCEL"); break;
             default: break;   // round-end dialogs need a choice
         }
     }
@@ -426,6 +432,7 @@ public:
     // True while the pointer sits on a clickable button — the SDL
     // front end switches to the hand cursor for this.
     bool pointer_over_clickable() const {
+        if (settings_) return settings_->pointer_hot();
         if (dialog_open()) return dialog_pointer_hot(dialog_);
         for (const auto& b : buttons_)
             if (b.hover && b.enabled && b.sprite.visible) return true;
@@ -433,6 +440,7 @@ public:
     }
 
     void mouse_move(float x, float y) {
+        if (settings_) { settings_->mouse_move(x, y); return; }
         if (dialog_open()) {
             dialog_mouse_move(dialog_, x, y);   // no hover sound (0x48d390)
             return;
@@ -444,10 +452,12 @@ public:
         }
     }
     void mouse_down(float x, float y) {
+        if (settings_) { settings_->mouse_down(x, y); return; }
         if (dialog_open()) { dialog_mouse_down(dialog_, x, y); return; }
         for (auto& b : buttons_) b.pressed = b.sprite.visible && b.enabled && b.contains(x, y);
     }
     void mouse_up(float x, float y) {
+        if (settings_) { settings_result(settings_->mouse_up(x, y)); return; }
         if (dialog_open()) {
             const std::string name = dialog_mouse_up(dialog_, x, y);
             if (!name.empty()) dialog_press(name);
@@ -490,6 +500,7 @@ public:
 
     // A button of the open dialog (mouse, keyboard and tests).
     void dialog_press(const std::string& name) {
+        if (settings_) { settings_result(settings_->press(name)); return; }   // plays its own sounds
         const MenuButton* b = dialog_.button(name);
         if (!dialog_open() || !b || !b->enabled || !b->sprite.visible) return;
         play(SoundId::Button);
@@ -498,9 +509,8 @@ public:
                 if (name == "BUTTON_RESUME") close_dialog();
                 else if (name == "BUTTON_STOP") open_dialog(GameDialog::ConfirmExit);
                 else if (name == "BUTTON_HOWTOPLAY") open_dialog(GameDialog::HowToPlay);   // 0x408180
-                else open_dialog(GameDialog::NotAvailable);   // SETTINGS: not built yet
+                else if (name == "BUTTON_SETTINGS") open_dialog(GameDialog::Settings);   // 0x408250
                 break;
-            case GameDialog::NotAvailable: open_dialog(GameDialog::PauseMenu); break;
             case GameDialog::HowToPlay:
                 // OK (0x408c00) closes the help; the pause menu is still under it.
                 if (name == "BUTTON_OK") open_dialog(GameDialog::PauseMenu);
@@ -526,6 +536,7 @@ public:
                 if (name == "BUTTON_REPLAY") new_game();
                 else exit_to_menu();
                 break;
+            case GameDialog::Settings:
             case GameDialog::None: break;
         }
     }
@@ -534,7 +545,8 @@ public:
     void update(int dt_ms) {
         if (finished_) return;
         if (dialog_kind_ == GameDialog::HowToPlay) help_.tick(dialog_, dt_ms);
-        if (dialog_open()) dialog_tick(dialog_, dt_ms);
+        if (settings_) settings_->tick(dt_ms);
+        else if (dialog_open()) dialog_tick(dialog_, dt_ms);
         for (auto& b : dialog_balls_)
             if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43a820 flag 1 -> 0x43a940
         if (paused()) return;
@@ -812,6 +824,7 @@ private:
     void open_dialog(GameDialog kind) {
         dialog_kind_ = kind;
         dialog_balls_.clear();
+        settings_.reset();
         switch (kind) {
             case GameDialog::PauseMenu: dialog_ = build_pause_menu(); break;
             case GameDialog::ConfirmExit:
@@ -820,9 +833,13 @@ private:
             case GameDialog::ConfirmGiveUp:
                 dialog_ = build_yes_no(game_strings::GIVEUP_HEADER, game_strings::GIVEUP_BODY, false, services_.wrap_text);
                 break;
-            case GameDialog::NotAvailable:
-                dialog_ = build_yes_no(game_strings::NOT_AVAILABLE_HEADER, game_strings::NOT_AVAILABLE, true,
-                                       services_.wrap_text);
+            case GameDialog::Settings:
+                dialog_ = Dialog{};
+                settings_.emplace(services_.settings.current ? services_.settings.current() : tt2::GameSettings{},
+                                  profile_.max_word_length, services_.settings.fullscreen_supported,
+                                  SettingsDialog::Services{services_.play_sound,
+                                                           services_.settings.apply_sound_volume,
+                                                           services_.settings.apply_music_volume});
                 break;
             case GameDialog::HowToPlay:
                 dialog_ = build_help();
@@ -839,6 +856,19 @@ private:
         for (auto& b : buttons_) b.hover = b.pressed = false;
     }
     void close_dialog() { open_dialog(GameDialog::None); }
+
+    // OK (0x40c620) stores the player's max word length and saves the
+    // players (0x462080); it applies from the next rack (F13). Both OK and
+    // CANCEL go back to the pause menu.
+    void settings_result(SettingsDialog::Result r) {
+        if (!settings_) return;
+        if (r == SettingsDialog::Result::Ok) {
+            profile_.max_word_length = settings_->max_word_length();
+            if (services_.on_profile_change) services_.on_profile_change();
+            if (services_.settings.commit) services_.settings.commit(settings_->values());
+        }
+        if (r == SettingsDialog::Result::Ok || r == SettingsDialog::Result::Cancel) open_dialog(GameDialog::PauseMenu);
+    }
 
     void exit_to_menu() {
         if (finished_) return;
@@ -993,6 +1023,7 @@ private:
     std::vector<SlotView> slots_;
     std::vector<LetterBall> balls_;
     HelpPager help_;                         // DIALOG_HELP page state
+    std::optional<SettingsDialog> settings_; // DIALOG_SETTINGS while open
     std::vector<LetterBall> dialog_balls_;   // DIALOG_NEXTROUND letterballs
     std::vector<MenuButton> buttons_;
     SpriteState commentary_, game_over_, popup_bingo_, popup_all_;

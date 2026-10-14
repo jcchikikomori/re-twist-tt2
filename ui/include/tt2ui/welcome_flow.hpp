@@ -49,6 +49,10 @@ enum class SoundId {
     NextRoundAchieved,  // SOUND_game_next_round_acheived
     HighScoreAchieved,  // SOUND_game_high_score_achieved
     MusicInGame1,       // Stream  MUSIC_in-game_1 (music/music_in-game_1.ogg)
+    // DIALOG_SETTINGS (resources.xml section "default").
+    CheckboxOn,         // SOUND_CHECKBOX_ON  (sound/checkbox_on.ogg)
+    CheckboxOff,        // SOUND_CHECKBOX_OFF (sound/checkbox_off.ogg)
+    Slider,             // SOUND_SLIDER_1     (sound/slider_4.ogg)
 };
 
 // What the scenes need from the application.

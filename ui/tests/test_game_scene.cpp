@@ -45,6 +45,9 @@ struct Fixture {
     int exits = 0;
     int discards = 0;
     std::vector<tt2::SavedGame> saved;
+    tt2::GameSettings settings;
+    std::vector<float> fx_applied, music_applied;
+    int settings_commits = 0;
     std::unique_ptr<GameScene> scene;
 
     explicit Fixture(bool timed, bool with_hs = true, std::int64_t seed = 0) {
@@ -54,6 +57,10 @@ struct Fixture {
         s.on_exit = [this] { ++exits; };
         s.save_game = [this](const tt2::SavedGame& g) { saved.push_back(g); };
         s.discard_save = [this] { ++discards; };
+        s.settings.current = [this] { return settings; };
+        s.settings.apply_sound_volume = [this](float v) { fx_applied.push_back(v); };
+        s.settings.apply_music_volume = [this](float v) { music_applied.push_back(v); };
+        s.settings.commit = [this](const tt2::GameSettings& g) { settings = g; ++settings_commits; };
         scene = std::make_unique<GameScene>(com, ful, profile, with_hs ? &hs : nullptr, timed, s, seed);
     }
     bool played(SoundId id) const {
@@ -818,19 +825,66 @@ TEST(pause_menu_plays_only_the_button_click) {
     for (auto id : f.sounds) ASSERT_TRUE(id == SoundId::Button);
 }
 
-TEST(pause_menu_settings_is_not_available_yet) {
+TEST(pause_menu_settings_ok_saves_and_returns) {
+    Fixture f(true);
+    auto& s = *f.scene;
+    s.update(1000);
+    const int time_left = s.time_left_ms();
+    const std::string rack = s.rack();
+    s.press("BUTTON_Menu");
+    s.dialog_press("BUTTON_SETTINGS");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::Settings);
+    ASSERT_TRUE(s.paused());
+    ASSERT_TRUE(s.settings_dialog() != nullptr);
+    ASSERT_EQ(s.dialog().w, SETTINGS_W);
+    ASSERT_EQ(s.settings_dialog()->max_word_length(), f.profile.max_word_length);
+    const int saves = f.saves;
+    s.dialog_press("SWITCH_LENGTH_6");
+    s.dialog_press("SWITCH_FULLSCREEN");
+    s.update(5000);
+    ASSERT_EQ(s.time_left_ms(), time_left);                // the clock stands still
+    s.dialog_press("BUTTON_OK");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+    ASSERT_TRUE(s.settings_dialog() == nullptr);
+    ASSERT_EQ(f.profile.max_word_length, 6);
+    ASSERT_EQ(f.saves, saves + 1);                          // 0x462080
+    ASSERT_EQ(f.settings_commits, 1);
+    ASSERT_TRUE(f.settings.fullscreen);
+    ASSERT_EQ(s.rack(), rack);                              // F13: the current rack stays
+}
+
+TEST(pause_menu_settings_cancel_and_escape_change_nothing) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    const int max_len = f.profile.max_word_length;
+    s.press("BUTTON_Menu");
+    s.dialog_press("BUTTON_SETTINGS");
+    s.dialog_press("SWITCH_LENGTH_8");
+    s.dialog_press("BUTTON_CANCEL");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+    ASSERT_EQ(f.profile.max_word_length, max_len);
+    ASSERT_EQ(f.settings_commits, 0);
+    ASSERT_TRUE(!f.music_applied.empty() && f.music_applied.back() == f.settings.music_volume);
+    s.dialog_press("BUTTON_SETTINGS");
+    s.key_escape();                                         // deviation: Esc = CANCEL
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+    ASSERT_EQ(f.settings_commits, 0);
+    s.dialog_press("BUTTON_DOES_NOT_EXIST");               // ignored
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+}
+
+TEST(settings_slider_drag_in_the_scene_applies_live) {
     Fixture f(false);
     auto& s = *f.scene;
     s.press("BUTTON_Menu");
     s.dialog_press("BUTTON_SETTINGS");
-    ASSERT_TRUE(s.dialog_kind() == GameDialog::NotAvailable);
-    s.key_escape();
-    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
-    s.dialog_press("BUTTON_SETTINGS");
-    s.dialog_press("BUTTON_OK");
-    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
-    s.dialog_press("BUTTON_DOES_NOT_EXIST");               // ignored
-    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+    const SettingsSlider& music = s.settings_dialog()->slider("SLIDER_MUSICVOL");
+    const float ox = s.dialog().left(), oy = s.dialog().top();
+    s.mouse_down(ox + music.knob_x(), oy + music.knob_y());
+    s.mouse_move(ox + 123 + 30, oy + 110);                  // left end
+    s.mouse_up(ox + 123 + 30, oy + 110);
+    ASSERT_TRUE(f.music_applied.back() == 0.0f);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::Settings);   // a drag is not a click
 }
 
 TEST(pause_menu_how_to_play_pages_and_returns) {
