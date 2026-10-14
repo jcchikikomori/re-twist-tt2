@@ -49,6 +49,7 @@ struct SpriteState {
     int frame = 0;
     float alpha = 1.0f;
     float scale = 1.0f;     // drawn scaled about (x, y), the anchor point
+    float scale_y = 1.0f;   // extra vertical factor (the anagram tile flip)
     bool visible = true;
     Flip flip = Flip::None;
     Anchor anchor = Anchor::TopLeft;

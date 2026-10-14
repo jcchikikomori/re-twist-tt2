@@ -82,6 +82,14 @@ struct Fixture {
         scene->update(0);
         return scene->popup_kind();
     }
+    // Run every popup that is up or waiting to the end.
+    void drain_popups() {
+        for (int i = 0; i < 32 && (scene->popup_kind() || scene->popups_waiting() > 0); ++i) {
+            scene->update(0);
+            scene->update(3000);
+        }
+        scene->update(1);
+    }
     bool played(SoundId id) const {
         for (auto s : sounds) if (s == id) return true;
         return false;
@@ -425,6 +433,65 @@ TEST(delete_key_clears_the_played_row) {
     ASSERT_EQ(s.typed(), std::string("car"));              // the menu owns the keys
 }
 
+// ---- word-appear flip (0x4310f0) -----------------------------------------
+
+// Worked example, 5 letters staggered: letter i starts at i * 100 ms,
+// squashes 150 ms, grows 150 ms; the last one settles at 400 + 300 = 700.
+TEST(anagram_flip_squashes_then_grows_each_letter_in_turn) {
+    ASSERT_EQ(anagram_flip_ms(5, false), 700);
+    ASSERT_EQ(anagram_flip_ms(5, true), 300);
+    ASSERT_EQ(anagram_flip_ms(0, false), 0);
+    AnagramTile t = anagram_tile_at(0, 0, false, false);
+    ASSERT_TRUE(t.tile_scale_y == 1.0f && !t.letter_visible);
+    t = anagram_tile_at(75, 0, false, false);
+    ASSERT_TRUE(t.tile_scale_y == 0.5f && !t.letter_visible);
+    t = anagram_tile_at(150, 0, false, false);           // letter set, growing from 0
+    ASSERT_TRUE(t.letter_visible && t.tile_scale_y == 0.0f && t.letter_scale_y == 0.0f);
+    ASSERT_EQ(t.tile_frame, 0);                            // found words keep the white tile
+    t = anagram_tile_at(225, 0, false, false);
+    ASSERT_TRUE(t.tile_scale_y == 0.5f && t.letter_scale_y == 0.5f);
+    t = anagram_tile_at(5000, 0, false, false);
+    ASSERT_TRUE(t.tile_scale_y == 1.0f && t.letter_scale_y == 1.0f && t.letter_visible);
+    // Letter 2 has not started at 150 ms; it squashes from 200 ms.
+    t = anagram_tile_at(150, 2, false, false);
+    ASSERT_TRUE(t.tile_scale_y == 1.0f && !t.letter_visible);
+    t = anagram_tile_at(275, 2, false, false);
+    ASSERT_TRUE(t.tile_scale_y == 0.5f);
+}
+
+TEST(anagram_flip_revealed_words_turn_yellow_and_restored_ones_flip_together) {
+    ASSERT_EQ(anagram_tile_at(100, 0, true, false).tile_frame, 0);   // still squashing
+    ASSERT_EQ(anagram_tile_at(150, 0, true, false).tile_frame, 1);
+    const AnagramTile last = anagram_tile_at(150, 7, false, true);
+    ASSERT_TRUE(last.letter_visible);                      // no stagger
+    SlotView idle;
+    idle.word = "crate";
+    ASSERT_TRUE(!idle.tile(0).letter_visible);              // not started: blank white tile
+    ASSERT_TRUE(!idle.flipping());
+}
+
+TEST(found_word_flips_in_and_the_pause_menu_holds_it) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type("car");
+    s.key_return();
+    const SlotView* v = f.slot("car");
+    ASSERT_TRUE(v != nullptr);
+    ASSERT_EQ(v->flip_ms, 0);
+    ASSERT_TRUE(v->flipping());
+    s.update(300);
+    ASSERT_TRUE(v->tile(0).letter_visible);
+    ASSERT_TRUE(v->tile(0).letter_scale_y == 1.0f);
+    ASSERT_TRUE(!v->tile(2).letter_visible);              // letter 2 still squashing
+    s.press("BUTTON_Menu");
+    s.update(1000);
+    ASSERT_EQ(v->flip_ms, 300);                            // frozen while paused
+    s.dialog_press("BUTTON_RESUME");
+    s.update(1000);
+    ASSERT_TRUE(!v->flipping());
+    ASSERT_TRUE(v->tile(2).letter_visible);
+}
+
 // ---- guesses -------------------------------------------------------------
 
 TEST(guess_outcomes_score_and_commentary) {
@@ -436,6 +503,8 @@ TEST(guess_outcomes_score_and_commentary) {
     ASSERT_TRUE(f.slot("car")->found);
     ASSERT_TRUE(f.played(SoundId::WordCorrect));
     ASSERT_EQ(f.profile.solved, 1);
+    ASSERT_TRUE(f.shown() == PopupKind::Definitions);      // first correct word: popup 10
+    f.drain_popups();
     // Duplicate.
     f.sounds.clear();
     f.type("car");
@@ -478,6 +547,7 @@ TEST(no_room_comment_depends_on_length_slots) {
     std::vector<std::string> threes;
     for (const auto& v : s.slots()) if (v.word.size() == 3) threes.push_back(v.word);
     for (const auto& w : threes) { f.type(w); s.key_return(); }
+    f.drain_popups();
     f.sounds.clear();
     f.type("tec");
     s.key_return();
@@ -504,6 +574,7 @@ TEST(uncommon_guess_takes_the_first_empty_slot) {
     ASSERT_TRUE(f.slot("care") != nullptr);
     ASSERT_TRUE(f.slot("care")->found);
     // "cart" again is a duplicate.
+    f.drain_popups();
     f.sounds.clear();
     f.type("cart");
     s.key_return();
@@ -565,13 +636,52 @@ TEST(banner_popup_runs_its_frames_at_50_ms) {
     ASSERT_EQ(popup_duration_ms(PopupKind::AllWords), 150 + 250 + 100 + 18 * 50 + 1000 + 250);
 }
 
-TEST(correct_words_queue_no_popup) {
+// 0x424730: the first plain correct word queues popup 10 (click a word
+// for its definition), once per scene; later words queue nothing.
+TEST(first_correct_word_shows_the_definitions_hint_once) {
     Fixture f(false);
     auto& s = *f.scene;
     f.type("car");
     s.key_return();
-    ASSERT_TRUE(!f.shown());
+    ASSERT_TRUE(f.shown() == PopupKind::Definitions);
     ASSERT_EQ(s.popups_waiting(), std::size_t{0});
+    f.type("arc");
+    s.key_return();
+    ASSERT_EQ(s.popups_waiting(), std::size_t{0});
+    f.skip();                                              // round 2: the flag stays set
+    f.type("car");
+    s.key_return();
+    s.update(5000);
+    ASSERT_TRUE(!f.shown());
+}
+
+// The first bingo shows its banner instead; a repeat bingo can show the hint.
+TEST(first_bingo_skips_the_definitions_hint_but_a_repeat_bingo_shows_it) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type("crate");
+    s.key_return();
+    ASSERT_TRUE(f.shown() == PopupKind::Bingo);
+    ASSERT_EQ(s.popups_waiting(), std::size_t{0});
+    f.type("trace");                                       // repeat bingo: no banner
+    s.key_return();
+    ASSERT_EQ(s.popups_waiting(), std::size_t{1});
+    s.update(popup_duration_ms(PopupKind::Bingo));
+    s.update(1);                                           // the clean-up step runs a frame later
+    ASSERT_TRUE(f.shown() == PopupKind::Definitions);
+}
+
+// A rejected word never sets the flag.
+TEST(rejected_words_leave_the_definitions_hint_pending) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type("cra");
+    s.key_return();
+    ASSERT_TRUE(f.shown() == PopupKind::NotListed);
+    s.update(5000);
+    f.type("car");
+    s.key_return();
+    ASSERT_TRUE(f.shown() == PopupKind::Definitions);
 }
 
 // 0x425c50 -> 0x42ace0: a new round drops the popups still waiting.
@@ -608,7 +718,7 @@ TEST(bingo_qualifies_with_popup_and_bonus) {
     s.key_return();
     ASSERT_EQ(s.score(), 1250 + 250);
     ASSERT_TRUE(f.played(SoundId::WordBingo));
-    ASSERT_TRUE(!f.shown());                               // no second banner
+    ASSERT_TRUE(f.shown() == PopupKind::Definitions);      // no second banner; popup 10 instead
 }
 
 TEST(all_words_ends_round_and_next_round_starts) {
@@ -620,9 +730,10 @@ TEST(all_words_ends_round_and_next_round_starts) {
     ASSERT_TRUE(s.phase() == GamePhase::Reveal);
     ASSERT_TRUE(s.last_round_end() == RoundEnd::AllWords);
     ASSERT_TRUE(f.played(SoundId::AllWords));
-    // The bingo banner came first; ALL WORDS waits for it (one at a time).
-    ASSERT_TRUE(f.shown() == PopupKind::Bingo);
-    ASSERT_EQ(s.popups_waiting(), std::size_t{1});
+    // Popup 10 (first correct word) came first; BINGO and ALL WORDS
+    // wait behind it (one at a time).
+    ASSERT_TRUE(f.shown() == PopupKind::Definitions);
+    ASSERT_EQ(s.popups_waiting(), std::size_t{2});
     ASSERT_EQ(f.profile.rounds_completed[static_cast<std::size_t>(tt2::GameMode::Untimed)], 1);
     const std::int32_t score = s.score();
     ASSERT_TRUE(score >= 1000 + 100 * static_cast<std::int32_t>(words.size()));
@@ -706,7 +817,19 @@ TEST(next_round_button_while_qualified_reveals_then_advances) {
     bool any_revealed = false;
     for (const auto& v : s.slots()) if (v.revealed) any_revealed = true;
     ASSERT_TRUE(any_revealed);
-    s.update(REVEAL_MS - 1);
+    // 0x4333a0: missed words flip in letter by letter on yellow tiles.
+    for (const auto& v : s.slots()) {
+        if (!v.revealed) continue;
+        ASSERT_EQ(v.flip_ms, 0);
+        ASSERT_TRUE(!v.tile(0).letter_visible);
+    }
+    s.update(1000);
+    for (const auto& v : s.slots()) {
+        if (!v.revealed) continue;
+        ASSERT_EQ(v.tile(0).tile_frame, 1);
+        ASSERT_TRUE(v.tile(static_cast<int>(v.word.size()) - 1).letter_visible);
+    }
+    s.update(REVEAL_MS - 1 - 1000);
     ASSERT_TRUE(s.phase() == GamePhase::Reveal);
     s.update(2);
     s.update(1);
@@ -1275,6 +1398,12 @@ TEST(saved_game_resumes_where_it_left_off) {
     int found = 0;
     for (const auto& v : resumed.slots()) if (v.found) ++found;
     ASSERT_EQ(found, 2);
+    // 0x433090 restores words with every letter flipping at once.
+    for (const auto& v : resumed.slots()) {
+        if (!v.found) continue;
+        ASSERT_TRUE(v.flip_together);
+        ASSERT_EQ(v.flip_ms, 0);
+    }
     ASSERT_TRUE(resumed.button("BUTTON_NextRound")->sprite.visible);
     ASSERT_TRUE(resumed.phase() == GamePhase::Playing);
     // A second bingo no longer earns the qualifying bonus.

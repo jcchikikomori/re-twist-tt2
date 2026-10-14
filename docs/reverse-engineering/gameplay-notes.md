@@ -148,7 +148,7 @@ Note: step 3 sets the uncommon out-flag **before** step 4 runs, so in principle 
 | `0x432b20` | Slot placement: first empty slot of the length, body `0x432b20..0x432caf` |
 | `0x431880` | Slot word setter: assigns into `slot+0x19c` |
 | `0x4318f0` | Slot word getter: copies `slot+0x19c` out |
-| `0x4310f0` | Word-appear animation chain (scale / frame / visible modifiers) |
+| `0x4310f0` | Word-appear flip: per letter delay i*100 ms, tile squash 150 ms, frame set, grow 150 ms (game-scene.md §2) |
 | `table+0x180` / `+0x184` | Common sub-anagram list (begin / count) used for the uncommon flag |
 | `table+0x190` / `+0x194` | Full sub-anagram list (begin / count) used as the entry gate |
 | `table+0x178` | Found counter (`found++` after a placement) |

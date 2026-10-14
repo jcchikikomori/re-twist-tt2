@@ -47,14 +47,35 @@ Backgrounds: `BACKGROUND` (untimed), `BACKGROUND_TIMED`, `BACKGROUND_WOTD`, all 
   `x += ANAGRAM_ColumnGap (3) + longest * 20 + 20`, where `longest` is the running maximum
   word length placed so far (starts at 3). The node records its width (`+0x1c4`, right
   edge of the widest column) and height (`+0x1c8`).
-- `0x430800` (one word): per letter an `ANAGRAM_TILE` sprite (20×40 sheet, frame 0 empty,
-  frame 1 found) and a `SMALL_LETTERS` sprite (`anagram_text.png`, 9 columns × 27 frames of
-  20×20; frame = letter index + 1, frame 0 blank) at `x = i * tile_width` (20). Both start
-  hidden. `SMALL_LETTERS_UNGUESSED` (`anagram_letters_revealed.png`, yellow tile with the
-  letter) is the sheet for words revealed at the end of a lost round.
+- `0x430800` (one word, `ev_43dda104…`): per letter an `ANAGRAM_TILE` sprite (20×40 sheet,
+  frame 0 white, frame 1 yellow) and a `SMALL_LETTERS` sprite (`anagram_text.png`, 9 columns
+  × 27 frames of 20×20; frame = letter index + 1, frame 0 blank) at `x = i * tile_width`
+  (20), both anchor 4 (centre). The letter starts hidden; the slot flag `+0x174` starts at 0.
+  The Anagram node never loads `SMALL_LETTERS_UNGUESSED`.
+- Word-appear flip `0x4310f0(slot, together)` (CONFIRMED, asm `ev_e07c73dd…`): per letter
+  `i` one chained sequence, each step a child of the previous one:
+  1. `ModifierDelay` on the letter: `i * 100` ms (`0x4316c4` adds `0x64` per letter unless
+     `together` is set, which keeps every delay at 0).
+  2. `ModifierScale` on the tile, 150 ms (`0x96`), from `(1, 1)` to `(1, 0)`: the height
+     squashes to nothing. Easing `0x4307e0` is `FLD [esp+4]; RET`, i.e. linear
+     (`ev_6cdd1edc…`).
+  3. Only when `+0x174 == 1`: `ModifierFrame` sets the tile to frame 1 (yellow).
+  4. `ModifierFrame` sets the letter frame (`char - 0x60`; 27 for indices listed at
+     `+0x1bc`, unused in Classic).
+  5. Children of step 4, in parallel: tile scale `(1, 0)` → `(1, 1)` and letter scale
+     `(1, 0)` → `(1, 1)`, 150 ms each, and `ModifierVisible(1)` on the letter.
+
+  Callers: a guess (`0x432b20`, `push 0` at `0x432aa8`), so found words flip in letter by
+  letter on **white** tiles; the round-end reveal `0x4333a0` (`ev_882be30c…`), which sets
+  `+0x174 = 1` on every unfound slot and passes 0, so missed words flip in on **yellow**
+  tiles; the saved-game restore `0x433090` (from `0x42aa56`, `push 1` at `0x43312b`), so
+  restored words flip with all letters at once. Worked example: a 5-letter word settles
+  after `4 * 100 + 150 + 150 = 700` ms; a restored one after 300 ms. The flip freezes with
+  the scene while the pause menu is up.
 
 Implementation: `layout_anagram_table()` in `game_scene.hpp`, tested in
-`ui/tests/test_game_scene.cpp` with the 10-word and 48-word cases.
+`ui/tests/test_game_scene.cpp` with the 10-word and 48-word cases; the flip is
+`anagram_tile_at()` / `SlotView::tile()`.
 
 ## 3. Panel (CONFIRMED, 0x426360)
 
@@ -130,9 +151,13 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   sound**; accepted → `SOUND_word_correct`, `+10·len²`; any bingo → `SOUND_word_bingo`, and
   the first one (round not yet qualified) adds `+1000`, qualifies and queues popup 2 (the
   `IMAGE_POPUP_BINGO` banner); all words → `SOUND_game_all_words_submitted`, `+100·slots`,
-  popup 1 (the `IMAGE_POPUP_ALLWORDS` banner), round ends. The first plain correct word of
-  a scene also queues popup 10 ("click words for their definition"); the port leaves it out
-  because it has no definition lookup.
+  popup 1 (the `IMAGE_POPUP_ALLWORDS` banner), round ends. Any other accepted word (a
+  plain word or a repeat bingo) queues popup 10 (`image_popup_10`, "click entered words for
+  their definition") while the scene flag `+0x1f0` is clear, then sets it. Round start
+  (`0x425c50`, `ev_9459800f…`) never clears `+0x1f0`, so the hint shows once per scene. Where
+  the original zeroes it is UNCONFIRMED; the port resets it with each new `GameScene` (each
+  game start or resume). The port shows the hint for a 1:1 match even though it has no
+  definition lookup yet.
 
 ### 5.1 Popups (CONFIRMED, `0x428ec0`)
 

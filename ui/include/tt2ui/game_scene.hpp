@@ -42,6 +42,45 @@ constexpr int ANAGRAM_TILE_H = 20;
 constexpr int ANAGRAM_COLUMN_GAP = 3;     // default.xml ANAGRAM_ColumnGap
 constexpr int ANAGRAM_COLUMN_PAD = 20;    // 0x431e50: "+ 20.0" after the longest word of a column
 constexpr int ANAGRAM_MIN_COLUMNS = 4;    // 0x431e50: columns = max(4, ceil(n / 8))
+
+// Word-appear flip (0x4310f0, game-scene.md §2.1). Per letter i of a word:
+// wait i * 100 ms (no wait when every letter flips together), squash the
+// tile's height 1 -> 0 in 150 ms, set the letter frame (and the yellow
+// tile frame for a revealed word), then grow tile and letter 0 -> 1 in
+// 150 ms with the letter shown. All scales are linear (0x4307e0).
+constexpr int ANAGRAM_FLIP_STAGGER_MS = 100;  // 0x4316c4: delay += 0x64 per letter
+constexpr int ANAGRAM_FLIP_HALF_MS = 150;     // ModifierScale 0x96, both halves
+
+struct AnagramTile {
+    float tile_scale_y = 1.0f;
+    float letter_scale_y = 1.0f;
+    bool letter_visible = false;
+    int tile_frame = 0;   // 1 = yellow, only for words revealed at round end
+};
+
+// Time from the flip's start until the last letter has settled.
+inline int anagram_flip_ms(int letters, bool together) {
+    if (letters <= 0) return 0;
+    return (together ? 0 : (letters - 1) * ANAGRAM_FLIP_STAGGER_MS) + 2 * ANAGRAM_FLIP_HALF_MS;
+}
+
+// Tile and letter `i` at `elapsed` ms into the flip. `revealed` marks a
+// word the player missed (slot +0x174, set only by 0x4333a0).
+inline AnagramTile anagram_tile_at(int elapsed, int i, bool revealed, bool together) {
+    AnagramTile t;
+    const int start = together ? 0 : i * ANAGRAM_FLIP_STAGGER_MS;
+    const int local = elapsed - start;
+    if (local < ANAGRAM_FLIP_HALF_MS) {
+        if (local > 0) t.tile_scale_y = 1.0f - static_cast<float>(local) / ANAGRAM_FLIP_HALF_MS;
+        return t;
+    }
+    t.tile_frame = revealed ? 1 : 0;
+    t.letter_visible = true;
+    const float grow = std::min(1.0f, static_cast<float>(local - ANAGRAM_FLIP_HALF_MS) / ANAGRAM_FLIP_HALF_MS);
+    t.tile_scale_y = grow;
+    t.letter_scale_y = grow;
+    return t;
+}
 constexpr int ANAGRAM_WORDS_PER_COLUMN = 8;
 constexpr float TABLE_Y = 15.0f;          // 0x4396e0: table at (400 - width/2, 15)
 
@@ -268,6 +307,7 @@ enum class PopupKind {
     AlreadyGuessed = 3,  // image_popup_3
     EnoughOfLength = 5,  // image_popup_5
     NoneOfLength = 8,    // image_popup_8
+    Definitions = 10,    // image_popup_10: click entered words for definitions
 };
 
 constexpr float POPUP_X = 400.0f;          // 0x423a20: +0x34c = [0x59b984]
@@ -292,6 +332,7 @@ inline SheetSpec popup_sheet(PopupKind k) {
         case PopupKind::AlreadyGuessed: return sheet("IMAGE_IMAGE_POPUP_3", 295, 97);
         case PopupKind::EnoughOfLength: return sheet("IMAGE_IMAGE_POPUP_5", 339, 103);
         case PopupKind::NoneOfLength: return sheet("IMAGE_IMAGE_POPUP_8", 301, 102);
+        case PopupKind::Definitions: return sheet("IMAGE_IMAGE_POPUP_10", 326, 121);
     }
     return SheetSpec{};
 }
@@ -321,6 +362,16 @@ struct SlotView {
     bool found = false;
     bool revealed = false;   // shown at the end of a lost round
     int x = 0, y = 0;        // screen position of the first tile
+    int flip_ms = -1;        // time into the word-appear flip; -1 = not started
+    bool flip_together = false;   // restored words flip every letter at once (0x433090)
+
+    AnagramTile tile(int i) const {
+        if (flip_ms < 0) return AnagramTile{};
+        return anagram_tile_at(flip_ms, i, revealed, flip_together);
+    }
+    bool flipping() const {
+        return flip_ms >= 0 && flip_ms < anagram_flip_ms(static_cast<int>(word.size()), flip_together);
+    }
 };
 
 class GameScene {
@@ -636,6 +687,8 @@ public:
             start_popup(next);
         }
         popup_queue_.update(dt_ms);
+        for (auto& v : slots_)
+            if (v.flipping()) v.flip_ms += dt_ms;
         for (auto& b : balls_)
             if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43a940 after each flip
         // Timer (0x426d59: only CLASSIC_TIMED / WOTD tick).
@@ -684,8 +737,11 @@ private:
         for (const auto& w : g.found_words) {
             const auto rep = round_->restore_guess(w);
             if (rep.slot_index < slots_.size()) {
-                slots_[rep.slot_index].found = true;
-                slots_[rep.slot_index].word = rep.placed_word;
+                SlotView& v = slots_[rep.slot_index];
+                v.found = true;
+                v.word = rep.placed_word;
+                v.flip_ms = 0;              // 0x433090 -> 0x432b20 with flag 1:
+                v.flip_together = true;     // every letter flips at once
             }
         }
         score_ = g.score;
@@ -793,6 +849,7 @@ private:
         if (rep.slot_index < slots_.size()) {
             slots_[rep.slot_index].found = true;
             slots_[rep.slot_index].word  = rep.placed_word;
+            slots_[rep.slot_index].flip_ms = 0;   // 0x432b20 -> 0x4310f0, staggered
         }
         if (rep.filled_last) {
             play(SoundId::AllWords);
@@ -803,8 +860,10 @@ private:
             // the first one, the one that qualifies the round.
             play(SoundId::WordBingo);
             if (!was_qualified) queue_popup(PopupKind::Bingo);
+            else show_definitions_hint_once();
         } else {
             play(SoundId::WordCorrect);
+            show_definitions_hint_once();
         }
         if (services_.on_profile_change) services_.on_profile_change();
         refresh_buttons();
@@ -859,7 +918,11 @@ private:
         if (services_.on_profile_change) services_.on_profile_change();
         if (after == After::GameOver && services_.discard_save) services_.discard_save();   // 0x461840
         if (!round_->complete())
-            for (auto& s : slots_) if (!s.found) s.revealed = true;
+            for (auto& s : slots_)
+                if (!s.found) {
+                    s.revealed = true;
+                    s.flip_ms = 0;   // 0x4333a0: +0x174 = 1, then 0x4310f0 staggered
+                }
         play(SoundId::WordPassReveal);
         phase_ = GamePhase::Reveal;
         refresh_buttons();
@@ -1045,6 +1108,16 @@ private:
     // 0x428e20: add to the popup queue; update() shows it when the
     // screen is free.
     void queue_popup(PopupKind k) { popup_waiting_.push_back(k); }
+
+    // 0x424730: the first accepted word that is neither the first bingo
+    // nor the round's last word queues popup 10, once. The flag (+0x1f0)
+    // is not cleared at round start (0x425c50); where the original zeroes
+    // it is UNCONFIRMED, so here it lasts as long as this scene.
+    void show_definitions_hint_once() {
+        if (definitions_hint_shown_) return;
+        definitions_hint_shown_ = true;
+        queue_popup(PopupKind::Definitions);
+    }
     // 0x428ec0: centred at (400, 150), alpha 0 and scale 0, then the
     // modifier chain (each step starts when the previous one ends).
     void start_popup(PopupKind k) {
@@ -1134,6 +1207,7 @@ private:
     SpriteState popup_;
     std::optional<PopupKind> popup_kind_;    // set while a popup is up (+0x348)
     std::deque<PopupKind> popup_waiting_;    // 0x428e20 queue (+0x334)
+    bool definitions_hint_shown_ = false;    // +0x1f0: popup 10 already queued
     ModifierQueue queue_, popup_queue_;
     GameDialog dialog_kind_ = GameDialog::None;
     Dialog dialog_;

@@ -116,6 +116,7 @@ const std::map<std::string, std::string> kImageFiles = {
     {"IMAGE_IMAGE_POPUP_3", "images/gamescene/image_popup_3.png"},
     {"IMAGE_IMAGE_POPUP_5", "images/gamescene/image_popup_5.png"},
     {"IMAGE_IMAGE_POPUP_8", "images/gamescene/image_popup_8.png"},
+    {"IMAGE_IMAGE_POPUP_10", "images/gamescene/image_popup_10.png"},
     {"IMAGE_POPUP_BINGO", "images/gamescene/popup_bingo.png"},
     {"IMAGE_POPUP_ALLWORDS", "images/gamescene/popup_allwords.png"},
     {"ANAGRAM_TILE", "images/gamescene/anagramTile.png"},
@@ -348,7 +349,7 @@ SDL_Surface* make_placeholder(const SheetSpec& spec) {
         Uint8 a = full_screen ? 255 : (spec.image_id == "ANI_CIRCLES" || spec.image_id == "IMAGE_SPRING" ? 60 : 255);
         if (spec.image_id == "PLAYER_BORDER") a = 0;   // only the border below
         if (spec.image_id == "SMALL_LETTERS" || spec.image_id == "SMALL_LETTERS_UNGUESSED") a = 0;   // text drawn instead
-        if (spec.image_id == "ANAGRAM_TILE" && f == 1) { r = 0xf7; g = 0xde; b = 0x2b; }           // found = yellow
+        if (spec.image_id == "ANAGRAM_TILE" && f == 1) { r = 0xf7; g = 0xde; b = 0x2b; }           // revealed = yellow
         auto clamp = [](int v) { return static_cast<Uint8>(v > 255 ? 255 : (v < 0 ? 0 : v)); };
         SDL_FillRect(s, &cell, SDL_MapRGBA(s->format, clamp(r + shade), clamp(g + shade), clamp(b + shade), a));
         const bool bordered = !full_screen && a != 0 && spec.frame_w > 4 && spec.frame_h > 4 &&
@@ -568,13 +569,14 @@ void draw_sprite(SDL_Renderer* ren, Assets& assets, const SpriteState& s, float 
     if (!img.texture) return;
     SDL_Rect src{s.sheet.frame_x(s.frame), s.sheet.frame_y(s.frame), s.sheet.frame_w, s.sheet.frame_h};
     SDL_Rect dst{static_cast<int>(s.left() + ox), static_cast<int>(s.top() + oy), s.sheet.frame_w, s.sheet.frame_h};
-    if (s.scale != 1.0f) {
+    if (s.scale != 1.0f || s.scale_y != 1.0f) {
         // Scale about the anchor point (x, y); clipped sprites never scale.
-        if (s.scale <= 0.0f) return;
-        dst.x = static_cast<int>(s.x + ox + (s.left() - s.x) * s.scale);
-        dst.y = static_cast<int>(s.y + oy + (s.top() - s.y) * s.scale);
-        dst.w = static_cast<int>(s.sheet.frame_w * s.scale);
-        dst.h = static_cast<int>(s.sheet.frame_h * s.scale);
+        const float sx = s.scale, sy = s.scale * s.scale_y;
+        if (sx <= 0.0f || sy <= 0.0f) return;
+        dst.x = static_cast<int>(s.x + ox + (s.left() - s.x) * sx);
+        dst.y = static_cast<int>(s.y + oy + (s.top() - s.y) * sy);
+        dst.w = static_cast<int>(s.sheet.frame_w * sx);
+        dst.h = static_cast<int>(s.sheet.frame_h * sy);
     }
     if (s.has_clip) {
         src.x += static_cast<int>(s.clip.x);
@@ -779,6 +781,7 @@ const char* popup_placeholder_text(PopupKind k) {
         case PopupKind::AlreadyGuessed: return "ALREADY\nFOUND";
         case PopupKind::EnoughOfLength: return "THAT LENGTH\nIS FULL";
         case PopupKind::NoneOfLength: return "NO WORDS OF\nTHAT LENGTH";
+        case PopupKind::Definitions: return "CLICK A FOUND\nWORD TO LOOK\nIT UP";
     }
     return "";
 }
@@ -863,34 +866,32 @@ void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
     draw_stretched(ren, assets, "IMAGE_PANEL_CORNERL", 10, 10, SDL_Rect{tx - 10, bottom, 10, 10});
     draw_stretched(ren, assets, "IMAGE_PANEL_CORNERR", 10, 10, SDL_Rect{tx + tw, bottom, 10, 10});
 
-    // Word grid: ANAGRAM_TILE (frame 1 = found) + SMALL_LETTERS per letter;
-    // unguessed words revealed with SMALL_LETTERS_UNGUESSED.
+    // Word grid (0x430800): per letter an ANAGRAM_TILE (frame 0 white,
+    // frame 1 yellow for a word revealed at round end) and a SMALL_LETTERS
+    // sprite, both centre-anchored. Found and revealed words appear with
+    // the 0x4310f0 flip (SlotView::tile).
     const SheetSpec tile = sheet("ANAGRAM_TILE", 20, 40, 1, 2, 2);
     const SheetSpec letters = sheet("SMALL_LETTERS", 180, 60, 9, 3, 27);
-    const SheetSpec revealed = sheet("SMALL_LETTERS_UNGUESSED", 180, 60, 9, 3, 27);
     const bool letters_placeholder = assets.image(letters).placeholder;
     for (const auto& slot : g.slots()) {
         for (std::size_t j = 0; j < slot.word.size(); ++j) {
-            const float x = static_cast<float>(slot.x + static_cast<int>(j) * ANAGRAM_TILE_W);
-            const float y = static_cast<float>(slot.y);
-            const int frame = slot.word[j] - 'a' + 1;
-            if (slot.found || !slot.revealed) {
-                SpriteState t = sprite("TILE", tile, x, y);
-                t.frame = slot.found ? 1 : 0;
-                draw_sprite(ren, assets, t);
-            }
-            if (slot.found) {
-                SpriteState l = sprite("LETTER", letters, x, y);
-                l.frame = frame;
-                draw_sprite(ren, assets, l);
-            } else if (slot.revealed) {
-                SpriteState l = sprite("LETTER", revealed, x, y);
-                l.frame = frame;
-                draw_sprite(ren, assets, l);
-            }
-            if (letters_placeholder && (slot.found || slot.revealed)) {
+            const float cx = static_cast<float>(slot.x + static_cast<int>(j) * ANAGRAM_TILE_W) + ANAGRAM_TILE_W * 0.5f;
+            const float cy = static_cast<float>(slot.y) + ANAGRAM_TILE_H * 0.5f;
+            const AnagramTile st = slot.tile(static_cast<int>(j));
+            SpriteState t = sprite("TILE", tile, cx, cy);
+            t.anchor = Anchor::Center;
+            t.frame = st.tile_frame;
+            t.scale_y = st.tile_scale_y;
+            draw_sprite(ren, assets, t);
+            if (!st.letter_visible) continue;
+            SpriteState l = sprite("LETTER", letters, cx, cy);
+            l.anchor = Anchor::Center;
+            l.frame = slot.word[j] - 'a' + 1;
+            l.scale_y = st.letter_scale_y;
+            draw_sprite(ren, assets, l);
+            if (letters_placeholder && st.letter_scale_y >= 0.5f) {
                 const std::string ch(1, static_cast<char>(slot.word[j] - 'a' + 'A'));
-                draw_text(ren, assets, "PLACEHOLDER_2", ch, x + 10, y + 10, TextAlign::Center, Anchor::Center, -1);
+                draw_text(ren, assets, "PLACEHOLDER_2", ch, cx, cy, TextAlign::Center, Anchor::Center, -1);
             }
         }
     }
