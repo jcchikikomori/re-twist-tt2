@@ -243,7 +243,8 @@ enum class GamePhase {
     GameOver,    // DIALOG_ENDGAME (or DIALOG_CONGRATS) is up
 };
 
-enum class RoundEnd { None, AllWords, TimeUpQualified, TimeUpMissed, NextRound, GaveUp };
+// Passed: PASS or GIVE UP answered YES (0x4253a0 -> 0x425420(0)).
+enum class RoundEnd { None, AllWords, TimeUpQualified, TimeUpMissed, NextRound, Passed };
 
 struct SlotView {
     std::string word;
@@ -334,7 +335,8 @@ public:
     // The clock and the animations stand still while one of these is up.
     bool paused() const {
         return dialog_kind_ == GameDialog::PauseMenu || dialog_kind_ == GameDialog::ConfirmExit ||
-               dialog_kind_ == GameDialog::ConfirmGiveUp || dialog_kind_ == GameDialog::HowToPlay ||
+               dialog_kind_ == GameDialog::ConfirmPass || dialog_kind_ == GameDialog::ConfirmGiveUp ||
+               dialog_kind_ == GameDialog::HowToPlay ||
                dialog_kind_ == GameDialog::Settings;
     }
     const char* save_mode() const { return tt2::save_mode_name(mode()); }
@@ -408,6 +410,7 @@ public:
             switch (dialog_kind_) {
                 case GameDialog::PauseMenu: dialog_press("BUTTON_RESUME"); break;
                 case GameDialog::ConfirmExit:
+                case GameDialog::ConfirmPass:
                 case GameDialog::ConfirmGiveUp: dialog_press("BUTTON_YES"); break;
                 default: dialog_press("BUTTON_OK"); break;
             }
@@ -422,6 +425,7 @@ public:
             case GameDialog::None: open_pause_menu(); break;
             case GameDialog::PauseMenu: dialog_press("BUTTON_RESUME"); break;
             case GameDialog::ConfirmExit:
+            case GameDialog::ConfirmPass:
             case GameDialog::ConfirmGiveUp: dialog_press("BUTTON_NO"); break;
             case GameDialog::HowToPlay: dialog_press("BUTTON_OK"); break;
             case GameDialog::Settings: dialog_press("BUTTON_CANCEL"); break;
@@ -496,7 +500,7 @@ public:
         else if (name == "BUTTON_LastWord") last_word_again();
         else if (name == "BUTTON_Enter") submit();
         else if (name == "BUTTON_NextRound") { if (phase_ == GamePhase::Playing && qualified()) next_round(); }
-        else if (name == "BUTTON_GiveUp") { if (phase_ == GamePhase::Playing) open_dialog(GameDialog::ConfirmGiveUp); }
+        else if (name == "BUTTON_Pass" || name == "BUTTON_Pass_2" || name == "BUTTON_GiveUp") ask_pass(name);
         else if (name == "BUTTON_Menu") open_pause_menu();
     }
 
@@ -524,9 +528,11 @@ public:
                 if (name == "BUTTON_YES") { close_dialog(); leave(); exit_to_menu(); }
                 else open_dialog(GameDialog::PauseMenu);
                 break;
+            case GameDialog::ConfirmPass:
             case GameDialog::ConfirmGiveUp:
+                // YES 0x428610 -> 0x4253a0 -> 0x425420(0); NO 0x428720 resumes.
                 close_dialog();
-                if (name == "BUTTON_YES") give_up();
+                if (name == "BUTTON_YES") pass_round();
                 break;
             case GameDialog::NextRound:
                 close_dialog();
@@ -734,9 +740,20 @@ private:
         else end_round(RoundEnd::TimeUpMissed);
     }
 
-    void give_up() {
+    // State 4 (0x426860): the shown skip button asks "PASS?" while a pass is
+    // left (misses + 1 < 3), else "GIVE UP?". Hidden buttons do nothing.
+    void ask_pass(const std::string& name) {
+        const MenuButton* b = button(name);
+        if (phase_ != GamePhase::Playing || !b || !b->enabled || !b->sprite.visible) return;
+        open_dialog(misses_ + 1 < LIVES ? GameDialog::ConfirmPass : GameDialog::ConfirmGiveUp);
+    }
+
+    // 0x425420(0): a pass is a miss. With misses left the words are revealed
+    // and the next round starts by itself; the third miss (GIVE UP) reveals,
+    // then ends the game (0x428c80(.., 1) -> 0x427d10).
+    void pass_round() {
         if (phase_ != GamePhase::Playing) return;
-        end_round(RoundEnd::GaveUp);
+        end_round(RoundEnd::Passed);
     }
 
     // Round over. Every path reveals the missing words
@@ -756,12 +773,10 @@ private:
                 profile_.rounds_completed[static_cast<std::size_t>(mode())] += 1;
                 break;
             case RoundEnd::TimeUpMissed:
+            case RoundEnd::Passed:
                 misses_ += 1;
                 play(SoundId::LoseLife);
                 after = misses_ >= LIVES ? After::GameOver : After::AutoNext;
-                break;
-            case RoundEnd::GaveUp:
-                after = After::GameOver;
                 break;
             case RoundEnd::None: break;
         }
@@ -831,6 +846,9 @@ private:
             case GameDialog::PauseMenu: dialog_ = build_pause_menu(); break;
             case GameDialog::ConfirmExit:
                 dialog_ = build_yes_no(game_strings::EXIT_HEADER, game_strings::EXIT_BODY, false, services_.wrap_text);
+                break;
+            case GameDialog::ConfirmPass:
+                dialog_ = build_yes_no(game_strings::PASS_HEADER, game_strings::PASS_BODY, false, services_.wrap_text);
                 break;
             case GameDialog::ConfirmGiveUp:
                 dialog_ = build_yes_no(game_strings::GIVEUP_HEADER, game_strings::GIVEUP_BODY, false, services_.wrap_text);
@@ -989,16 +1007,21 @@ private:
         add("BUTTON_Enter", "BUTTON_Enter", 119, 200, 525, 407);
         add("BUTTON_NextRound", "BUTTON_NextRound", 157, 208, 317, 473);
         add("BUTTON_GiveUp", "BUTTON_GiveUp", 157, 208, 317, 473);
+        add("BUTTON_Pass", "BUTTON_Pass", 157, 208, 317, 473);
+        add("BUTTON_Pass_2", "BUTTON_PASS2", 157, 208, 317, 473);
     }
-    // NEXT ROUND and GIVE UP share one spot; which one shows depends on the
-    // qualified flag (INFERRED wiring, see gameplay-notes §4).
+    // NEXT ROUND, PASS x2, PASS and GIVE UP share one spot (317, 473); the
+    // refresh 0x425710 shows one: qualified -> NEXT ROUND, else by misses
+    // 0 -> BUTTON_Pass_2, 1 -> BUTTON_Pass, 2 -> GIVE UP (game-scene.md §5).
     void refresh_buttons() {
         const bool playing = phase_ == GamePhase::Playing;
         const bool q = round_ && round_->qualified();
         for (auto& b : buttons_) {
             const std::string& n = b.sprite.name;
             if (n == "BUTTON_NextRound") { b.sprite.visible = (playing && q) || phase_ == GamePhase::AwaitNext; b.enabled = b.sprite.visible; }
-            else if (n == "BUTTON_GiveUp") { b.sprite.visible = playing && !q; b.enabled = b.sprite.visible; }
+            else if (n == "BUTTON_Pass_2") { b.sprite.visible = playing && !q && misses_ == 0; b.enabled = b.sprite.visible; }
+            else if (n == "BUTTON_Pass") { b.sprite.visible = playing && !q && misses_ == 1; b.enabled = b.sprite.visible; }
+            else if (n == "BUTTON_GiveUp") { b.sprite.visible = playing && !q && misses_ >= 2; b.enabled = b.sprite.visible; }
             else if (n == "BUTTON_Menu") { b.enabled = true; }
             else { b.enabled = playing; }
         }

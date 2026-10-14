@@ -63,6 +63,18 @@ struct Fixture {
         s.settings.commit = [this](const tt2::GameSettings& g) { settings = g; ++settings_commits; };
         scene = std::make_unique<GameScene>(com, ful, profile, with_hs ? &hs : nullptr, timed, s, seed);
     }
+    // The skip button the scene shows right now (PASS x2, PASS or GIVE UP).
+    std::string skip_button() const {
+        for (const char* n : {"BUTTON_Pass_2", "BUTTON_Pass", "BUTTON_GiveUp"})
+            if (scene->button(n)->sprite.visible) return n;
+        return "";
+    }
+    // Press it, answer YES, and wait out the 3000 ms reveal.
+    void skip() {
+        scene->press(skip_button());
+        scene->dialog_press("BUTTON_YES");
+        scene->update(REVEAL_MS + 20);
+    }
     bool played(SoundId id) const {
         for (auto s : sounds) if (s == id) return true;
         return false;
@@ -208,12 +220,13 @@ TEST(buttons_follow_the_layout_and_qualified_flag) {
     ASSERT_TRUE(s.button("BUTTON_Enter")->sprite.y == 407.0f);
     ASSERT_EQ(s.button("BUTTON_NextRound")->sprite.sheet.frame_h, 52);
     ASSERT_TRUE(!s.button("BUTTON_NextRound")->sprite.visible);
-    ASSERT_TRUE(s.button("BUTTON_GiveUp")->sprite.visible);
+    ASSERT_EQ(f.skip_button(), std::string("BUTTON_Pass_2"));   // no miss yet
+    ASSERT_EQ(s.button("BUTTON_Pass_2")->sprite.sheet.image_id, std::string("BUTTON_PASS2"));
     f.type(s.rack());
     s.key_return();
     ASSERT_TRUE(s.qualified());
     ASSERT_TRUE(s.button("BUTTON_NextRound")->sprite.visible);
-    ASSERT_TRUE(!s.button("BUTTON_GiveUp")->sprite.visible);
+    ASSERT_EQ(f.skip_button(), std::string(""));                // never two at the spot
 }
 
 // ---- letters -------------------------------------------------------------
@@ -602,18 +615,98 @@ TEST(three_misses_end_the_game_with_high_score) {
     ASSERT_EQ(f.exits, 1);
 }
 
+TEST(pass_asks_then_costs_a_miss_and_moves_on) {
+    Fixture f(false, false);
+    auto& s = *f.scene;
+    const std::string rack = s.rack();
+    s.press("BUTTON_Pass_2");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::ConfirmPass);
+    ASSERT_EQ(s.dialog().label("HEADER")->text, std::string("PASS?"));
+    ASSERT_TRUE(s.paused());
+    s.key_escape();                                        // NO (0x428720): resume, no miss
+    ASSERT_TRUE(!s.dialog_open());
+    ASSERT_EQ(s.misses(), 0);
+    ASSERT_EQ(s.rack(), rack);
+    s.press("BUTTON_Pass_2");
+    s.dialog_press("BUTTON_YES");
+    ASSERT_EQ(s.misses(), 1);                              // 0x425420: misses++
+    ASSERT_TRUE(f.played(SoundId::LoseLife));
+    ASSERT_TRUE(f.played(SoundId::WordPassReveal));
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_EQ(f.skip_button(), std::string(""));           // hidden during the reveal
+    ASSERT_EQ(f.discards, 0);                              // the game goes on
+    s.update(REVEAL_MS + 20);                              // 0x425190: next round by itself
+    ASSERT_TRUE(s.phase() == GamePhase::Playing);
+    ASSERT_EQ(s.round_number(), 2);
+    ASSERT_TRUE(!s.dialog_open());
+    ASSERT_EQ(f.skip_button(), std::string("BUTTON_Pass"));
+}
+
+TEST(two_passes_then_give_up_ends_the_game) {
+    Fixture f(false, false);
+    auto& s = *f.scene;
+    f.skip();
+    ASSERT_EQ(f.skip_button(), std::string("BUTTON_Pass"));
+    s.press("BUTTON_Pass");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::ConfirmPass);   // 1 + 1 < 3: still a pass
+    s.dialog_press("BUTTON_YES");
+    s.update(REVEAL_MS + 20);
+    ASSERT_EQ(s.misses(), 2);
+    ASSERT_EQ(s.round_number(), 3);
+    ASSERT_EQ(f.skip_button(), std::string("BUTTON_GiveUp"));
+    f.sounds.clear();
+    f.skip();                                              // third miss
+    ASSERT_EQ(s.misses(), 3);
+    ASSERT_TRUE(f.played(SoundId::LoseLife));
+    ASSERT_TRUE(f.played(SoundId::WordPassReveal));        // 0x428c80(.., 1) still reveals
+    ASSERT_TRUE(s.phase() == GamePhase::GameOver);
+    ASSERT_EQ(f.discards, 1);                              // 0x461840
+}
+
+TEST(hidden_skip_buttons_do_nothing) {
+    Fixture f(false, false);
+    auto& s = *f.scene;
+    s.press("BUTTON_GiveUp");                              // hidden at misses 0
+    s.press("BUTTON_Pass");                                // hidden at misses 0
+    ASSERT_TRUE(!s.dialog_open());
+    f.type(s.rack());
+    s.key_return();                                        // qualified: NEXT ROUND takes the spot
+    s.press("BUTTON_Pass_2");
+    ASSERT_TRUE(!s.dialog_open());
+    ASSERT_EQ(s.misses(), 0);
+}
+
+TEST(resumed_misses_pick_the_skip_button) {
+    Fixture f(false, false);
+    tt2::SavedGame g = f.scene->snapshot();
+    g.round = 4;
+    g.fail_count = 1;
+    Fixture r(false, false);
+    GameScene::Services sv;
+    GameScene s(r.com, r.ful, r.profile, nullptr, false, sv, 0, &g);
+    ASSERT_EQ(s.misses(), 1);
+    ASSERT_TRUE(s.button("BUTTON_Pass")->sprite.visible);
+    ASSERT_TRUE(!s.button("BUTTON_Pass_2")->sprite.visible);
+    ASSERT_TRUE(!s.button("BUTTON_GiveUp")->sprite.visible);
+}
+
 TEST(give_up_and_menu_leave_the_game) {
     Fixture f(false, false);
     auto& s = *f.scene;
+    f.skip();                                              // pass 1
+    f.skip();                                              // pass 2
+    ASSERT_EQ(f.skip_button(), std::string("BUTTON_GiveUp"));
     s.press("BUTTON_GiveUp");                              // asks first
     ASSERT_TRUE(s.dialog_kind() == GameDialog::ConfirmGiveUp);
+    ASSERT_EQ(s.dialog().label("HEADER")->text, std::string("Give Up?"));
     ASSERT_TRUE(s.paused());
     s.dialog_press("BUTTON_NO");
     ASSERT_TRUE(!s.dialog_open());
     ASSERT_TRUE(s.phase() == GamePhase::Playing);
     s.press("BUTTON_GiveUp");
     s.key_return();                                        // Return = YES
-    ASSERT_TRUE(s.last_round_end() == RoundEnd::GaveUp);
+    ASSERT_TRUE(s.last_round_end() == RoundEnd::Passed);
+    ASSERT_EQ(s.misses(), 3);
     s.update(REVEAL_MS + 20);
     ASSERT_TRUE(s.phase() == GamePhase::GameOver);
     ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);   // score 0: no high score
@@ -785,7 +878,7 @@ TEST(scene_yes_no_dialogs_use_the_wrap_service) {
         return t + "\nX";
     };
     GameScene s(com, ful, profile, nullptr, false, sv, 0);
-    s.press("BUTTON_GiveUp");
+    s.press("BUTTON_Pass_2");                              // "PASS?" has two own lines too
     ASSERT_EQ(calls, 1);
     ASSERT_EQ(text_line_count(s.dialog().label("MESSAGE")->text), 3);   // 2 own lines + 1 added
 }
@@ -1027,6 +1120,8 @@ TEST(end_game_play_again_starts_round_one) {
     auto& s = *f.scene;
     f.type("car");
     s.key_return();
+    f.skip();
+    f.skip();
     s.press("BUTTON_GiveUp");
     s.dialog_press("BUTTON_YES");
     s.update(REVEAL_MS + 1);

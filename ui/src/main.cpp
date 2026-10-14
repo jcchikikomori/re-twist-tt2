@@ -110,6 +110,8 @@ const std::map<std::string, std::string> kImageFiles = {
     {"BUTTON_Clear", "images/gamescene/button_clear.png"},
     {"BUTTON_NextRound", "images/gamescene/button_nextround.png"},
     {"BUTTON_GiveUp", "images/gamescene/button_giveup.png"},
+    {"BUTTON_Pass", "images/gamescene/button_pass.png"},
+    {"BUTTON_PASS2", "images/gamescene/button_pass2.png"},
     {"COMMENTS", "images/gamescene/tt_commentary.png"},
     {"GAME_OVER", "images/gamescene/tt_gameover.PNG"},
     {"IMAGE_POPUP_BINGO", "images/gamescene/popup_bingo.png"},
@@ -926,7 +928,8 @@ int main(int argc, char** argv) {
     std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
                                // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP, '>' NEXT ROUND,
                                // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages,
-                               // '#' SETTINGS, '6'..'8' max length, '!' fullscreen switch, '^' Alt+Enter
+                               // '#' SETTINGS, '6'..'8' max length, '!' fullscreen switch, '^' Alt+Enter,
+                               // '%' the shown PASS / GIVE UP button
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_dir = argv[++i];
@@ -1384,6 +1387,8 @@ int main(int argc, char** argv) {
                 else if (c == '?') game->dialog_press("BUTTON_HOWTOPLAY");   // pause menu HOW TO PLAY
                 else if (c == '#') game->dialog_press("BUTTON_SETTINGS");    // pause menu SETTINGS
                 else if (c == '^') toggle_fullscreen();                      // Alt+Enter
+                else if (c == '%')                                            // the shown PASS / GIVE UP
+                    for (const char* n : {"BUTTON_Pass_2", "BUTTON_Pass", "BUTTON_GiveUp"}) game->press(n);
                 else if (c == '!') game->dialog_press("SWITCH_FULLSCREEN");  // settings: fullscreen
                 else if (c >= '6' && c <= '8') game->dialog_press(SettingsDialog::length_switch(c - '0'));
                 else if (c == '<') game->dialog_press("BUTTON_PREV");       // help: previous page

@@ -113,7 +113,8 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
 - End of round: `0x428840` (all words) / `0x425420` (time up without a bingo): the missing
   words are revealed (`SOUND_word_pass_reveal`, `ModifierDelay(3000)`); a miss increments
   `+0x1e8` and plays `SOUND_game_lose_life`; the **third** miss marks the game over
-  (`+0x260 = 1`, high-score save `0x428c80`). Every reveal holds **3000 ms**.
+  (`+0x260 = 1`, then `0x428c80(…, 1)`, which still reveals the words with
+  `SOUND_word_pass_reveal` before game over `0x427d10`). Every reveal holds **3000 ms**.
 - Pass / Give Up (CONFIRMED, REA batch B). The scene has one button spot at (317, 473)
   shared by NEXT ROUND, `BUTTON_Pass_2`, `BUTTON_Pass` and GIVE UP. The refresh `0x425710`
   shows exactly one of them outside Word of the Day:
@@ -130,8 +131,10 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   UP?" (`TEXT_DIALOG_GIVEUP_*`). YES (`0x428610` → `0x4253a0`) calls `0x425420(0)`:
   misses++, `SOUND_game_lose_life`. With misses < 3 the missing words are revealed
   (`SOUND_word_pass_reveal`, 3000 ms) and the next round starts (`0x425190`). On the
-  third miss the game ends with **no reveal**: save deleted (`0x461840`), high-score
-  path `0x428c80`. NO (`0x428720`) resumes. Worked example: pass, pass, give up = misses
+  third miss the save is deleted (`0x461840`) and `0x428c80(…, 1)` reveals the words
+  (`0x4333a0`, `SOUND_word_pass_reveal`), waits 3000 ms and ends the game (`0x427d10`).
+  REA batch E corrected an earlier "no reveal" note here
+  (`ev_45045f11e6ba0aacf03c0fa5d768bd5f814fc325e3ef4d622269e266d77e708e`). NO (`0x428720`) resumes. Worked example: pass, pass, give up = misses
   1, 2, 3 → game over on the give up.
   Evidence: `ev_52333333f7d1d525a504b153b09bd1bfa66307e5ca52024a9d0472e70a683fb5`,
   `ev_104f9575430ab658e77ee43a6e339523b1acea4ee9872327d379a15d6fb3603f`,
@@ -161,8 +164,8 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
 - INFERRED: the clock labels are hidden in Untimed; the GAME OVER sprite fades in over
   500 ms and a click returns to the menu; the commentary fades 250 ms in, holds 2 s,
   fades 250 ms out; popups run one pass at 60 ms per frame.
-- Not implemented yet: the Pass buttons. Our Untimed scene always asks "Give Up?" and
-  ends the game on YES, which is wrong (plan phase 7).
+- Our port follows this table (plan phase 7): `BUTTON_Pass_2` (image `BUTTON_PASS2`,
+  "PASSES: 2"), `BUTTON_Pass` and GIVE UP all count a miss through `RoundEnd::Passed`.
 - High scores: `HighScoreManager::submit(mode, name, score, round)` on game over
   (`SOUND_game_high_score_achieved` when the entry makes the table), saved next to the
   profiles. Progress counters (`TRACKER/SOLVED`, `HARD_SOLVED`, `TWISTS`, rounds per mode)
@@ -235,9 +238,8 @@ All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
   | (x, y) | (60, 34) | (124, 3) | (192, −8) | (259, 1) | (321, 34) | (126, 75) | (192, 61) | (257, 74) |
 
 - HOW TO PLAY and SETTINGS are decoded in `help-and-settings.md`.
-- Not implemented: HOW TO PLAY / SETTINGS (they show "Not available"), the next-round
-  particle burst, `DialogPause` (`0x409e50`, key `p`, which clashes with typing), and the
-  Pass flow.
+- Not implemented: the next-round particle burst and `DialogPause` (`0x409e50`, key `p`,
+  which clashes with typing).
 
 ## 7. Saved games (CONFIRMED)
 

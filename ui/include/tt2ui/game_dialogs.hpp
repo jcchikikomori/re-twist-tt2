@@ -25,6 +25,9 @@ inline constexpr const char* EXIT_BODY =
     "Are you sure you want\nto leave this game?\nYour game will be\nsaved for next time.";   // CTEXT_MENU_STOP
 inline constexpr const char* GIVEUP_HEADER = "Give Up?";                      // TEXT_DIALOG_GIVEUP_HEADER
 inline constexpr const char* GIVEUP_BODY = "Are you sure you wish\nto end this game?";   // TEXT_DIALOG_GIVEUP
+inline constexpr const char* PASS_HEADER = "PASS?";                           // TEXT_DIALOG_PASS_HEADER
+inline constexpr const char* PASS_BODY =
+    "Do you want to use a pass\nto move to the next word?";                   // TEXT_DIALOG_PASS
 inline constexpr const char* SAVEGAME_HEADER = "Continue the game?";          // CTEXT_SAVEGAME_HEADER
 inline constexpr const char* SAVEGAME_BODY =
     "Do you want to continue your last played game?\n(Select 'No' to start again.)";   // CTEXT_START_SAVEGAME
@@ -36,7 +39,7 @@ inline constexpr const char* CONGRATS_BODY = "Congratulations!\nYou earned a\nne
 
 // Kinds used by the game scene (the profile kinds stay in DialogKind).
 enum class GameDialog {
-    None, PauseMenu, ConfirmExit, ConfirmGiveUp, HowToPlay, Settings, NextRound, EndGame, Congrats
+    None, PauseMenu, ConfirmExit, ConfirmPass, ConfirmGiveUp, HowToPlay, Settings, NextRound, EndGame, Congrats
 };
 
 inline int text_line_count(const std::string& s) {
