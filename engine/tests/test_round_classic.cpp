@@ -5,11 +5,13 @@
 
 #include "test_harness.hpp"
 #include "tt2/bag.hpp"
+#include "tt2/board.hpp"
 #include "tt2/random.hpp"
 #include "tt2/round_classic.hpp"
 #include "tt2/word_tree.hpp"
 
 using tt2::Bag;
+using tt2::Board;
 using tt2::ClassicRound;
 using tt2::GuessStatus;
 using tt2::Random;
@@ -50,8 +52,10 @@ WordTree common() {
     });
 }
 WordTree full() {
-    // A "full" list with everything `common` has plus a few extras
-    // (used by Uncommon-flagging tests, etc.).
+    // A "full" list with everything `common` has plus full-only
+    // extras: uncommon sub-anagrams for every rack family in the
+    // pool, and "quux" (not spellable from any rack) for the gate
+    // tests.
     return WordTree::from_words({
         "caret", "crate", "trace", "react", "carte", "cater", "irate",
         "alert", "alter", "later", "ratel", "artel", "taler",
@@ -73,8 +77,14 @@ WordTree full() {
         "pets", "pies", "pipe", "pips", "pire", "pita", "pith", "prat",
         "psis", "rape", "raps", "rase", "rasp", "reap", "reps", "ripe",
         "rips", "spar", "spit", "tape", "taps", "trap", "trip",
-        // Full-only extras (would be flagged "uncommon").
-        "quux", "zany", "zebra",
+        // Full-only extras (flagged "uncommon" when they fill a slot).
+        "recat",                                    // caret/crate/carpet/...
+        "tale", "real",                             // alert/alter/...
+        "pares", "pears", "stare",                  // spare/apters/...
+        "caper",                                    // carpet/particle/...
+        "praise",                                   // spirea
+        "pails", "rails", "lair", "stair",          // spiral/trails/...
+        "quux",                                     // not spellable from any rack
     });
 }
 }  // namespace
@@ -138,6 +148,55 @@ TEST(classic_round_duplicate_after_accept) {
     const auto rep = r.guess(res.rack);
     ASSERT_EQ(static_cast<int>(rep.status),
               static_cast<int>(GuessStatus::Duplicate));
+}
+
+TEST(classic_round_uncommon_guess_fills_a_slot) {
+    auto com = common();
+    auto ful = full();
+    Random rng(0);
+    Bag bag(com);
+    ClassicRound r(com, ful, ClassicRound::Config{});
+    const auto res = r.start(rng, bag, 0);
+    // Pick a full-only word spellable from the rack whose length has
+    // slots on the board.
+    std::string extra;
+    for (const auto& w : Board::build(res.rack, ful).all()) {
+        if (w.size() < 3 || w.size() > 8 || com.contains(w)) continue;
+        for (const auto& b : res.board_words) {
+            if (b.size() == w.size()) { extra = w; break; }
+        }
+        if (!extra.empty()) break;
+    }
+    ASSERT_TRUE(!extra.empty());
+    const auto rep = r.guess(extra);
+    ASSERT_EQ(static_cast<int>(rep.status),
+              static_cast<int>(GuessStatus::Uncommon));
+    ASSERT_TRUE(rep.slot_index != static_cast<std::size_t>(-1));
+    ASSERT_EQ(rep.placed_word, extra);
+    ASSERT_EQ(r.found(), std::size_t(1));
+    ASSERT_EQ(r.score(),
+              10 * static_cast<int>(extra.size()) * static_cast<int>(extra.size()));
+    // Re-guessing the placed word is a duplicate and scores nothing.
+    const auto again = r.guess(extra);
+    ASSERT_EQ(static_cast<int>(again.status),
+              static_cast<int>(GuessStatus::Duplicate));
+    ASSERT_EQ(r.found(), std::size_t(1));
+    ASSERT_EQ(r.score(),
+              10 * static_cast<int>(extra.size()) * static_cast<int>(extra.size()));
+}
+
+TEST(classic_round_guess_gate_rejects_foreign_words) {
+    auto com = common();
+    auto ful = full();
+    Random rng(0);
+    Bag bag(com);
+    ClassicRound r(com, ful, ClassicRound::Config{});
+    (void)r.start(rng, bag, 0);
+    // "quux" is in the full list but no rack in the pool can spell it.
+    ASSERT_EQ(static_cast<int>(r.guess("quux").status),
+              static_cast<int>(GuessStatus::NotAWord));
+    ASSERT_EQ(r.found(), std::size_t(0));
+    ASSERT_EQ(r.score(), 0);
 }
 
 TEST(classic_wotd_caps_per_length_at_5) {

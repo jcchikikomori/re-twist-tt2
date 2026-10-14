@@ -280,17 +280,21 @@ TEST(guess_outcomes_score_and_commentary) {
     f.type("cra");
     s.key_return();
     ASSERT_EQ(s.commentary().frame, static_cast<int>(Comment::NotListed));
-    // Valid in the full list but not a board word: the engine reports
-    // "no room" (see GuessProcessor), shown as "enough words of that length".
+    // Valid in the full list but not a board word ("cart"): the
+    // original places it in the first empty slot of its length and
+    // shows the guessed word there (0x432b20 / 0x431880), flagged
+    // "uncommon" on the profile.
     f.type("cart");
     s.key_return();
-    ASSERT_EQ(s.score(), 90);
-    ASSERT_EQ(s.commentary().frame, static_cast<int>(Comment::EnoughOfLength));
+    ASSERT_EQ(s.score(), 90 + 160);
+    ASSERT_TRUE(f.slot("cart") != nullptr);
+    ASSERT_TRUE(f.slot("cart")->found);
+    ASSERT_EQ(f.profile.hard_solved, 1);
     // Enter with nothing typed is a no-op.
     f.sounds.clear();
     s.key_return();
     ASSERT_TRUE(f.sounds.empty());
-    ASSERT_EQ(s.score(), 90);
+    ASSERT_EQ(s.score(), 90 + 160);
     // Commentary fades in, holds, fades out.
     s.update(COMMENT_FADE_MS);
     ASSERT_TRUE(s.commentary().alpha > 0.9f);
@@ -301,9 +305,9 @@ TEST(guess_outcomes_score_and_commentary) {
 TEST(no_room_comment_depends_on_length_slots) {
     Fixture f(false);
     auto& s = *f.scene;
-    // "tec" is valid (full list) but every 3-letter slot is still open ->
-    // it fills one. Fill ALL 3-letter slots, then a fresh valid 3-letter
-    // word gets "enough words of that length".
+    // "tec" is valid (full list) but has nowhere to go once every
+    // 3-letter slot is taken. Fill ALL 3-letter slots, then a fresh
+    // valid 3-letter word gets "enough words of that length".
     std::vector<std::string> threes;
     for (const auto& v : s.slots()) if (v.word.size() == 3) threes.push_back(v.word);
     for (const auto& w : threes) { f.type(w); s.key_return(); }
@@ -311,6 +315,31 @@ TEST(no_room_comment_depends_on_length_slots) {
     f.type("tec");
     s.key_return();
     ASSERT_EQ(s.commentary().frame, static_cast<int>(Comment::EnoughOfLength));
+    ASSERT_TRUE(f.played(SoundId::WordReject));
+}
+
+TEST(uncommon_guess_takes_the_first_empty_slot) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    // "cart" is in the full list only. It fills the first empty
+    // 4-letter slot — the "care" slot — which then displays the
+    // guessed word.
+    f.type("cart");
+    s.key_return();
+    ASSERT_TRUE(f.slot("cart") != nullptr);
+    ASSERT_TRUE(f.slot("cart")->found);
+    ASSERT_TRUE(f.slot("care") == nullptr);
+    // The covered board word is not a duplicate: "care" fills the
+    // next empty 4-letter slot ("race").
+    f.type("care");
+    s.key_return();
+    ASSERT_TRUE(f.slot("care") != nullptr);
+    ASSERT_TRUE(f.slot("care")->found);
+    // "cart" again is a duplicate.
+    f.sounds.clear();
+    f.type("cart");
+    s.key_return();
+    ASSERT_EQ(s.commentary().frame, static_cast<int>(Comment::AlreadyGuessed));
     ASSERT_TRUE(f.played(SoundId::WordReject));
 }
 

@@ -143,8 +143,9 @@ the address-level walkthrough of the gameplay code is in
   words, make up to 5 attempts, keep the closest shorter one.
 - Word slots: common sub-anagrams of length 3..8. If there are more
   than 48, each length gets the quota `max(1, trunc(count*48/total))`.
-- Guess: must be in the **full** list, then fills the first empty slot
-  of the same length. A guess that isn't in the common list counts as
+- Guess: must be in the **full** list and spellable from the rack,
+  then fills the first empty slot of the same length; the slot shows
+  the guessed word. A guess that isn't in the common list counts as
   "uncommon".
 - Scoring: **10 × len²** per word; the **first bingo** (a word using
   every letter) in a round adds **+1000** and qualifies you; **finding

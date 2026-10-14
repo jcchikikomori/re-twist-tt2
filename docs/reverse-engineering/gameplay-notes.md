@@ -129,12 +129,31 @@ The rack is enumerated against **both** trees (0x43d7b0 called with `+0x268` and
 - The **effective minimum word length is 3**. That's because no slot has length < 3. 2-letter words from DamBeavers validate but have nowhere to go, so they score nothing (INFERRED from 0x432b20).
 
 ### Guess check (CONFIRMED, 0x432850; return values feed the jump table @0x424d4c)
-1. The guess isn't in the full list (`+0x18c`) → returns **0** (reject sound, sets the "mistake" flag at `scene+0x371`).
-2. It's already sitting in a filled slot → returns **-1**.
-3. It isn't in the common list (`+0x17c`) → sets the out-flag "uncommon".
-4. 0x432b20 looks for the first **empty slot with the same length** and places the word. On success it does `found++` (`+0x178`) and returns **1**. If no slot is free it returns **2** (message only, no score).
+1. Entry gate: a linear `std::find` (0x434450) over the word list copied to `table+0x190` at board build (0x4336f0 @0x4327ff) — the rack's **full-tree sub-anagram enumeration** (the list built by 0x43d7b0 and handed to the `AnagramTable` ctor). Miss → returns **0** (reject sound, sets the "mistake" flag at `scene+0x371`). So a guess must be in the full dictionary **and** spellable from the rack letters.
+2. It's already sitting in a filled slot → returns **-1**. The comparison (0x4318f0) reads the slot's word string at `slot+0x19c` (MSVC `std::string`; size at `+0x1b0`, capacity at `+0x1b4`; a slot is "empty" while the string is empty), so the check matches the **placed** word.
+3. It isn't in the common list (find over the list at `table+0x180`) → sets the out-flag "uncommon".
+4. 0x432b20 scans the slot vector at `table+0x1b8` for the first slot with `slot+0x178 == len` and an empty word string, then **writes the guessed word into `slot+0x19c`** (0x431880) and queues the appear animation (0x4310f0). On success it returns **1** and 0x432850 does `found++` (`table+0x178`). When no slot of that length is free it returns **0** (2026-10-14 re-check; the caller's jump table maps the failure to the "no room" message).
 
-This means any valid dictionary word of the right length can fill a slot, even if it isn't the exact word the board was built from.
+This means any valid dictionary word of the right length that the rack can spell can fill a slot, even if it isn't the exact word the board was built from. The slot then **displays the guessed word**: re-guessing it is a duplicate, while the board word it covered stays guessable (it fills the next free slot of its length, or has nowhere to go).
+
+Note: step 3 sets the uncommon out-flag **before** step 4 runs, so in principle an "uncommon" word that finds no free slot still carries the flag. What the caller does with it on the no-room path was not traced (stat / trophy wiring is undecoded); this port counts the uncommon stat only on successful placement. **INFERRED**
+
+### Address index (guess path; re-verified 2026-10-14 with Ghidra 12.1.4 via REA)
+
+| Address | What |
+|---|---|
+| `0x432850` | Guess check (steps 1–4 above), body `0x432850..0x432b17` |
+| `0x434450` | `std::find` over a counted `std::string` list (28-byte elements) |
+| `0x4336f0` | Counted string-list copy (fills `table+0x190` at board build) |
+| `0x432b20` | Slot placement: first empty slot of the length, body `0x432b20..0x432caf` |
+| `0x431880` | Slot word setter: assigns into `slot+0x19c` |
+| `0x4318f0` | Slot word getter: copies `slot+0x19c` out |
+| `0x4310f0` | Word-appear animation chain (scale / frame / visible modifiers) |
+| `table+0x180` / `+0x184` | Common sub-anagram list (begin / count) used for the uncommon flag |
+| `table+0x190` / `+0x194` | Full sub-anagram list (begin / count) used as the entry gate |
+| `table+0x178` | Found counter (`found++` after a placement) |
+| `slot+0x178` | Slot word length |
+| `slot+0x19c` / `+0x1b0` / `+0x1b4` | Slot word string (pointer/buffer, size, capacity) |
 
 ---
 

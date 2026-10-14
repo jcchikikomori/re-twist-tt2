@@ -74,6 +74,8 @@ public:
         int         points_awarded = 0;
         bool        filled_last   = false;
         bool        bingo         = false;
+        std::size_t slot_index    = static_cast<std::size_t>(-1);
+        std::string placed_word;   // the lowered word placed ("" unless accepted)
     };
 
     GuessReport guess(const std::string& word_raw) {
@@ -91,11 +93,13 @@ public:
             PlacementScore p = score_classic(
                 word_raw.size(), o.bingo, qualified_, o.filled_last,
                 filled_board_->slot_count());
-            filled_board_->mark_filled(o.slot_index);
+            filled_board_->mark_filled(o.slot_index, o.placed_word);
             score_      += p.total;
             found_      += 1;
             qualified_   = p.qualified;
             r.points_awarded = p.total;
+            r.slot_index     = o.slot_index;
+            r.placed_word    = o.placed_word;
         }
         return r;
     }

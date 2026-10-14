@@ -134,11 +134,14 @@ private:
     }
 };
 
-// Guess-check results. Mirrors the four return codes at 0x432850.
+// Guess-check results. Mirrors the return codes fed to the jump
+// table at 0x424d4c from 0x432850 / 0x432b20.
 //
-//   0 = NotAWord       (not in either dictionary)
+//   0 = NotAWord       (not in the full list or not spellable from
+//                       the rack — the find over the list at
+//                       table+0x190 misses)
 //   1 = Duplicate      (already sitting in a filled slot)
-//   2 = NoRoom         (in the full list, but no free slot of that length)
+//   2 = NoRoom         (valid, but no free slot of that length)
 //   3 = Uncommon       (placed in a free slot, but not in the common list)
 //   4 = Accepted       (placed in a free slot of the same length)
 enum class GuessStatus {
@@ -156,16 +159,22 @@ struct GuessOutcome {
     bool bingo         = false;
     bool newly_uncommon = false;
     std::size_t slot_index = static_cast<std::size_t>(-1);
+    std::string placed_word;   // the lowered guess, set on success
 };
 
 // A `Board` augmented with per-slot occupancy. The original game
 // tracks this with a parallel byte-array of "found" flags. Here we
-// keep the flag in a parallel `std::vector<bool>`.
+// keep the flag in a parallel `std::vector<bool>`, and — like the
+// original's slot word at `+0x19c` — the **placed** word per slot.
+// The slot word is empty until the player fills the slot, then it
+// holds the guessed word (0x431880), which may differ from the board
+// answer.
 class FilledBoard {
 public:
     explicit FilledBoard(Board b) : board_(std::move(b)) {
         const std::size_t n = board_.slot_count();
         filled_.resize(n, false);
+        placed_.resize(n);
     }
 
     const Board& board() const noexcept { return board_; }
@@ -179,8 +188,28 @@ public:
         return i < filled_.size() && filled_[i];
     }
 
-    void mark_filled(std::size_t i) {
-        if (i < filled_.size()) filled_[i] = true;
+    // Record a placement: slot `i` now shows `placed` (the guessed
+    // word, not necessarily the board answer).
+    void mark_filled(std::size_t i, std::string placed) {
+        if (i < filled_.size()) {
+            filled_[i] = true;
+            placed_[i] = std::move(placed);
+        }
+    }
+
+    // The word sitting in slot `i` (only meaningful once filled).
+    const std::string& placed_word(std::size_t i) const {
+        static const std::string none;
+        return i < placed_.size() ? placed_[i] : none;
+    }
+
+    // True when `word` is already sitting in a filled slot (0x432850
+    // step 2 — the comparison reads the placed word, 0x4318f0).
+    bool is_placed(const std::string& word) const {
+        for (std::size_t i = 0; i < placed_.size(); ++i) {
+            if (filled_[i] && placed_[i] == word) return true;
+        }
+        return false;
     }
 
     // The flat slot list, parallel to `filled_`. Index 0..slot_count().
@@ -196,6 +225,7 @@ public:
 private:
     Board board_;
     std::vector<bool> filled_;
+    std::vector<std::string> placed_;
 };
 
 class GuessProcessor {
@@ -208,41 +238,66 @@ public:
 
     // Apply a guess. The slot is **not** marked as filled here — the
     // caller does that once it has updated the round state.
-    // `slot_index` in the returned `GuessOutcome` is the index to mark.
+    // `slot_index` in the returned `GuessOutcome` is the index to mark
+    // (with `placed_word`).
+    //
+    // The rule set is 0x432850 + 0x432b20 (see
+    // docs/reverse-engineering/gameplay-notes.md § "Guess check"):
+    // any full-list word spellable from the rack fills the first empty
+    // slot of its length and is displayed there — it need not be one
+    // of the board's words.
     GuessOutcome apply(const std::string& raw_word) {
         const std::string word = lower(raw_word);
         GuessOutcome o;
 
-        if (!full_->contains(word)) {
+        // Reject non-letters before any lookup (the dictionary and
+        // the rack check below assume `a..z`).
+        for (char c : word) {
+            if (c < 'a' || c > 'z') {
+                o.status = GuessStatus::NotAWord;
+                return o;
+            }
+        }
+
+        // 0x432850 entry: a linear find over the full-list copy at
+        // table+0x190 (the rack's full-tree sub-anagram enumeration).
+        // The guess must be in the full dictionary *and* spellable
+        // from the rack letters.
+        if (!full_->contains(word) ||
+            !board_.board().is_anagram_of_rack(word)) {
             o.status = GuessStatus::NotAWord;
             return o;
         }
 
-        const auto slots = board_.board().slots(word.size());
-        for (std::size_t k = 0; k < slots.size(); ++k) {
-            if (slots[k] != word) continue;
-            const std::size_t flat = flat_index_of(word);
-            if (flat == static_cast<std::size_t>(-1)) {
-                o.status = GuessStatus::Duplicate;
-                return o;
-            }
-            if (board_.is_filled(flat)) {
-                o.status = GuessStatus::Duplicate;
-                return o;
-            }
-            const bool is_common = common_->contains(word);
-            o.newly_uncommon = !is_common;
-            o.slot_index     = flat;
-            o.status         = is_common ? GuessStatus::Accepted
-                                         : GuessStatus::Uncommon;
-            o.points = 10 * static_cast<int>(word.size())
-                          * static_cast<int>(word.size());
-            o.bingo = board_.board().is_bingo(word);
-            o.filled_last = (board_.filled_count() + 1) == board_.slot_count();
+        // Already sitting in a filled slot → Duplicate. The slot
+        // holds the placed word (0x431880 wrote the guess into it),
+        // so a board word covered by an uncommon word is *not* a
+        // duplicate — only the placed word is.
+        if (board_.is_placed(word)) {
+            o.status = GuessStatus::Duplicate;
             return o;
         }
 
-        o.status = GuessStatus::NoRoom;
+        // 0x432b20: the first empty slot with the same length. When
+        // there is none (including lengths with no slots at all, e.g.
+        // two-letter words) the guess has nowhere to go.
+        const std::size_t flat = first_empty_slot_of(word.size());
+        if (flat == static_cast<std::size_t>(-1)) {
+            o.status = GuessStatus::NoRoom;
+            return o;
+        }
+
+        // Not in the common list → the out-flag "uncommon".
+        const bool is_common = common_->contains(word);
+        o.newly_uncommon = !is_common;
+        o.slot_index     = flat;
+        o.placed_word    = word;
+        o.status         = is_common ? GuessStatus::Accepted
+                                     : GuessStatus::Uncommon;
+        o.points = 10 * static_cast<int>(word.size())
+                      * static_cast<int>(word.size());
+        o.bingo = board_.board().is_bingo(word);
+        o.filled_last = (board_.filled_count() + 1) == board_.slot_count();
         return o;
     }
 
@@ -253,11 +308,15 @@ public:
     }
 
 private:
-    std::size_t flat_index_of(const std::string& word) const {
+    // Flat index of the first free slot with the given word length,
+    // or -1 when there is none. Slots are scanned in flat order
+    // (lengths 3..8, board order within a length).
+    std::size_t first_empty_slot_of(std::size_t length) const {
         std::size_t i = 0;
         for (std::size_t l = 3; l <= 8; ++l) {
             for (const auto& w : board_.board().slots(l)) {
-                if (w == word) return i;
+                (void)w;
+                if (l == length && !board_.is_filled(i)) return i;
                 ++i;
             }
         }

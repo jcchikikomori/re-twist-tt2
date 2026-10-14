@@ -21,6 +21,17 @@ WordTree tiny_dict() {
         "ab", "a", "ace", "bad",        // sub-anagrams of "abcde"
     });
 }
+
+// The "full" dictionary used by the guess tests: everything in the
+// common list plus full-only extras.
+WordTree full_with(const std::vector<std::string>& extras) {
+    std::vector<std::string> words = {
+        "abc", "abcd", "abcde", "xyz", "wvu",
+        "ab", "a", "ace", "bad",
+    };
+    for (const auto& w : extras) words.push_back(w);
+    return WordTree::from_words(words);
+}
 }  // namespace
 
 TEST(board_sub_anagrams_collected) {
@@ -81,7 +92,7 @@ TEST(filled_board_tracks_occupancy) {
     // Nothing filled yet, but the board has slots.
     ASSERT_TRUE(fb.slot_count() > 0);
     ASSERT_EQ(fb.filled_count(), std::size_t(0));
-    fb.mark_filled(0);
+    fb.mark_filled(0, "abc");
     ASSERT_TRUE(fb.is_filled(0));
     ASSERT_EQ(fb.filled_count(), std::size_t(1));
 }
@@ -98,8 +109,10 @@ TEST(guess_accepted_places_word) {
               static_cast<int>(GuessStatus::Accepted));
     ASSERT_EQ(o.points, 90);  // 10 * 3 * 3
     ASSERT_TRUE(!o.bingo);
+    ASSERT_EQ(o.placed_word, std::string("abc"));
+    ASSERT_TRUE(!o.newly_uncommon);
     // `apply` does not mark the slot; the caller (round state) does.
-    fb.mark_filled(o.slot_index);
+    fb.mark_filled(o.slot_index, o.placed_word);
     ASSERT_TRUE(fb.is_filled(o.slot_index));
 }
 
@@ -111,23 +124,112 @@ TEST(guess_duplicate_detected) {
     GuessProcessor p(fb, t, full);
     // The caller marks the slot after a successful accept.
     const auto first = p.apply("abc");
-    fb.mark_filled(first.slot_index);
+    fb.mark_filled(first.slot_index, first.placed_word);
     const auto second = p.apply("abc");
     ASSERT_EQ(static_cast<int>(second.status),
               static_cast<int>(GuessStatus::Duplicate));
 }
 
-TEST(guess_uncommon_flagged) {
-    auto t = tiny_dict();  // "bad" IS in the common
-    auto full = WordTree::from_words({"abc", "abcd", "abcde", "ab", "a", "ace", "bad",
-                                      "xyz", "wvu", "quux"});
+TEST(guess_uncommon_word_fills_a_slot) {
+    // The original accepts any full-list word of the right length and
+    // puts it in the first empty slot of that length (0x432b20),
+    // displaying the guessed word in the slot (0x431880). "dace" is
+    // spellable from "abcde", in the full list only, 4 letters.
+    auto t = tiny_dict();
+    auto full = full_with({"dace"});
     Board b = Board::build("abcde", t);
     FilledBoard fb(std::move(b));
     GuessProcessor p(fb, t, full);
-    // "quux" is in the full list but not the common and not in any slot.
-    const auto o = p.apply("quux");
+    const auto o = p.apply("dace");
     ASSERT_EQ(static_cast<int>(o.status),
+              static_cast<int>(GuessStatus::Uncommon));
+    ASSERT_TRUE(o.newly_uncommon);
+    ASSERT_EQ(o.points, 160);  // 10 * 4 * 4
+    ASSERT_EQ(o.slot_index, std::size_t(3));  // the single 4-letter slot
+    ASSERT_EQ(o.placed_word, std::string("dace"));
+    ASSERT_TRUE(!o.bingo);
+    fb.mark_filled(o.slot_index, o.placed_word);
+    // Re-guessing the placed word is a duplicate (the slot holds the
+    // placed word, not the board answer) ...
+    const auto again = p.apply("dace");
+    ASSERT_EQ(static_cast<int>(again.status),
+              static_cast<int>(GuessStatus::Duplicate));
+    // ... but the board word it covered ("abcd") is not: it is still a
+    // valid word and its length has no free slot left.
+    const auto covered = p.apply("abcd");
+    ASSERT_EQ(static_cast<int>(covered.status),
               static_cast<int>(GuessStatus::NoRoom));
+}
+
+TEST(guess_fills_the_first_empty_slot_of_its_length) {
+    auto t = tiny_dict();
+    auto full = full_with({"cab", "cad"});
+    Board b = Board::build("abcde", t);
+    FilledBoard fb(std::move(b));
+    GuessProcessor p(fb, t, full);
+    // The 3-letter bucket (flat 0..2) is empty; guesses walk it in
+    // slot order.
+    const auto first = p.apply("cab");
+    ASSERT_EQ(static_cast<int>(first.status),
+              static_cast<int>(GuessStatus::Uncommon));
+    ASSERT_EQ(first.slot_index, std::size_t(0));
+    fb.mark_filled(first.slot_index, first.placed_word);
+    const auto second = p.apply("cad");
+    ASSERT_EQ(static_cast<int>(second.status),
+              static_cast<int>(GuessStatus::Uncommon));
+    ASSERT_EQ(second.slot_index, std::size_t(1));
+    fb.mark_filled(second.slot_index, second.placed_word);
+    // A board word lands in the next free slot of its length, not in
+    // "its own".
+    const auto third = p.apply("abc");
+    ASSERT_EQ(static_cast<int>(third.status),
+              static_cast<int>(GuessStatus::Accepted));
+    ASSERT_EQ(third.slot_index, std::size_t(2));
+    fb.mark_filled(third.slot_index, third.placed_word);
+    // All three 3-letter slots are taken: nowhere to put "ace".
+    const auto fourth = p.apply("ace");
+    ASSERT_EQ(static_cast<int>(fourth.status),
+              static_cast<int>(GuessStatus::NoRoom));
+}
+
+TEST(guess_gate_requires_full_list_and_rack_letters) {
+    auto t = tiny_dict();
+    auto full = full_with({"dace"});
+    Board b = Board::build("abcde", t);
+    FilledBoard fb(std::move(b));
+    GuessProcessor p(fb, t, full);
+    // In neither list.
+    ASSERT_EQ(static_cast<int>(p.apply("zzz").status),
+              static_cast<int>(GuessStatus::NotAWord));
+    // In both lists but not spellable from the rack: the original
+    // gates guesses on the rack's full-list sub-anagram enumeration
+    // (the list copied to table+0x190), so "xyz" is rejected too.
+    ASSERT_EQ(static_cast<int>(p.apply("xyz").status),
+              static_cast<int>(GuessStatus::NotAWord));
+    // Non-letters are rejected before any lookup.
+    ASSERT_EQ(static_cast<int>(p.apply("123").status),
+              static_cast<int>(GuessStatus::NotAWord));
+    // Spellable and in the full list, but there is no 2-letter slot.
+    ASSERT_EQ(static_cast<int>(p.apply("ab").status),
+              static_cast<int>(GuessStatus::NoRoom));
+}
+
+TEST(guess_bingo_uncommon_anagram) {
+    // A full-only anagram of the rack is an uncommon bingo.
+    auto t = tiny_dict();
+    auto full = full_with({"edcba"});
+    Board b = Board::build("abcde", t);
+    FilledBoard fb(std::move(b));
+    GuessProcessor p(fb, t, full);
+    const auto o = p.apply("edcba");
+    ASSERT_EQ(static_cast<int>(o.status),
+              static_cast<int>(GuessStatus::Uncommon));
+    ASSERT_TRUE(o.bingo);
+    // Common words are not flagged uncommon.
+    const auto c = p.apply("ace");
+    ASSERT_EQ(static_cast<int>(c.status),
+              static_cast<int>(GuessStatus::Accepted));
+    ASSERT_TRUE(!c.newly_uncommon);
 }
 
 TEST(guess_not_a_word) {

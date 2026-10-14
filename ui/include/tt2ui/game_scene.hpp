@@ -425,7 +425,12 @@ private:
         score_ += rep.points_awarded;
         profile_.solved += 1;
         if (rep.status == GuessStatus::Uncommon) profile_.hard_solved += 1;
-        for (auto& s : slots_) if (s.word == word) s.found = true;
+        // The slot that received the guess shows the guessed word —
+        // it may not be the board answer (0x432b20 / 0x431880).
+        if (rep.slot_index < slots_.size()) {
+            slots_[rep.slot_index].found = true;
+            slots_[rep.slot_index].word  = rep.placed_word;
+        }
         if (rep.filled_last) {
             play(SoundId::AllWords);
             show_popup(popup_all_);
