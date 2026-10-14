@@ -47,7 +47,7 @@ TEST(settings_layout_matches_dialog_settings) {
     ASSERT_TRUE(g.button("SWITCH_LENGTH_8")->sprite.x == 289.0f && g.button("SWITCH_LENGTH_8")->sprite.y == 298.0f);
     ASSERT_EQ(g.button("SWITCH_FULLSCREEN")->sprite.sheet.frame_h, 25);   // 24x200, 8 rows
     ASSERT_TRUE(g.button("BUTTON_OK")->sprite.anchor == Anchor::TopRight);
-    ASSERT_TRUE(!g.button("BUTTON_INFO")->enabled);                        // no credits yet
+    ASSERT_TRUE(g.button("BUTTON_INFO")->enabled);                         // opens the credits
     const SettingsSlider& music = d.slider("SLIDER_MUSICVOL");
     ASSERT_TRUE(music.x == 123.0f && music.y == 98.0f);
     ASSERT_TRUE(music.value == 0.25f);
@@ -181,8 +181,58 @@ TEST(settings_ok_keeps_the_new_values) {
     ASSERT_TRUE(d.press("BUTTON_OK") == SettingsDialog::Result::Ok);
     ASSERT_TRUE(d.values().sound_volume == 1.0f);
     ASSERT_EQ(d.max_word_length(), 6);
-    ASSERT_TRUE(d.press("BUTTON_INFO") == SettingsDialog::Result::None);  // disabled
     ASSERT_TRUE(d.press("BUTTON_NOPE") == SettingsDialog::Result::None);
+}
+
+TEST(settings_info_opens_the_credits_over_the_settings) {
+    Rig r;
+    SettingsDialog d(saved(), 7, true, r.services());
+    ASSERT_TRUE(d.credits() == nullptr);
+    ASSERT_TRUE(d.press("BUTTON_INFO") == SettingsDialog::Result::Info);   // 0x40c760
+    const Dialog* c = d.credits();
+    ASSERT_TRUE(c != nullptr);
+    ASSERT_EQ(c->w, 798);
+    ASSERT_EQ(c->h, 595);
+    ASSERT_TRUE(c->button("BUTTON_OK")->sprite.x == 714.0f && c->button("BUTTON_OK")->sprite.y == 535.0f);
+    // This project's own credits, its creator first.
+    ASSERT_EQ(c->label("HEADING_0")->text, std::string("Created by"));
+    ASSERT_EQ(c->label("LINES_0")->text, std::string("John Cyrill Corsanes"));
+    ASSERT_EQ(c->label("VERSION")->text, std::string("VERSION ") + TT2_VERSION);
+    ASSERT_TRUE(c->label("MESSAGE")->text.find("GameHouse") != std::string::npos);
+    for (const SpriteState& sp : c->sprites)
+        ASSERT_TRUE(sp.name != "GRA_CREDITS");                   // not the 2008 staff picture
+    // The settings underneath ignore presses while the credits are up.
+    const int len_before = d.max_word_length();
+    ASSERT_TRUE(d.press("SWITCH_LENGTH_8") == SettingsDialog::Result::None);
+    ASSERT_EQ(d.max_word_length(), len_before);
+    ASSERT_TRUE(d.credits() != nullptr);
+    // OK (0x408c00) closes them and the settings carry on.
+    ASSERT_TRUE(d.press("BUTTON_OK") == SettingsDialog::Result::None);
+    ASSERT_TRUE(d.credits() == nullptr);
+    ASSERT_TRUE(d.press("BUTTON_OK") == SettingsDialog::Result::Ok);
+}
+
+TEST(settings_esc_closes_the_credits_not_the_settings) {
+    Rig r;
+    SettingsDialog d(saved(), 7, true, r.services());
+    d.set_volume("SLIDER_FXVOL", 0.9f);
+    d.press("BUTTON_INFO");
+    ASSERT_TRUE(d.press("BUTTON_CANCEL") == SettingsDialog::Result::None);   // host Esc
+    ASSERT_TRUE(d.credits() == nullptr);
+    ASSERT_TRUE(d.values().sound_volume == 0.9f);                            // nothing reverted
+}
+
+TEST(settings_credits_take_the_mouse) {
+    Rig r;
+    SettingsDialog d(saved(), 7, true, r.services());
+    d.press("BUTTON_INFO");
+    const Dialog& c = *d.credits();
+    const float ox = c.left() + 714.0f, oy = c.top() + 535.0f;              // OK's centre
+    d.mouse_move(ox, oy);
+    ASSERT_TRUE(d.pointer_hot());
+    d.mouse_down(ox, oy);
+    ASSERT_TRUE(d.mouse_up(ox, oy) == SettingsDialog::Result::None);
+    ASSERT_TRUE(d.credits() == nullptr);
 }
 
 TEST(settings_alt_enter_is_the_only_fullscreen_shortcut) {

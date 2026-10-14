@@ -178,3 +178,41 @@ registered elsewhere in code is not ruled out.
 Evidence: `ev_f3b85f73d8289c82bd02881343886ca8df4ef8217ccd532726c110299fe8cc84`,
 `ev_9e5f44716e7bbf661c14e195b07ea64be43240ddcf791fd73fd902c858f74435`,
 `ev_1eebccb343a62100bf5972f482020736ec4f3952313372be5c12709aa5708f65`.
+
+## 5. `DIALOG_CREDITS` (798×595, ctor `0x403e90`, REA batch H)
+
+Settings `BUTTON_INFO` (`0x40c760`) shows the dialog over `DIALOG_SETTINGS`, which stays
+open under it. Components (`properties/dialogs.xml`, CONFIRMED):
+
+| Component | Position | Notes |
+| --- | --- | --- |
+| `HEADER` | (397, 160) | `CTEXT_BETA_INFO_HEADER` "CREDITS", `visible="false"` |
+| `LOGO_STATIC` | (338, 30), scale 0.5 | children `T` (`IMAGE_LOGO_COIL`, −160, −18) and `2` (`IMAGE_LOGO_BOUNCE`, 228, −34) |
+| `VERSION` | (771, 87), anchor right | `FONT_FONT_HIGHSCORE_TEXT`; the ctor overwrites the XML text with the app version |
+| `GRA_CREDITS` | (46, 124) | `IMAGE_GRA_CREDITS`, 708×394: a picture of the 2008 GameHouse staff list |
+| `MESSAGE` | (32, 534), anchor left | `TEXT_CREDITS0`, width 370, word wrap |
+| `BUTTON_OK` | (714, 535), anchor centre | `0x408c00`, the shared close |
+
+Behaviour (CONFIRMED):
+
+- The ctor `0x403e90` wires `BUTTON_OK` to `0x408c00`, parses `clipy` (`+0x1e0`) and
+  `clipheight` (`+0x1e8`) with `sscanf("%f")`, reads `scrollduration` (`+0x1ec`), zeroes a
+  timer (`+0x1f0`) and an empty `GFVector<Label*>` (`+0x1f4`), and sets `VERSION`.
+- Show (vtable slot 44, `0x4041e0`) is the base show plus the painter render; no other slot
+  is overridden.
+- **The credits never scroll.** Bounded negative: in `0x403e00`-`0x404830` nothing reads
+  `+0x1ec`, `+0x1f0` or the label vector after the ctor, and the strings `startdelay` /
+  `enddelay` are absent from the exe. `TEXT_CREDITS1..8` are never shown.
+
+Evidence: `ev_6e6a9b2f0860f144078fced097ce2b18e6765717bf945f04e2560058f5ec86aa`,
+`ev_49d2920460ab1321d639fa671b3ab38f75cd91b4f94cce3527877e2163eaf3fc`,
+`ev_77a3851f642296ef0540b12c30f289aa812ef5d2955db8d9fa99fca66a7e84c6`,
+`ev_e9367480200d5ad56f1de990a54373532a77e94116052ffa0ea3a029efe8b340`,
+`ev_38cb2daaaa0e59ebc0668b0e8be3c69c97f6822ee1c9e31170fcbf13083ca9eb`.
+
+Port (`credits_dialog.hpp`, owned by `SettingsDialog`): same frame, logo, `VERSION` (the
+CMake project version) and OK. Deliberate deviation: `GRA_CREDITS` credits the people who
+made the 2008 game, not this recreation, so its box holds this project's credits (creator,
+word lists, libraries) and `MESSAGE` names the original game. INFERRED: a child sprite's
+offset scales with its parent, and the logo parts show frame 0.
+

@@ -11,9 +11,11 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <optional>
 #include <string>
 
 #include "tt2/settings.hpp"
+#include "tt2ui/credits_dialog.hpp"
 #include "tt2ui/game_dialogs.hpp"
 
 namespace tt2ui {
@@ -99,6 +101,8 @@ public:
 
     const Dialog& dialog() const { return dialog_; }
     Dialog& dialog() { return dialog_; }
+    // DIALOG_CREDITS while it is open over the settings (INFO, 0x40c760).
+    const Dialog* credits() const { return credits_ ? &*credits_ : nullptr; }
     const tt2::GameSettings& values() const { return values_; }
     int max_word_length() const { return max_len_; }
     const std::array<SettingsSlider, 2>& sliders() const { return sliders_; }
@@ -106,6 +110,7 @@ public:
 
     // ---- input ----------------------------------------------------------
     void mouse_move(float x, float y) {
+        if (credits_) { dialog_mouse_move(*credits_, x, y); return; }
         dialog_mouse_move(dialog_, x, y);
         const float lx = x - dialog_.left(), ly = y - dialog_.top();
         for (std::size_t i = 0; i < sliders_.size(); ++i) {
@@ -115,6 +120,7 @@ public:
         }
     }
     void mouse_down(float x, float y) {
+        if (credits_) { dialog_mouse_down(*credits_, x, y); return; }
         dialog_mouse_down(dialog_, x, y);
         const float lx = x - dialog_.left(), ly = y - dialog_.top();
         for (std::size_t i = 0; i < sliders_.size(); ++i) {
@@ -126,11 +132,22 @@ public:
     }
     Result mouse_up(float x, float y) {
         for (auto& s : sliders_) s.held = false;
+        if (credits_) return press(dialog_mouse_up(*credits_, x, y));
         return press(dialog_mouse_up(dialog_, x, y));
     }
 
-    // A button or switch by name (mouse, tests).
+    // A button or switch by name (mouse, tests). While the credits are up
+    // they take every press: their OK (0x408c00) closes them, and so do
+    // the hosts' Return (OK) and Esc (CANCEL). The original dialogs take no
+    // keys at all (help-and-settings.md §4); the keys are a port convenience.
     Result press(const std::string& name) {
+        if (credits_) {
+            if (name == "BUTTON_OK" || name == "BUTTON_CANCEL") {
+                sound(SoundId::Button);
+                credits_.reset();
+            }
+            return Result::None;
+        }
         MenuButton* b = dialog_.button(name);
         if (!b || !b->enabled || !b->sprite.visible) return Result::None;
         if (name == "SWITCH_FULLSCREEN") {
@@ -157,7 +174,10 @@ public:
             apply(services_.apply_music_volume, saved_.music_volume);
             return Result::Cancel;
         }
-        if (name == "BUTTON_INFO") return Result::Info;
+        if (name == "BUTTON_INFO") {
+            credits_ = build_credits();   // 0x40c760: over the settings
+            return Result::Info;
+        }
         return Result::None;
     }
 
@@ -182,10 +202,12 @@ public:
             }
         }
         dialog_tick(dialog_, dt_ms);
+        if (credits_) dialog_tick(*credits_, dt_ms);
         refresh_switches();
     }
 
     bool pointer_hot() const {
+        if (credits_) return dialog_pointer_hot(*credits_);
         if (dialog_pointer_hot(dialog_)) return true;
         for (const auto& s : sliders_) if (s.hover) return true;
         return false;
@@ -230,9 +252,7 @@ private:
         d.buttons.push_back(make_switch("SWITCH_LENGTH_6", 46, 298));
         d.buttons.push_back(make_switch("SWITCH_LENGTH_7", 170, 298));
         d.buttons.push_back(make_switch("SWITCH_LENGTH_8", 289, 298));
-        d.buttons.push_back(make_dialog_button("BUTTON_INFO", "BUTTON_INFO", 85, 357, Anchor::Top));
-        // CREDITS (DIALOG_CREDITS, 0x40c760) is not built: the button is shown disabled.
-        d.buttons.back().enabled = false;
+        d.buttons.push_back(make_dialog_button("BUTTON_INFO", "BUTTON_INFO", 85, 357, Anchor::Top));   // CREDITS
         d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", 278, 357, Anchor::TopRight));
         d.buttons.push_back(make_dialog_button("BUTTON_CANCEL", "BUTTON_CANCEL", 294, 357, Anchor::TopLeft));
         dialog_ = std::move(d);
@@ -279,6 +299,7 @@ private:
     int max_len_ = 6;
     Services services_;
     Dialog dialog_;
+    std::optional<Dialog> credits_;   // DIALOG_CREDITS over the settings
     std::array<SettingsSlider, 2> sliders_{};
     int slider_sound_ms_ = 0;
 };

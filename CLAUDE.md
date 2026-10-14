@@ -203,7 +203,8 @@ the address-level walkthrough of the gameplay code is in
   dialogs, `game_scene.hpp` for the Classic Untimed / Timed scene,
   `game_dialogs.hpp` for its pause menu, confirmations and round-end
   dialogs, `help_dialog.hpp` for HOW TO PLAY, `settings_dialog.hpp`
-  for SETTINGS),
+  for SETTINGS, `credits_dialog.hpp` for CREDITS, `dialog_fade.hpp` for the
+  dialog backdrop and show / hide fades),
   `ui/src/main.cpp` is the SDL2 front end, and `ui/tests/` holds the
   headless tests. Timings and layout for the welcome flow come from
   `docs/reverse-engineering/welcome-flow.md`, the game scene geometry

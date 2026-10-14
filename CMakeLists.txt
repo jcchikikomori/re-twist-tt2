@@ -75,6 +75,8 @@ target_include_directories(tt2_ui_logic INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ui/include>
 )
 target_link_libraries(tt2_ui_logic INTERFACE tt2_engine)
+# The credits dialog shows the project version.
+target_compile_definitions(tt2_ui_logic INTERFACE TT2_VERSION="${PROJECT_VERSION}")
 
 if(TT2_BUILD_UI)
     # pkg-config first (works on every distro), then a plain header/library

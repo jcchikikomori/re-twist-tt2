@@ -186,6 +186,7 @@ const std::map<std::string, FontFile> kFontFiles = {
     {"FONT_UI_NUMBERS", {"fonts/font_uibar_numbers.xml", 3}},
     {"FONT_NEXTROUND02", {"fonts/font_nextround02.xml", 4}},
     {"FONT_TUTORIAL", {"fonts/font_tutorial01.xml", 3}},
+    {"FONT_FONT_HIGHSCORE_TEXT", {"fonts/font_highscore_text.xml", 2}},
 };
 
 const std::map<SoundId, std::string> kSoundFiles = {
@@ -1059,7 +1060,8 @@ int main(int argc, char** argv) {
     std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
                                // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP, '>' NEXT ROUND,
                                // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages,
-                               // '#' SETTINGS, '6'..'8' max length, '!' fullscreen switch, '^' Alt+Enter,
+                               // '#' SETTINGS, '@' its INFO (credits), '6'..'8' max length,
+                               // '!' fullscreen switch, '^' Alt+Enter,
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     for (int i = 1; i < argc; ++i) {
@@ -1149,7 +1151,8 @@ int main(int argc, char** argv) {
     if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
     SDL_RenderSetLogicalSize(ren, SCREEN_W, SCREEN_H);
     // One fading dialog slot per dialog source, drawn in this order.
-    DialogLayer game_layer, menu_layer, menu_help_layer, menu_settings_layer, profile_layer;
+    DialogLayer game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
+        menu_credits_layer, profile_layer;
 
     // Hand pointer over clickable items, hourglass on the load
     // screen, arrow everywhere else. The original's cursor handling
@@ -1510,7 +1513,7 @@ int main(int argc, char** argv) {
             }
         }
         // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL;
-        // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '|' OK, '^' Alt+Enter.
+        // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter.
         if (!game && auto_play.empty() && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
             flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
@@ -1524,6 +1527,7 @@ int main(int argc, char** argv) {
                 else if (menu_settings && c == '~') menu_settings_result(menu_settings->press("BUTTON_CANCEL"));
                 else if (menu_settings && c == '|') menu_settings_result(menu_settings->press("BUTTON_OK"));
                 else if (menu_settings && c == '!') menu_settings->press("SWITCH_FULLSCREEN");
+                else if (menu_settings && c == '@') menu_settings->press("BUTTON_INFO");
                 else if (menu_settings && c >= '6' && c <= '8')
                     menu_settings->press(SettingsDialog::length_switch(c - '0'));
                 else if (c == '<') menu_help_press("BUTTON_PREV");
@@ -1551,6 +1555,7 @@ int main(int argc, char** argv) {
                     for (const char* n : {"BUTTON_Pass_2", "BUTTON_Pass", "BUTTON_GiveUp"}) game->press(n);
                 else if (c == '}') game->press("BUTTON_NextRound");         // qualified: next round
                 else if (c == '!') game->dialog_press("SWITCH_FULLSCREEN");  // settings: fullscreen
+                else if (c == '@') game->dialog_press("BUTTON_INFO");        // settings: credits
                 else if (c >= '6' && c <= '8') game->dialog_press(SettingsDialog::length_switch(c - '0'));
                 else if (c == '<') game->dialog_press("BUTTON_PREV");       // help: previous page
                 else if (c == '>') {
@@ -1614,12 +1619,20 @@ int main(int argc, char** argv) {
             for (const LetterBall& b : game->dialog_balls())
                 draw_letter_ball(ren, assets, b, game->dialog().left(), game->dialog().top());
         });
+        // DIALOG_CREDITS opens over the settings (0x40c760) with its own
+        // backdrop and fade.
+        const Dialog* game_credits = game && game->settings_dialog() ? game->settings_dialog()->credits() : nullptr;
+        draw_dialog_layer(ren, game_credits_layer, game_credits ? 1 : 0, dt,
+                          [&] { draw_dialog(ren, assets, *game_credits); });
         draw_dialog_layer(ren, menu_layer, menu_dialog_open ? 1 + static_cast<int>(menu_dialog.kind) : 0, dt,
                           [&] { draw_dialog(ren, assets, menu_dialog); });
         draw_dialog_layer(ren, menu_help_layer, menu_help ? 1 : 0, dt,
                           [&] { draw_help(ren, assets, menu_help->dialog()); });
         draw_dialog_layer(ren, menu_settings_layer, menu_settings ? 1 : 0, dt,
                           [&] { draw_settings(ren, assets, *menu_settings); });
+        const Dialog* menu_credits = menu_settings ? menu_settings->credits() : nullptr;
+        draw_dialog_layer(ren, menu_credits_layer, menu_credits ? 1 : 0, dt,
+                          [&] { draw_dialog(ren, assets, *menu_credits); });
         draw_dialog_layer(ren, profile_layer, static_cast<int>(profile.dialog().kind), dt, [&] {
             draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
         });
@@ -1668,7 +1681,8 @@ int main(int argc, char** argv) {
     if (cursor_hand) SDL_FreeCursor(cursor_hand);
     if (cursor_arrow) SDL_FreeCursor(cursor_arrow);
     if (audio) Mix_CloseAudio();
-    for (DialogLayer* l : {&game_layer, &menu_layer, &menu_help_layer, &menu_settings_layer, &profile_layer})
+    for (DialogLayer* l : {&game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
+                           &menu_credits_layer, &profile_layer})
         l->release();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
