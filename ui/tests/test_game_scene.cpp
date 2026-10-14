@@ -368,6 +368,56 @@ TEST(clear_lastword_and_twist_buttons) {
     ASSERT_EQ(f.profile.twists, twists + 2);
 }
 
+// 0x427560: Return on an empty played row is LAST WORD, so the player
+// can submit a word, press Return again to get it back, and extend it
+// ("scalar" -> "scalars" in the original; "car" -> "cart" here).
+TEST(return_on_an_empty_row_recalls_the_last_word) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type("car");
+    s.key_return();                                        // submit
+    ASSERT_EQ(s.score(), 90);
+    ASSERT_TRUE(s.typed().empty());
+    s.key_return();                                        // recall
+    ASSERT_EQ(s.typed(), std::string("car"));
+    ASSERT_EQ(s.score(), 90);                              // recalling submits nothing
+    f.type("t");
+    ASSERT_EQ(s.typed(), std::string("cart"));
+    s.key_return();                                        // submit the longer word
+    ASSERT_EQ(s.last_word(), std::string("cart"));
+    ASSERT_EQ(s.score(), 90 + 160);
+    ASSERT_TRUE(s.typed().empty());
+}
+
+TEST(return_on_an_empty_row_without_a_last_word_does_nothing) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.sounds.clear();
+    s.key_return();
+    ASSERT_TRUE(s.typed().empty());
+    ASSERT_EQ(s.score(), 0);
+    ASSERT_TRUE(!f.played(SoundId::WordReject));
+    ASSERT_TRUE(!f.played(SoundId::LetterPlace));
+}
+
+// 0x427560, engine key 4 (Delete): CLEAR.
+TEST(delete_key_clears_the_played_row) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type("car");
+    f.sounds.clear();
+    s.key_delete();
+    ASSERT_TRUE(s.typed().empty());
+    ASSERT_TRUE(f.played(SoundId::LetterClear));
+    f.sounds.clear();
+    s.key_delete();                                        // nothing to clear: silent
+    ASSERT_TRUE(!f.played(SoundId::LetterClear));
+    f.type("car");
+    s.key_escape();                                        // pause menu open
+    s.key_delete();
+    ASSERT_EQ(s.typed(), std::string("car"));              // the menu owns the keys
+}
+
 // ---- guesses -------------------------------------------------------------
 
 TEST(guess_outcomes_score_and_commentary) {
@@ -400,10 +450,12 @@ TEST(guess_outcomes_score_and_commentary) {
     ASSERT_TRUE(f.slot("cart") != nullptr);
     ASSERT_TRUE(f.slot("cart")->found);
     ASSERT_EQ(f.profile.hard_solved, 1);
-    // Enter with nothing typed is a no-op.
+    // The ENTER button with nothing typed is a no-op (0x425b60 calls
+    // 0x424730 directly; only the Return key falls back to LAST WORD).
     f.sounds.clear();
-    s.key_return();
+    s.press("BUTTON_Enter");
     ASSERT_TRUE(f.sounds.empty());
+    ASSERT_TRUE(s.typed().empty());
     ASSERT_EQ(s.score(), 90 + 160);
     // Commentary fades in, holds, fades out.
     s.update(COMMENT_FADE_MS);

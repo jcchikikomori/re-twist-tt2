@@ -101,6 +101,15 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   (CONFIRMED, `ev_631caed6b8f3ba4084a84f4bd86e615093e5078fc61254fa98e784e7245cecc0`,
   `ev_395892991af74c77cf8ae3b0eb9abf6d259d408e23d7ed0aee81a9916e4901aa`). Example: at
   `t = 0.25` the ball has covered `(3 − 0.5)·0.0625 = 0.156` of the way.
+- `0x427560` (keyboard, CONFIRMED, `ev_ca4cee865aca52e6b92b32c907bf9135d1fec10b0af23c915e3839f3b4d1e2c0`):
+  it switches on the engine key code; the table at `0x5d3228` maps the codes to characters
+  (`ev_7aa26075a742e6fda2ca8ef23ca3a5bcb876caf467e7ee456aad4216c33859b2`). Code 1 (`0x08`,
+  Backspace) takes back the last letter (`0x424ec0`); code 4 (`0x7f`, Delete) is CLEAR
+  (`0x4245c0`); code `0x11` (`0x20`, Space) is TWIST (`0x425240`); any other key types a letter
+  (`0x424d60`). Code 5 (Return) reads the played row (`0x43c0c0`): with letters in it, Return
+  is ENTER (`0x424730`); with the row empty, Return is LAST WORD (`0x425000`). So pressing
+  Return twice puts the word just submitted back in the played row, ready to extend. The
+  ENTER *button* (`0x425b60`) calls `0x424730` directly, so with nothing typed it does nothing.
 - `0x427680` (mouse): a click on an available ball plays it (`SOUND_letter_place`); a click
   on the **last** played ball takes it back (`SOUND_letter_clear`).
 - Twist: INFERRED as a `std::random_shuffle` of the available balls with the game LCG

@@ -446,8 +446,15 @@ public:
             }
             return;
         }
-        if (phase_ == GamePhase::Playing) submit();
+        // 0x427560, engine key 5 (Return): with letters in the played row it
+        // is ENTER (0x424730); with the row empty it is LAST WORD (0x425000),
+        // so Return twice re-types the word just submitted.
+        if (phase_ != GamePhase::Playing) return;
+        if (typed().empty()) last_word_again();
+        else submit();
     }
+    // 0x427560, engine key 4 (Delete, table 0x5d3228: 0x7f): CLEAR (0x4245c0).
+    void key_delete() { if (!dialog_open()) clear(); }
     void key_space() { if (phase_ == GamePhase::Playing && !dialog_open()) twist(); }
     // INFERRED: Esc opens the pause menu, and backs out of it.
     void key_escape() {

@@ -1268,6 +1268,7 @@ int main(int argc, char** argv) {
                         case SDLK_BACKSPACE: game->backspace(); break;
                         case SDLK_RETURN:
                         case SDLK_KP_ENTER: game->key_return(); break;
+                        case SDLK_DELETE: game->key_delete(); break;
                         case SDLK_SPACE: game->key_space(); break;
                         case SDLK_ESCAPE: game->key_escape(); break;
                         default: break;
@@ -1408,6 +1409,7 @@ int main(int argc, char** argv) {
                 auto_type.erase(0, 1);
                 if (c == '\n' || c == '|') game->key_return();
                 else if (c == ' ') game->key_space();
+                else if (c == '_') game->key_delete();                 // Delete = CLEAR
                 else if (c == '~') game->key_escape();                  // pause menu / back
                 else if (c == '$') game->dialog_press("BUTTON_STOP");   // pause menu STOP
                 else if (c == '?') game->dialog_press("BUTTON_HOWTOPLAY");   // pause menu HOW TO PLAY
