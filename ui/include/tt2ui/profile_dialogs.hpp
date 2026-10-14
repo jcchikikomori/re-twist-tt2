@@ -92,21 +92,24 @@ inline MenuButton make_dialog_button(const char* name, const char* image, float 
 // shadow that is meant to fall on the centre image), so the centre must
 // be painted under the whole frame, not just inside the 37/86/53 px
 // border boxes. Measured from the alpha channels of
-// images/gui/dialogdefault/*.png: the outer edge is fully opaque from
-// x=1 (left) / y=1 (top); the right edge carries a 7 px and the bottom
-// edge a 16 px drop shadow that falls outside the dialog; the corners
-// are rounded with a ~10 px radius. The fill is therefore the dialog
-// rect minus those margins, built from two overlapping rectangles so
-// the rounded corners stay transparent.
+// images/gui/dialogdefault/*.png: each side has a soft outer glow or
+// shadow that falls outside the dialog. Left: alpha 4..53 in columns 1-5,
+// opaque from x=6 (left.png row: 0, 4, 11, 22, 36, 53, 255, ...). Top:
+// opaque from y=1. Right: a 7 px glow; bottom: a 16 px shadow. The
+// rounded corners need a 16 px cut: top_left.png turns opaque at x=22 on
+// row 1 and at x=6 from row 17 (bottom_left.png mirrors it). The fill is
+// the dialog rect minus those margins, built from two overlapping
+// rectangles so the corners stay clear. With these numbers no fill pixel
+// shows outside the frame and no hole shows through it.
 struct FillRect {
     int x = 0, y = 0, w = 0, h = 0;
     bool operator==(const FillRect& o) const { return x == o.x && y == o.y && w == o.w && h == o.h; }
 };
-constexpr int FRAME_FILL_LEFT = 1;
+constexpr int FRAME_FILL_LEFT = 6;     // outer glow of left.png
 constexpr int FRAME_FILL_TOP = 1;
 constexpr int FRAME_FILL_RIGHT = 7;     // drop shadow of right.png
 constexpr int FRAME_FILL_BOTTOM = 16;   // drop shadow of bottom.png
-constexpr int FRAME_CORNER = 10;        // rounded-corner radius
+constexpr int FRAME_CORNER = 16;        // rounded-corner cut
 
 // The two rectangles (a cross) that fill a w x h dialog, relative to
 // its top-left corner. Empty rects (w or h <= 0) mean "too small".

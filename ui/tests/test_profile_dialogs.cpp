@@ -47,10 +47,14 @@ TEST(dialog_fill_rects_cover_frame_minus_shadows_and_corners) {
     // DIALOG_NEWPLAYER is 402x223.
     auto r = dialog_fill_rects(402, 223);
     // Horizontal bar: full height, corners cut on the left and right.
-    ASSERT_TRUE(r[0] == (FillRect{11, 1, 374, 206}));
+    ASSERT_TRUE(r[0] == (FillRect{22, 1, 357, 206}));
     // Vertical bar: full width, corners cut at the top and bottom.
-    ASSERT_TRUE(r[1] == (FillRect{1, 11, 394, 186}));
-    // Union spans x in [1, 395) and y in [1, 207): the opaque right
+    ASSERT_TRUE(r[1] == (FillRect{6, 17, 389, 174}));
+    // The left glow (columns 1-5 of left.png, alpha 4..53) stays clear:
+    // the fill starts where the left border turns opaque, at x=6.
+    ASSERT_EQ(r[1].x, 6);
+    ASSERT_TRUE(r[0].x >= 22);   // top_left.png row 1 is opaque from x=22
+    // Union spans x in [6, 395) and y in [1, 207): the opaque right
     // band starts at 402-22=380 and the bottom band at 223-35=188, so
     // both bands sit on top of the fill and the drop shadows do not.
     ASSERT_EQ(r[1].x + r[1].w, 402 - FRAME_FILL_RIGHT);
