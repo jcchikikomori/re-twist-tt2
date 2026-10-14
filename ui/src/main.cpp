@@ -48,6 +48,7 @@
 #include "tt2/word_tree.hpp"
 #include "tt2ui/bitmap_font.hpp"
 #include "tt2ui/data_paths.hpp"
+#include "tt2ui/dialog_fade.hpp"
 #include "tt2ui/game_scene.hpp"
 #include "tt2ui/help_dialog.hpp"
 #include "tt2ui/settings_dialog.hpp"
@@ -222,7 +223,6 @@ const std::map<SoundId, float> kSoundVolumes = {
 constexpr int FRAME_SIDE_W = 37;      // top_left.png is 37x86, bottom_left.png 37x53
 constexpr int FRAME_TOP_H = 86;
 constexpr int FRAME_BOTTOM_H = 53;
-constexpr float DIALOG_BACKGROUND_ALPHA = 0.7f;   // default.xml
 
 bool file_exists(const std::string& path) {
     if (FILE* f = std::fopen(path.c_str(), "rb")) {
@@ -725,15 +725,11 @@ SDL_Rect draw_label_text(SDL_Renderer* ren, Assets& assets, const TextLabel& l, 
     return last;
 }
 
-// Any dialog: darkening, DEFAULT_PAINTER frame, sprites, buttons, labels.
+// Any dialog: DEFAULT_PAINTER frame, sprites, buttons, labels. The
+// backdrop and the show / hide fade come from draw_dialog_layer().
 // `input` / `cursor` drive the INPUT_TEXT label of the name dialog.
 void draw_dialog(SDL_Renderer* ren, Assets& assets, const Dialog& d, const std::string& input = {},
                  bool cursor = false) {
-    // dodarkenbackground="true": DIALOG_BACKGROUND_ALPHA over the scene.
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ren, 0, 0, 0, static_cast<Uint8>(DIALOG_BACKGROUND_ALPHA * 255));
-    SDL_Rect all{0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(ren, &all);
     draw_dialog_frame(ren, assets, d);
     const float ox = d.left(), oy = d.top();
     for (const SpriteState& s : d.sprites) draw_sprite(ren, assets, s, ox, oy);
@@ -976,6 +972,71 @@ const std::vector<std::string> kHighScoreNames = {
 
 }  // namespace
 
+// One dialog slot on screen (dialog_fade.hpp). The open dialog is drawn
+// into `live` every frame and shown at its fade alpha. When it closes, that
+// last frame becomes `frozen` and fades out over the scene, so a closing
+// dialog needs no model state of its own.
+struct DialogLayer {
+    DialogFade fade;
+    SDL_Texture* live = nullptr;
+    SDL_Texture* frozen = nullptr;
+
+    void release() {
+        if (live) SDL_DestroyTexture(live);
+        if (frozen) SDL_DestroyTexture(frozen);
+        live = frozen = nullptr;
+    }
+};
+
+SDL_Texture* layer_texture(SDL_Renderer* ren) {
+    SDL_Texture* t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H);
+    if (!t) return nullptr;
+    // The layer holds premultiplied colour (drawn with BLEND onto a clear
+    // target), so it is composited with ONE / ONE_MINUS_SRC_ALPHA. Renderers
+    // without custom blend modes (the software one) fall back to BLEND,
+    // which only darkens soft edges a little while fading.
+    const SDL_BlendMode premultiplied = SDL_ComposeCustomBlendMode(
+        SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD,
+        SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD);
+    if (SDL_SetTextureBlendMode(t, premultiplied) != 0) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+    return t;
+}
+
+void composite_layer(SDL_Renderer* ren, SDL_Texture* t, float alpha) {
+    if (!t || alpha <= 0.0f) return;
+    const Uint8 m = color_byte(alpha);
+    SDL_SetTextureColorMod(t, m, m, m);   // premultiplied: colour fades with alpha
+    SDL_SetTextureAlphaMod(t, m);
+    SDL_RenderCopy(ren, t, nullptr, nullptr);
+}
+
+// `id` names the dialog open in this slot now (0 = none); `draw` paints it.
+// Order on screen: the backdrop (dodarkenbackground, 0x40d190), the dialog
+// that is closing, then the open one.
+template <typename Draw>
+void draw_dialog_layer(SDL_Renderer* ren, DialogLayer& layer, int id, int dt_ms, Draw&& draw) {
+    if (layer.fade.update(id, dt_ms)) std::swap(layer.live, layer.frozen);
+    if (!layer.fade.visible()) return;
+    const Rgba8 dark = darken_color(layer.fade.backdrop());
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ren, dark.r, dark.g, dark.b, dark.a);
+    SDL_Rect all{0, 0, SCREEN_W, SCREEN_H};
+    SDL_RenderFillRect(ren, &all);
+    if (layer.fade.closing()) composite_layer(ren, layer.frozen, layer.fade.closing_alpha());
+    if (layer.fade.open_id() == 0) return;
+    if (!layer.live) layer.live = layer_texture(ren);
+    if (!layer.live || SDL_SetRenderTarget(ren, layer.live) != 0) {
+        draw();   // no render targets: draw straight to the screen, unfaded
+        return;
+    }
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(ren, 0, 0, 0, 0);
+    SDL_RenderClear(ren);
+    draw();
+    SDL_SetRenderTarget(ren, nullptr);
+    composite_layer(ren, layer.live, layer.fade.open_alpha());
+}
+
 int main(int argc, char** argv) {
     std::string assets_dir = TT2_IMPORTED_ASSETS_DIR;
     if (const char* env = std::getenv("TT2_ASSETS")) assets_dir = env;
@@ -1080,6 +1141,8 @@ int main(int argc, char** argv) {
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
     SDL_RenderSetLogicalSize(ren, SCREEN_W, SCREEN_H);
+    // One fading dialog slot per dialog source, drawn in this order.
+    DialogLayer game_layer, menu_layer, menu_help_layer, menu_settings_layer, profile_layer;
 
     // Hand pointer over clickable items, hourglass on the load
     // screen, arrow everywhere else. The original's cursor handling
@@ -1522,11 +1585,15 @@ int main(int argc, char** argv) {
                           Anchor::Center, 2);
             }
         }
-        if (game && game->settings_dialog()) {
-            draw_settings(ren, assets, *game->settings_dialog());
-        } else if (game && game->dialog_kind() == GameDialog::HowToPlay) {
-            draw_help(ren, assets, game->dialog());
-        } else if (game && game->dialog_open()) {
+        draw_dialog_layer(ren, game_layer, game ? static_cast<int>(game->dialog_kind()) : 0, dt, [&] {
+            if (game->settings_dialog()) {
+                draw_settings(ren, assets, *game->settings_dialog());
+                return;
+            }
+            if (game->dialog_kind() == GameDialog::HowToPlay) {
+                draw_help(ren, assets, game->dialog());
+                return;
+            }
             draw_dialog(ren, assets, game->dialog());
             // 0x409100: the burst is linked in under its ball.
             const SheetSpec particle = sheet("IMAGE_PARTICLEBALL", 18, 18);
@@ -1539,11 +1606,16 @@ int main(int argc, char** argv) {
             }
             for (const LetterBall& b : game->dialog_balls())
                 draw_letter_ball(ren, assets, b, game->dialog().left(), game->dialog().top());
-        }
-        if (menu_dialog_open) draw_dialog(ren, assets, menu_dialog);
-        if (menu_help) draw_help(ren, assets, menu_help->dialog());
-        if (menu_settings) draw_settings(ren, assets, *menu_settings);
-        if (profile.open()) draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
+        });
+        draw_dialog_layer(ren, menu_layer, menu_dialog_open ? 1 + static_cast<int>(menu_dialog.kind) : 0, dt,
+                          [&] { draw_dialog(ren, assets, menu_dialog); });
+        draw_dialog_layer(ren, menu_help_layer, menu_help ? 1 : 0, dt,
+                          [&] { draw_help(ren, assets, menu_help->dialog()); });
+        draw_dialog_layer(ren, menu_settings_layer, menu_settings ? 1 : 0, dt,
+                          [&] { draw_settings(ren, assets, *menu_settings); });
+        draw_dialog_layer(ren, profile_layer, static_cast<int>(profile.dialog().kind), dt, [&] {
+            draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
+        });
         float black = flow.black_alpha();
         if (game_fade_out > 0) black = std::max(black, 1.0f - static_cast<float>(game_fade_out) / GAME_FADE_HALF_MS);
         if (game_fade_in > 0) black = std::max(black, static_cast<float>(game_fade_in) / GAME_FADE_HALF_MS);
@@ -1589,6 +1661,8 @@ int main(int argc, char** argv) {
     if (cursor_hand) SDL_FreeCursor(cursor_hand);
     if (cursor_arrow) SDL_FreeCursor(cursor_arrow);
     if (audio) Mix_CloseAudio();
+    for (DialogLayer* l : {&game_layer, &menu_layer, &menu_help_layer, &menu_settings_layer, &profile_layer})
+        l->release();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     IMG_Quit();

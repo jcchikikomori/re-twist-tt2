@@ -9,8 +9,8 @@
 // docs/reverse-engineering/profiles.md §3. Dialog-local coordinates are
 // relative to the dialog's top-left corner; `autocenter` puts that at
 // ((800 - w) / 2, (600 - h) / 2). The renderer draws the DEFAULT_PAINTER
-// 9-slice frame, the 0.7 darkening (DIALOG_BACKGROUND_ALPHA) and the
-// labels; this file owns the state and the rules.
+// 9-slice frame, the backdrop and fade (dialog_fade.hpp) and the labels;
+// this file owns the state and the rules.
 #pragma once
 
 #include <algorithm>

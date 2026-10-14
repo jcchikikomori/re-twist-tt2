@@ -6,8 +6,8 @@
 // docs/reverse-engineering/game-scene.md §6. Coordinates are local to
 // the dialog's top-left corner; every dialog here is `autocenter`, so
 // Dialog::left() / top() place it in the middle of the 800x600 screen.
-// The renderer draws the DEFAULT_PAINTER frame and the 0.7 darkening
-// exactly as for the profile dialogs.
+// The renderer draws the DEFAULT_PAINTER frame, the backdrop and the
+// show / hide fade (dialog_fade.hpp) exactly as for the profile dialogs.
 #pragma once
 
 #include <functional>

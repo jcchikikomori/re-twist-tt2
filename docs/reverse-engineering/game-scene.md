@@ -312,7 +312,34 @@ defined strings). They are leftovers from the first game (`docs/design/original-
 
 ## 6. Dialogs (dialogs.xml, CONFIRMED unless marked)
 
-All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
+All are `autocenter` and `dodarkenbackground="true"`.
+
+- **Backdrop colour (CONFIRMED).** The `DialogTextTwist2` ctor `0x40ca20` stores
+  `dodarkenbackground` at `+0x1d9`. Show `0x40cba0` then calls `0x40d190`, which clears
+  `movable` (`+0x1c2`) and sets the colour at `+0x19c` to `Color(0.5, 0, 0.25, 0.6)`
+  (constants `0x59b858`, `0x59b854`, `0x59b850`). GF2 colours are stored alpha first:
+  `0x44ed00` unpacks `0xAARRGGBB` into `[+0]` A, `[+4]` R, `[+8]` G, `[+0xc]` B. So the
+  backdrop is **RGB (0, 64, 153) at alpha 128**, a dark blue. Each channel becomes
+  `c * 255 + 0.5`, truncated (`0x44ed70`): `0.25 → 64`, `0.6 → 153`, `0.5 → 128`.
+  `default.xml`'s `DIALOG_BACKGROUND_ALPHA` (0.7) is dead data: the exe has no such string.
+  Evidence: `ev_05cefb67a7ecfbfc9dbdebdc119a0734f4955e0a6b7d76960148e9e3cf4232c3`,
+  `ev_2d994ae51ccd0e3451bb1d2778a9ea54fbedd49b83f064f83f768b18312047a1`,
+  `ev_d27af62cb7ae791812309c013423e2a06082dee61a6e806497c7c1164ec19ab1`,
+  `ev_08dc4b7130e2f26b9f92fa27ee59be9e91e5217178cabe5b314f7f2aeabd1b70`; the colour
+  layout comes from the `objdump` listing of `0x44ed00`.
+- **Show / hide fade (CONFIRMED).** Show `0x40ccc0` adds `ModifierAlpha(0 → 1,
+  DIALOG_FADE_TIME)`; hide `0x40ce80` adds `ModifierAlpha(1 → 0, DIALOG_FADE_TIME)`, then
+  removes the dialog (`0x43fcd0`), runs the optional callback at `+0x1d4`, and plays
+  `SOUND_DIALOG_HIDE` when `+0x1d8` is set. `DIALOG_FADE_TIME` is 200 ms (`default.xml`);
+  `ModifierAlpha` `0x451030` is linear.
+  Evidence: `ev_05cefb67a7ecfbfc9dbdebdc119a0734f4955e0a6b7d76960148e9e3cf4232c3`,
+  `ev_b4574330eabe40f6150a171a57aec7c07b75f9e5cf3c6e85e36900bb54a3fd3d`.
+- INFERRED: the backdrop fades with its dialog. The routine that draws the `+0x19c` colour
+  was not found (bounded search: every `+0x19c` / `+0x1ac` / `+0x1b0` access in the
+  disassembly), so the port assumes it follows the dialog's alpha.
+- Port: `dialog_fade.hpp` (`DialogFade`, `darken_color`). The renderer draws each dialog
+  slot into its own texture; a closing dialog fades out from its last frame. Deviation:
+  the port acts on a button at the click, not after the 200 ms hide fade.
 
 | Dialog | Size | Contents |
 | --- | --- | --- |
