@@ -661,6 +661,24 @@ void draw_dialog(SDL_Renderer* ren, Assets& assets, const Dialog& d, const std::
     }
 }
 
+// One letter ball: IMAGE_LETTERBALL_ANIM row = letter, frame 11 = the
+// resting pearl. (ox, oy) shifts a dialog-local ball onto the screen.
+void draw_letter_ball(SDL_Renderer* ren, Assets& assets, const LetterBall& b, float ox, float oy) {
+    const SheetSpec balls = sheet("IMAGE_LETTERBALL_ANIM", 1020, 1560, 17, 26, 442);
+    SpriteState sp = sprite("BALL", balls, b.x + ox, b.y + oy);
+    sp.anchor = Anchor::Center;
+    sp.frame = b.sheet_frame();   // pearl at rest, flip frames while revealing
+    draw_sprite(ren, assets, sp);
+    // Placeholder: royal-blue letter once the flip shows it (frame 3+).
+    if (assets.image(balls).placeholder && b.frame >= 3) {
+        const std::string ch(1, static_cast<char>(b.letter - 'a' + 'A'));
+        Font& font = assets.font("PLACEHOLDER_5");
+        for (SDL_Texture* t : font.layers) if (t) SDL_SetTextureColorMod(t, 0x10, 0x3c, 0xb0);
+        draw_text(ren, assets, "PLACEHOLDER_5", ch, b.x + ox, b.y + oy, TextAlign::Center, Anchor::Center, -1);
+        for (SDL_Texture* t : font.layers) if (t) SDL_SetTextureColorMod(t, 255, 255, 255);
+    }
+}
+
 // tt_commentary.png rows, for the placeholder build (the sheet carries the text).
 const char* kCommentText[9] = {
     "SORRY, THAT'S\nNOT ONE OF THE\nLISTED WORDS", "CONGRATULATIONS!\nYOU GOT\nALL THE WORDS!",
@@ -747,23 +765,7 @@ void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
         }
     }
 
-    // Letter chicklets: IMAGE_LETTERBALL_ANIM row = letter, last frame = resting tile.
-    const SheetSpec balls = sheet("IMAGE_LETTERBALL_ANIM", 1020, 1560, 17, 26, 442);
-    const bool balls_placeholder = assets.image(balls).placeholder;
-    for (const auto& b : g.balls()) {
-        SpriteState sp = sprite("BALL", balls, b.x, b.y);
-        sp.anchor = Anchor::Center;
-        sp.frame = b.sheet_frame();   // pearl at rest, flip frames while revealing
-        draw_sprite(ren, assets, sp);
-        // Placeholder: royal-blue letter once the flip shows it (frame 3+).
-        if (balls_placeholder && b.frame >= 3) {
-            const std::string ch(1, static_cast<char>(b.letter - 'a' + 'A'));
-            Font& font = assets.font("PLACEHOLDER_5");
-            for (SDL_Texture* t : font.layers) if (t) SDL_SetTextureColorMod(t, 0x10, 0x3c, 0xb0);
-            draw_text(ren, assets, "PLACEHOLDER_5", ch, b.x, b.y, TextAlign::Center, Anchor::Center, -1);
-            for (SDL_Texture* t : font.layers) if (t) SDL_SetTextureColorMod(t, 255, 255, 255);
-        }
-    }
+    for (const auto& b : g.balls()) draw_letter_ball(ren, assets, b, 0, 0);
 
     // UI bar and its labels (dialogs.xml SCENE_GAME, y = 574).
     draw_sprite(ren, assets, sprite("UI_BAR", sheet("IMAGE_UI_BAR", 800, 54), 0, 547));
@@ -835,7 +837,7 @@ int main(int argc, char** argv) {
     std::string data_dir = TT2_DATA_DIR;
     std::string auto_play;     // --play untimed|timed: start a game as soon as the menu is up
     std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
-                               // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP
+                               // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP, '>' NEXT ROUND
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_dir = argv[++i];
@@ -956,6 +958,10 @@ int main(int argc, char** argv) {
         pending_timed = timed;
         game_fade_out = GAME_FADE_HALF_MS;
     };
+    // Yes/no MESSAGE word wrap in the label's own font (game-scene.md §6).
+    const LineBreaker wrap_message = [&assets](const std::string& text, int max_width) {
+        return wrap_text(assets.font("FONT_SETTINGSTEXT").font, text, max_width);
+    };
     // "Continue the game?" (CTEXT_START_SAVEGAME, 0x42dc80) on the menu.
     Dialog menu_dialog;
     bool menu_dialog_open = false;
@@ -963,7 +969,8 @@ int main(int argc, char** argv) {
     auto request_game = [&](bool timed) {
         if (!players.current()) { profile.open_player_select(); return; }
         if (!save_dir.empty() && store.has_saved_game(players.current()->name, mode_name(timed))) {
-            menu_dialog = build_yes_no(game_strings::SAVEGAME_HEADER, game_strings::SAVEGAME_BODY);
+            menu_dialog =
+                build_yes_no(game_strings::SAVEGAME_HEADER, game_strings::SAVEGAME_BODY, false, wrap_message);
             menu_dialog_open = true;
             menu_dialog_timed = timed;
             return;
@@ -999,6 +1006,7 @@ int main(int argc, char** argv) {
         GameScene::Services gs;
         gs.play_sound = [&](SoundId id) { assets.play_sound(id); };
         gs.on_profile_change = pservices.on_change;
+        gs.wrap_text = wrap_message;
         gs.on_exit = [&] { pending_exit = true; game_fade_out = GAME_FADE_HALF_MS; };
         const std::string player = players.current()->name;
         const std::string mode = mode_name(pending_timed);
@@ -1163,6 +1171,7 @@ int main(int argc, char** argv) {
                 else if (c == ' ') game->key_space();
                 else if (c == '~') game->key_escape();                  // pause menu / back
                 else if (c == '$') game->dialog_press("BUTTON_STOP");   // pause menu STOP
+                else if (c == '>') game->press("BUTTON_NextRound");     // NEXT ROUND once qualified
                 else game->type_letter(c);
             }
         } else {
@@ -1196,7 +1205,11 @@ int main(int argc, char** argv) {
                           Anchor::Center, 2);
             }
         }
-        if (game && game->dialog_open()) draw_dialog(ren, assets, game->dialog());
+        if (game && game->dialog_open()) {
+            draw_dialog(ren, assets, game->dialog());
+            for (const LetterBall& b : game->dialog_balls())
+                draw_letter_ball(ren, assets, b, game->dialog().left(), game->dialog().top());
+        }
         if (menu_dialog_open) draw_dialog(ren, assets, menu_dialog);
         if (profile.open()) draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
         float black = flow.black_alpha();

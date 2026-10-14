@@ -10,6 +10,7 @@
 // exactly as for the profile dialogs.
 #pragma once
 
+#include <functional>
 #include <string>
 
 #include "tt2ui/profile_dialogs.hpp"
@@ -70,15 +71,25 @@ constexpr int YESNO_LINE_H = 30;
 constexpr int YESNO_BUTTON_Y = 100;
 constexpr int YESNO_BUTTON_H = 50;
 constexpr int YESNO_BOTTOM_PAD = 0;
+// MESSAGE is width="390" wrapstyle="wordwrap" (game-scene.md §6).
+constexpr int YESNO_MESSAGE_W = 390;
 
-inline Dialog build_yes_no(const char* header, const std::string& message, bool single_ok = false) {
+// Breaks `text` into "\n"-separated lines no wider than `max_width`;
+// main.cpp backs it with wrap_text() and the loaded FONT_SETTINGSTEXT.
+using LineBreaker = std::function<std::string(const std::string& text, int max_width)>;
+
+// Without a breaker only the message's own "\n" break lines.
+inline Dialog build_yes_no(const char* header, const std::string& text, bool single_ok = false,
+                           const LineBreaker& wrap = {}) {
     Dialog d;
     d.w = YESNO_MIN_W;
+    const std::string message = wrap ? wrap(text, YESNO_MESSAGE_W) : text;
     const int msg_h = text_line_count(message) * YESNO_LINE_H;
     const int button_y = YESNO_BUTTON_Y + msg_h;
     d.h = std::max(YESNO_MIN_H, button_y + YESNO_BUTTON_H + YESNO_BOTTOM_PAD);
     d.labels.push_back(TextLabel{"HEADER", "FONT_DIALOG_HEADERS2", header, 200, 13, TextAlign::Center, Anchor::Top, -1});
-    TextLabel msg{"MESSAGE", "FONT_SETTINGSTEXT", message, 200, 87, TextAlign::Center, Anchor::Top, -1, 390};
+    TextLabel msg{"MESSAGE", "FONT_SETTINGSTEXT", message, 200, 87, TextAlign::Center, Anchor::Top, -1,
+                  YESNO_MESSAGE_W};
     msg.line_height = YESNO_LINE_H;
     d.labels.push_back(msg);
     if (single_ok) {
@@ -103,8 +114,8 @@ inline SpriteState sparkle(float x, float y, int first_frame) {
     return s;
 }
 
-// DIALOG_NEXTROUND 380x320. The eight letterball sprites of the XML are
-// not drawn yet (their letters are set in code we have not traced).
+// DIALOG_NEXTROUND 380x320. Its eight letterballs ("Great Job") are
+// LetterBalls owned by the scene (next_round_balls() in game_scene.hpp).
 inline Dialog build_next_round() {
     Dialog d;
     d.w = 380;

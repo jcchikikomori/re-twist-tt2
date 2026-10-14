@@ -435,6 +435,59 @@ TEST(all_words_ends_round_and_next_round_starts) {
     for (const auto& v : s.slots()) ASSERT_TRUE(!v.found && !v.revealed);
 }
 
+// DIALOG_NEXTROUND letterballs (0x409100): "Great Job" on slots 1-8,
+// character i waits 500 + 200 * i ms (the space counts), then flips.
+TEST(next_round_balls_spell_great_job) {
+    const auto balls = next_round_balls(NEXT_ROUND_LETTERBALLS);
+    ASSERT_EQ(balls.size(), std::size_t{8});
+    const std::string letters = "greatjob";
+    const int delays[8] = {500, 700, 900, 1100, 1300, 1700, 1900, 2100};
+    for (std::size_t i = 0; i < balls.size(); ++i) {
+        ASSERT_EQ(balls[i].letter, letters[i]);
+        ASSERT_EQ(balls[i].slot, static_cast<int>(i));
+        ASSERT_EQ(balls[i].reveal_delay_ms, delays[i]);
+        ASSERT_TRUE(balls[i].x == NEXT_ROUND_BALL_XY[i][0] && balls[i].y == NEXT_ROUND_BALL_XY[i][1]);
+        ASSERT_EQ(balls[i].frame, 0);
+    }
+    ASSERT_EQ(balls[0].sheet_frame(), ('g' - 'a') * BALL_FRAMES_PER_LETTER);   // 102, first flip frame
+    ASSERT_TRUE(balls[2].x == 192.0f && balls[2].y == -8.0f);                  // slot 3 pokes above the frame
+}
+
+TEST(next_round_balls_skip_spaces_and_stop_at_eight) {
+    const auto two = next_round_balls("Hi");
+    ASSERT_EQ(two.size(), std::size_t{2});                  // slots 3-8 stay empty
+    const auto gap = next_round_balls("a!b");              // '!' takes slot 2 but has no sheet row
+    ASSERT_EQ(gap.size(), std::size_t{2});
+    ASSERT_EQ(gap[1].slot, 2);
+    ASSERT_EQ(gap[1].reveal_delay_ms, 500 + 2 * 200);
+    ASSERT_EQ(next_round_balls("abcdefghijk").size(), std::size_t{8});   // no slot "9"
+    ASSERT_TRUE(next_round_balls("").empty());
+    ASSERT_TRUE(next_round_balls("   ").empty());
+}
+
+TEST(next_round_dialog_flips_its_balls_with_sound) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    std::vector<std::string> words;
+    for (const auto& v : s.slots()) words.push_back(v.word);
+    for (const auto& w : words) { f.type(w); s.key_return(); }
+    s.update(REVEAL_MS + 16);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+    ASSERT_EQ(s.dialog_balls().size(), std::size_t{8});
+    f.sounds.clear();
+    s.update(500 + 12 * BALL_REVEAL_FRAME_MS);             // G is done, R is still flipping
+    ASSERT_EQ(s.dialog_balls()[0].frame, BALL_IDLE_FRAME);
+    ASSERT_TRUE(s.dialog_balls()[1].revealing());
+    ASSERT_EQ(static_cast<int>(std::count(f.sounds.begin(), f.sounds.end(), SoundId::LetterLoad)), 1);
+    s.update(2100);                                        // past B's 2100 + 720 ms
+    int loads = 0;
+    for (auto id : f.sounds) if (id == SoundId::LetterLoad) ++loads;
+    ASSERT_EQ(loads, 8);
+    for (const auto& b : s.dialog_balls()) ASSERT_EQ(b.frame, BALL_IDLE_FRAME);
+    s.dialog_press("BUTTON_OK");
+    ASSERT_TRUE(s.dialog_balls().empty());                 // gone with the dialog
+}
+
 TEST(next_round_button_while_qualified_reveals_then_advances) {
     Fixture f(false);
     auto& s = *f.scene;
@@ -684,6 +737,50 @@ TEST(yes_no_dialog_grows_with_its_message) {
     const Dialog ok = build_yes_no("H", "m", true);
     ASSERT_TRUE(ok.button("BUTTON_OK") != nullptr);
     ASSERT_TRUE(ok.button("BUTTON_YES") == nullptr);
+}
+
+// The menu's "Continue the game?" message wraps at 390 px. With the
+// placeholder FONT_SETTINGSTEXT (scale 3: glyph 15 + 3, space 9 + 3; '('
+// and ')' have no glyph) the first line "Do you want to continue" is
+// 19 * 18 + 4 * 12 - 3 = 387 <= 390, and adding " your" would make 471.
+TEST(yes_no_message_wraps_at_the_label_width) {
+    const BitmapFont font = make_placeholder_font(3);
+    const LineBreaker wrap = [&font](const std::string& t, int w) { return wrap_text(font, t, w); };
+    const Dialog d = build_yes_no(game_strings::SAVEGAME_HEADER, game_strings::SAVEGAME_BODY, false, wrap);
+    ASSERT_EQ(d.label("MESSAGE")->text,
+              std::string("Do you want to continue\nyour last played game?\n(Select 'No' to start\nagain.)"));
+    const int button_y = YESNO_BUTTON_Y + 4 * YESNO_LINE_H;   // 100 + 120 = 220
+    ASSERT_TRUE(d.button("BUTTON_YES")->sprite.y == static_cast<float>(button_y));
+    ASSERT_EQ(d.h, button_y + YESNO_BUTTON_H);                // 270
+    ASSERT_EQ(d.label("MESSAGE")->max_width, YESNO_MESSAGE_W);
+}
+
+TEST(yes_no_short_message_is_unchanged_by_the_wrap) {
+    const BitmapFont font = make_placeholder_font(3);
+    const LineBreaker wrap = [&font](const std::string& t, int w) { return wrap_text(font, t, w); };
+    const Dialog d = build_yes_no("H", "one line", false, wrap);
+    ASSERT_EQ(d.label("MESSAGE")->text, std::string("one line"));
+    ASSERT_EQ(d.h, YESNO_MIN_H);
+}
+
+TEST(scene_yes_no_dialogs_use_the_wrap_service) {
+    tt2::WordTree com = common();
+    tt2::WordTree ful = full();
+    tt2::PlayerProfile profile = tt2::PlayerProfile::create("Mugwump", 7u);
+    int calls = 0;
+    GameScene::Services sv;
+    sv.play_sound = [](SoundId) {};
+    sv.on_profile_change = [] {};
+    sv.on_exit = [] {};
+    sv.wrap_text = [&calls](const std::string& t, int w) {
+        ++calls;
+        ASSERT_EQ(w, YESNO_MESSAGE_W);
+        return t + "\nX";
+    };
+    GameScene s(com, ful, profile, nullptr, false, sv, 0);
+    s.press("BUTTON_GiveUp");
+    ASSERT_EQ(calls, 1);
+    ASSERT_EQ(text_line_count(s.dialog().label("MESSAGE")->text), 3);   // 2 own lines + 1 added
 }
 
 TEST(pause_menu_freezes_the_clock_and_resumes) {

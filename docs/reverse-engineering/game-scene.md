@@ -224,16 +224,20 @@ All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
   JOB the lower row (6–8). Ball `i` appears after `500 + 200·i` ms; the space still counts,
   so G = 500 ms, T = 1300 ms, J = 1700 ms, B = 2100 ms. Every ball also bursts 8
   `IMAGE_PARTICLEBALL` particles: random angle, distance `75 + rand % 50` px, alpha fade
-  over `600 + rand % 90` ms, linear easing. Slot positions:
+  over `600 + rand % 90` ms, linear easing. Each ball runs the round-start flip `0x43a820`
+  with its flag argument 1, so `SOUND_letter_load` (`0x43a940`) plays as each one lands;
+  like the rack, a waiting ball shows its first (blank) frame. UNCONFIRMED: the particles'
+  travel time and delay (two stack values the decompiler leaves uninitialised). Slot
+  positions:
 
   | Slot | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
   | --- | --- | --- | --- | --- | --- | --- | --- | --- |
   | (x, y) | (60, 34) | (124, 3) | (192, −8) | (259, 1) | (321, 34) | (126, 75) | (192, 61) | (257, 74) |
 
 - HOW TO PLAY and SETTINGS are decoded in `help-and-settings.md`.
-- Not implemented: HOW TO PLAY / SETTINGS (they show "Not available"), the
-  `DIALOG_NEXTROUND` letterballs, `DialogPause` (`0x409e50`, key `p`, which clashes with
-  typing), and the Pass flow.
+- Not implemented: HOW TO PLAY / SETTINGS (they show "Not available"), the next-round
+  particle burst, `DialogPause` (`0x409e50`, key `p`, which clashes with typing), and the
+  Pass flow.
 
 ## 7. Saved games (CONFIRMED)
 

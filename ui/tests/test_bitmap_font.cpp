@@ -141,3 +141,56 @@ TEST(placeholder_font_covers_ascii_names) {
     }
     ASSERT_TRUE(placeholder_glyph_rows('#') == nullptr);
 }
+
+// ---- wrap_text: the GF2 wordwrap rule (game-scene.md §6) -------------
+// Placeholder font at scale 2: a glyph advances 10 + 2, a space 6 + 2,
+// so "AAA" measures 3 * 12 - 2 = 34 and "AAA BBB" 66 + 6 * 2 = 78.
+
+TEST(wrap_text_keeps_a_word_that_fits_and_breaks_one_that_does_not) {
+    const BitmapFont f = make_placeholder_font(2);
+    ASSERT_EQ(f.measure("AAA BBB"), 78);
+    ASSERT_EQ(wrap_text(f, "AAA BBB", 78), std::string("AAA BBB"));     // 78 <= 78
+    ASSERT_EQ(wrap_text(f, "AAA BBB", 77), std::string("AAA\nBBB"));    // 78 > 77, trailing space trimmed
+    ASSERT_EQ(wrap_text(f, "AAA BBB CCC", 78), std::string("AAA BBB\nCCC"));
+}
+
+TEST(wrap_text_keeps_explicit_breaks_and_blank_lines) {
+    const BitmapFont f = make_placeholder_font(2);
+    ASSERT_EQ(wrap_text(f, "A\nB", 390), std::string("A\nB"));
+    ASSERT_EQ(wrap_text(f, "A\n\nB", 390), std::string("A\n\nB"));
+    ASSERT_EQ(wrap_text(f, "A\rB", 390), std::string("A\nB"));
+    ASSERT_EQ(wrap_text(f, "A\xE2\x80\xA8" "B", 390), std::string("A\nB"));   // U+2028
+}
+
+TEST(wrap_text_never_starts_a_line_with_a_space) {
+    const BitmapFont f = make_placeholder_font(2);
+    ASSERT_EQ(wrap_text(f, "   A", 390), std::string("A"));
+    ASSERT_EQ(wrap_text(f, "A  B", 390), std::string("A  B"));                  // inner runs stay
+    ASSERT_EQ(wrap_text(f, "AAA\xC2\xA0" "BBB", 40), std::string("AAA\nBBB"));   // NBSP separates words
+}
+
+TEST(wrap_text_drops_a_word_wider_than_the_label) {
+    const BitmapFont f = make_placeholder_font(2);
+    // "BBBBBBBB" = 8 * 12 - 2 = 94 > 40: dropped, like 0x46a7b0. The space
+    // after it is still added because the line already has text.
+    ASSERT_EQ(wrap_text(f, "A BBBBBBBB C", 40), std::string("A  C"));
+    ASSERT_EQ(wrap_text(f, "BBBBBBBB A", 40), std::string("A"));                // no leading space
+    ASSERT_EQ(wrap_text(f, "BBBBBBBB", 40), std::string(""));                   // terminates, empty line
+}
+
+TEST(wrap_text_empty_and_disabled) {
+    const BitmapFont f = make_placeholder_font(2);
+    ASSERT_EQ(wrap_text(f, "", 390), std::string(""));
+    ASSERT_EQ(wrap_text(f, "AAA BBB", 0), std::string("AAA BBB"));     // max_width <= 0: off
+    ASSERT_EQ(wrap_text(f, "AAA BBB", -5), std::string("AAA BBB"));
+}
+
+TEST(utf8_append_round_trips) {
+    std::string s;
+    for (std::uint32_t cp : {0x41u, 0xD2u, 0x20ACu, 0x1F600u}) utf8_append(s, cp);
+    const auto v = utf8_decode(s);
+    ASSERT_EQ(v.size(), std::size_t{4});
+    ASSERT_EQ(v[1], std::uint32_t{0xD2});
+    ASSERT_EQ(v[2], std::uint32_t{0x20AC});
+    ASSERT_EQ(v[3], std::uint32_t{0x1F600});
+}

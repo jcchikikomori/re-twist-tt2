@@ -7,6 +7,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -174,6 +175,41 @@ struct LetterBall {
     }
 };
 
+// DIALOG_NEXTROUND letterballs (0x409100, game-scene.md §6): every
+// non-space character of TEXT_NEXT_ROUND_LETTERBALLS becomes a LetterBall
+// on the next sprite slot "1".."8" (dialog-local centres). Character i
+// (spaces count) waits 500 + 200 * i ms, then runs the round-start flip
+// 0x43a820 with its sound flag set. Upper case is folded to the sheet's
+// a-z rows; a character without a row, or one past slot 8, gets no ball
+// (the original finds no sprite "9"). The particle burst is not drawn yet.
+inline constexpr const char* NEXT_ROUND_LETTERBALLS = "Great Job";   // TEXT_NEXT_ROUND_LETTERBALLS
+constexpr int NEXT_ROUND_BALL_SLOTS = 8;
+constexpr float NEXT_ROUND_BALL_XY[NEXT_ROUND_BALL_SLOTS][2] = {
+    {60, 34}, {124, 3}, {192, -8}, {259, 1}, {321, 34}, {126, 75}, {192, 61}, {257, 74}};
+constexpr int NEXT_ROUND_BALL_DELAY_MS = 500;   // 0x409100: local_d0 = 500
+constexpr int NEXT_ROUND_BALL_STEP_MS = 200;    // += 200 per character
+
+inline std::vector<LetterBall> next_round_balls(const std::string& text) {
+    std::vector<LetterBall> out;
+    int slot = 0;
+    for (std::size_t i = 0; i < text.size() && slot < NEXT_ROUND_BALL_SLOTS; ++i) {
+        if (text[i] == ' ') continue;
+        const int ix = slot++;
+        const char c = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+        if (c < 'a' || c > 'z') continue;
+        LetterBall b;
+        b.letter = c;
+        b.slot = ix;
+        b.start_x = b.target_x = b.x = NEXT_ROUND_BALL_XY[ix][0];
+        b.start_y = b.target_y = b.y = NEXT_ROUND_BALL_XY[ix][1];
+        b.frame = 0;
+        b.reveal_delay_ms = NEXT_ROUND_BALL_DELAY_MS + NEXT_ROUND_BALL_STEP_MS * static_cast<int>(i);
+        b.reveal_elapsed_ms = 0;
+        out.push_back(b);
+    }
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // Scene
 // ---------------------------------------------------------------------------
@@ -223,6 +259,9 @@ public:
         // Saved games (0x427b20 save on leave, 0x461840 delete).
         std::function<void(const tt2::SavedGame&)> save_game;
         std::function<void()> discard_save;
+        // Word wrap for the yes/no MESSAGE (wrapstyle="wordwrap"); empty
+        // keeps the strings' own line breaks.
+        LineBreaker wrap_text;
         // No pause hook: the pause menu leaves the music playing (DialogMenu
         // show 0x40aa30 has no stream call; game-scene.md §6, REA batch A).
     };
@@ -264,6 +303,8 @@ public:
     float table_y() const { return TABLE_Y; }
     const std::vector<SlotView>& slots() const { return slots_; }
     const std::vector<LetterBall>& balls() const { return balls_; }
+    // DIALOG_NEXTROUND letterballs, dialog-local; empty for other dialogs.
+    const std::vector<LetterBall>& dialog_balls() const { return dialog_balls_; }
     std::vector<MenuButton>& buttons() { return buttons_; }
     const std::vector<MenuButton>& buttons() const { return buttons_; }
     MenuButton* button(const std::string& name) {
@@ -482,6 +523,8 @@ public:
     void update(int dt_ms) {
         if (finished_) return;
         if (dialog_open()) dialog_tick(dialog_, dt_ms);
+        for (auto& b : dialog_balls_)
+            if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43a820 flag 1 -> 0x43a940
         if (paused()) return;
         const int round_before = round_number_;
         queue_.update(dt_ms);
@@ -756,14 +799,23 @@ private:
     }
     void open_dialog(GameDialog kind) {
         dialog_kind_ = kind;
+        dialog_balls_.clear();
         switch (kind) {
             case GameDialog::PauseMenu: dialog_ = build_pause_menu(); break;
-            case GameDialog::ConfirmExit: dialog_ = build_yes_no(game_strings::EXIT_HEADER, game_strings::EXIT_BODY); break;
-            case GameDialog::ConfirmGiveUp: dialog_ = build_yes_no(game_strings::GIVEUP_HEADER, game_strings::GIVEUP_BODY); break;
-            case GameDialog::NotAvailable:
-                dialog_ = build_yes_no(game_strings::NOT_AVAILABLE_HEADER, game_strings::NOT_AVAILABLE, true);
+            case GameDialog::ConfirmExit:
+                dialog_ = build_yes_no(game_strings::EXIT_HEADER, game_strings::EXIT_BODY, false, services_.wrap_text);
                 break;
-            case GameDialog::NextRound: dialog_ = build_next_round(); break;
+            case GameDialog::ConfirmGiveUp:
+                dialog_ = build_yes_no(game_strings::GIVEUP_HEADER, game_strings::GIVEUP_BODY, false, services_.wrap_text);
+                break;
+            case GameDialog::NotAvailable:
+                dialog_ = build_yes_no(game_strings::NOT_AVAILABLE_HEADER, game_strings::NOT_AVAILABLE, true,
+                                       services_.wrap_text);
+                break;
+            case GameDialog::NextRound:
+                dialog_ = build_next_round();
+                dialog_balls_ = next_round_balls(NEXT_ROUND_LETTERBALLS);
+                break;
             case GameDialog::EndGame: dialog_ = build_end_game(); break;
             case GameDialog::Congrats: dialog_ = build_congrats(); break;
             case GameDialog::None: dialog_ = Dialog{}; break;
@@ -924,6 +976,7 @@ private:
     TableLayout table_;
     std::vector<SlotView> slots_;
     std::vector<LetterBall> balls_;
+    std::vector<LetterBall> dialog_balls_;   // DIALOG_NEXTROUND letterballs
     std::vector<MenuButton> buttons_;
     SpriteState commentary_, game_over_, popup_bingo_, popup_all_;
     ModifierQueue queue_, comment_queue_, popup_queue_;

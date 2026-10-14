@@ -223,6 +223,75 @@ private:
     }
 };
 
+// Append one code point to `out` as UTF-8.
+inline void utf8_append(std::string& out, std::uint32_t cp) {
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+}
+
+// GF2 label word wrap, wrapstyle="wordwrap" (game-scene.md §6, REA batch
+// B2): the tokenizer 0x469a40 ends a line on \n, \r, U+2028 and U+2029
+// and a word on the whitespace set below; the word flush 0x46a7b0 keeps
+// a word on the line when it fits, else starts a new line when the line
+// already has text and the word fits an empty one, else drops the word.
+// A space is only added when the line has text, so no line starts with
+// one. Returns `text` with "\n" between the lines; max_width <= 0 turns
+// wrapping off. Trailing spaces are trimmed from finished lines (the
+// original's handling of them is untraced; it only nudges centring).
+inline bool wrap_is_break(std::uint32_t cp) { return cp == '\n' || cp == '\r' || cp == 0x2028 || cp == 0x2029; }
+inline bool wrap_is_space(std::uint32_t cp) {
+    return cp == ' ' || cp == '\t' || cp == 0xA0 || (cp >= 0x2000 && cp <= 0x200B) || cp == 0x202F ||
+           cp == 0x205F || cp == 0x3000;
+}
+
+inline std::string wrap_text(const BitmapFont& font, const std::string& text, int max_width, int spacing = -1) {
+    if (max_width <= 0) return text;
+    std::string out, line, word;
+    auto end_line = [&] {
+        while (!line.empty() && line.back() == ' ') line.pop_back();
+        out += line;
+        out += '\n';
+        line.clear();
+    };
+    auto flush_word = [&] {
+        if (word.empty()) return;
+        if (font.measure(line + word, spacing) <= max_width) {
+            line += word;
+        } else if (!line.empty() && font.measure(word, spacing) <= max_width) {
+            end_line();
+            line = word;
+        }   // else: wider than the label, dropped like the original
+        word.clear();
+    };
+    for (std::uint32_t cp : utf8_decode(text)) {
+        if (wrap_is_break(cp)) {
+            flush_word();
+            end_line();
+        } else if (wrap_is_space(cp)) {
+            flush_word();
+            if (!line.empty()) line += ' ';
+        } else {
+            utf8_append(word, cp);
+        }
+    }
+    flush_word();
+    while (!line.empty() && line.back() == ' ') line.pop_back();
+    return out + line;
+}
+
 // A procedural stand-in used when the original fonts are not imported:
 // 5x5 pixel glyphs (A-Z, 0-9 and a little punctuation) scaled by
 // `scale`, one layer. The renderer paints the sheet itself from
