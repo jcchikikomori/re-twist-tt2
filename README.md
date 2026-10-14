@@ -1,145 +1,141 @@
 # re-twist-tt2
 
-A native desktop recreation of **Text Twist 2** (GameHouse, 2008) in
-portable C++17.
+A native desktop recreation of **Text Twist 2** (GameHouse, 2008) in portable C++17.
 
-The original shipped a 25 k-word English word list and a 117 k-word full
-list, both locked behind a Win32 installer. This project extracts the
-game logic, decodes the dictionary format, and ships with a public-domain
-**2008 → 2026 dictionary update** (ENABLE2k, 173 528 words) — drop-in
-replaceable with no engine change.
+The original shipped a 25 k-word common list and a 117 k-word full list, both locked inside a
+Win32 install. This project decodes the game logic and the `.tree` dictionary format, and ships a
+public-domain **2008 → 2026 dictionary update** (ENABLE2k, 173 528 words). Swapping dictionaries is
+a file swap; the engine does not change.
 
-The whole thing builds with CMake and runs on Linux, macOS and Windows.
-There is no web layer, no JavaScript, no Capacitor.
-
-## Work in progress: the boot sequence
+It builds with CMake on Linux, macOS and Windows. There is no web layer, no JavaScript, no
+Capacitor.
 
 ![Boot sequence: GameHouse splash, loading screen, main menu](docs/media/boot-sequence.gif)
 
-Splash, loading screen and main menu rebuilt 1:1 from the decompiled
-original (timings in `docs/reverse-engineering/welcome-flow.md`),
-recorded with `tt2 --dump-frames` at 4x speed. The art shown comes from
-a legitimately owned copy imported with `scripts/import-original.sh`;
-the repository ships only procedural placeholders.
+The splash, loading screen and main menu are rebuilt 1:1 from the decompiled original (timings in
+`docs/reverse-engineering/welcome-flow.md`), recorded with `tt2 --dump-frames` at 4x speed. The art
+in the GIF comes from a legitimately owned copy imported with `scripts/import-original.sh`; the
+repository itself ships only procedural placeholders.
+
+## Tech stack
+
+- **Language:** C++17 (GCC 9+, Clang 10+ or MSVC 19.20+).
+- **Build:** CMake 3.16+.
+- **Engine:** header-only, standard library only. No third-party code.
+- **Desktop UI:** SDL2 (2.0.10+), SDL2_image and SDL2_mixer. When they are missing, CMake skips the
+  UI and still builds the engine, the tools and the tests (`-DTT2_BUILD_UI=OFF` skips it on
+  purpose).
+- **Reverse engineering:** [REA](https://github.com/morluto/rea) and Ghidra, against a locally
+  owned install. Nothing from that install is committed.
 
 ## Quick start
 
 ```bash
+# Debian / Ubuntu: the UI dependencies (skip for an engine-only build)
+sudo apt install libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev
+
 cmake -S . -B build
 cmake --build build -j
-ctest --test-dir build --output-on-failure
-./build/tt2_engine data/open-common.tree data/open-full.tree
+ctest --test-dir build --output-on-failure    # engine + headless UI tests
+
+./build/tt2                                    # play
 ```
 
-## What's in the box
+Optional, and only with a copy you legally own: import the original art, fonts and sounds so the
+game looks like the 2008 release. Without this step the game boots with placeholders.
 
-- **`engine/`** — header-only C++17 engine. The LCG, the `.tree` format,
-  the bag, the board, the scoring, the per-mode round state. Same logic
-  as the original binary (see `docs/reverse-engineering/`), no
-  GameHouse-specific types.
-- **`src/main.cpp`** — small driver that exercises the engine.
-- **`tools/tree_cli.cpp`** — `decode`, `encode`, `merge`, `diff`,
-  `verify` for the `.tree` dictionary format.
-- **`data/`** — runtime dictionaries. `open-common.tree` (22 460
-  words) and `open-full.tree` (173 528 words) are committed.
-- **`data-src/`** — raw word lists (ENABLE2k, frequency lists) for
-  rebuilding the open dictionaries.
-- **`docs/reverse-engineering/`** — the binary fingerprint, gameplay
-  notes, and the `.tree` format spec; the evidence behind the
-  reconstruction.
-- **`CMakeLists.txt`** — the build.
+```bash
+./scripts/import-original.sh "/path/to/Text Twist 2"
+```
 
-## Goals
+### Other binaries
 
-- **Update the dictionary.** 2008 → 2026, with the public-domain
-  ENABLE2k list as the new common source. No engine change required to
-  swap dictionaries.
-- **Run on Linux, macOS, Windows.** Header-only engine, no Win32 / no
-  GameHouse GF2 / no C++Builder. The CLI driver runs everywhere.
-- **Faithful to the original rules.** Scoring, the bag, the
-  48-slot cap with per-length quota, the Java LCG, the WOTD day
-  index — all bit-exact matches to the original binary's behaviour.
+```bash
+./build/tt2_engine data/open-common.tree data/open-full.tree   # engine smoke test
+./build/tt2-tree verify data/open-full.tree                    # dictionary tool
+```
 
-## What this isn't (yet)
+`tt2-tree` handles the `.tree` format: `decode`, `encode`, `merge`, `diff` and `verify`.
 
-- It is not a UI. The original uses GameHouse's GF2 engine + Borland
-  VCL + a custom bitmap-font renderer; the next milestone is a native
-  UI layer (SDL2 + SDL2_ttf + SDL2_mixer) on top of the existing
-  engine.
-- It is not a complete port. The Crossword scene (`CrisscrossScene`),
-  the trophy _conditions_ and the settings dialogs are not in this drop.
-  The dictionary file, the LCG, the bag and the per-mode scoring are the
-  parts that change with the dictionary; the rest is a thin VCL window
-  wrapper.
+### Useful `tt2` flags
 
-## Layout
+| Flag | What it does |
+| --- | --- |
+| `--save-dir DIR` | Keep profiles and saves in `DIR` instead of the per-user data directory |
+| `--assets DIR` | Read the art from `DIR` instead of `imported-assets/` |
+| `--player NAME` | Add `NAME` if new and make it the current player |
+| `--play untimed\|timed` | Start a game as soon as the menu is up |
+| `--speed N` | Run the clock `N` times faster |
+| `--exit-after MS` | Quit after `MS` simulated milliseconds |
+| `--dump-frames DIR` | Write `frame_NNNN.bmp` at `--fps N` (headless with `SDL_VIDEODRIVER=dummy`) |
+
+## Where things live
 
 ```text
 .
-├── CMakeLists.txt
-├── README.md
-├── CLAUDE.md
 ├── engine/
-│   ├── include/tt2/        # header-only engine
-│   └── tests/              # C++ unit tests (no external deps)
-├── src/
-│   └── main.cpp            # driver / smoke test
-├── tools/
-│   └── tree_cli.cpp        # dictionary CLI
-├── data/                   # runtime .tree dictionaries
-├── data-src/               # raw word lists
-├── docs/
-│   ├── reverse-engineering/  # binary fingerprint, gameplay notes
-│   ├── design/             # original-look brief (kept for the future UI)
-│   └── dictionary-sources.md
-└── Text Twist 2.exe -> /home/deck/.temp/Text Twist 2.exe   (gitignored)
+│   ├── include/tt2/          # header-only engine: RNG, .tree codec, bag, board, scoring,
+│   │                         #   Classic / Lightning / Crossword rounds, profiles, settings,
+│   │                         #   the resumable saved game
+│   └── tests/                # engine unit tests (in-tree harness)
+├── ui/
+│   ├── include/tt2ui/        # headless scene model: sprites, modifiers, welcome flow,
+│   │                         #   bitmap fonts, profile dialogs, game scene and its dialogs,
+│   │                         #   HOW TO PLAY, SETTINGS
+│   ├── src/main.cpp          # the SDL2 front end (the only file that touches SDL)
+│   └── tests/                # headless UI tests
+├── src/main.cpp              # engine driver / smoke test
+├── tools/tree_cli.cpp        # tt2-tree dictionary tool
+├── data/                     # runtime dictionaries (open-*.tree committed)
+├── data-src/                 # raw word lists for rebuilding the open dictionaries
+├── scripts/import-original.sh
+└── docs/
+    ├── reverse-engineering/  # evidence from the original: format specs, scene layouts, timings
+    ├── design/               # original-look brief
+    ├── media/                # README media
+    └── dictionary-sources.md
 ```
+
+### How the parts connect
+
+1. **`engine/`** holds the rules. It knows nothing about the screen, so every rule is unit-tested
+   without a window.
+2. **`ui/include/tt2ui/`** is the scene model: where each sprite sits, how it animates, and what a
+   click or keypress does. It is also SDL-free, which is why the UI tests run headless.
+3. **`ui/src/main.cpp`** is a thin SDL2 layer. It loads images, sounds and fonts, feeds input and
+   time into the scene model, and draws whatever sprites the model reports.
+4. **`docs/reverse-engineering/`** is the source of truth for every constant. Each behaviour cites
+   the address in the original exe it was read from, or is marked as observed or unconfirmed.
+
+## Status
+
+| Area | State |
+| --- | --- |
+| Dictionary | Open `.tree` files committed. The codec round-trips both the original and the open files byte-for-byte and matches the Python reference decoder. The game prefers your own `data/common.tree` / `data/full.tree` (gitignored) and falls back to the open lists. |
+| Engine | Classic (Timed, Untimed, Word of the Day), Lightning and Crossword rounds, profiles, high scores, settings and the Untimed saved game. All unit-tested. |
+| Boot flow | Splash → loading → main menu with the original timings and fades. |
+| Profiles | Welcome label, name input, player select and remove confirmation, saved to the per-user data directory. |
+| **Untimed / Timed** | **Playable.** Word grid, pearl letter balls, twist / clear / last word / enter, the 2:00 clock, the in-game popups, pause menu, Exit / Give Up confirmations, round-end reveal, GAME OVER and new high score, resume on the next launch, HOW TO PLAY and SETTINGS. |
+| Lightning, Crossword, Word of the Day | Engine done; the menu entries are still stubs. |
+| Trophies | Slots saved; unlock conditions not reconstructed yet. |
+
+Current work is the animation polish for Untimed (easing, fades, letter flips). The bigger picture
+is in [`ROADMAP.md`](ROADMAP.md).
 
 ## License
 
 - **Code** (engine, UI, tools, scripts, docs): [MIT](LICENSE).
-- **Dictionaries** (`data/open-*.tree`): `open-full.tree` is public domain
-  and `open-common.tree` is CC BY-SA 4.0. See
-  [`data/LICENSE.md`](data/LICENSE.md) for attribution.
+- **Dictionaries** (`data/open-*.tree`): `open-full.tree` is public domain and `open-common.tree`
+  is CC BY-SA 4.0. See [`data/LICENSE.md`](data/LICENSE.md) for attribution.
 
 ## Legal
 
-This is an independent fan project. It is not affiliated with, endorsed
-by, or sponsored by GameHouse. "Text Twist" is a trademark of its
-respective owner, and the licenses above grant no rights to it.
+This is an independent fan project. It is not affiliated with, endorsed by, or sponsored by
+GameHouse. "Text Twist" is a trademark of its respective owner, and the licenses above grant no
+rights to it.
 
-Look and feel may imitate the original; assets may not. The shipped
-dictionaries are public-domain or CC BY-SA 4.0. The original GameHouse
-`.tree` files and the executable are not committed. The DRM components
-(`texttwist2_RADRM.dll`, trial code, `.nfo` files) are not analyzed.
-
-## Status
-
-- Engine: complete for Classic (Timed/Untimed/WOTD) and Lightning
-  scoring; rack pick, board, slot cap, guess check, scoring — all
-  unit-tested.
-- Dictionary: open `.tree` files committed and verified round-trip
-  byte-identical against the build pipeline, and the C++ codec checked
-  word-for-word against the Python reference decoder on both the
-  original and the open files. The game prefers `data/common.tree` /
-  `data/full.tree` (your own copies, gitignored) and falls back to the
-  open lists.
-- UI: SDL2 front end boots splash → loading → main menu with the
-  original timings (`ui/`), renders the GF2 bitmap fonts, shows the
-  "Welcome / Welcome back NAME" label and runs the name-input and
-  player-select dialogs (add, pick, remove with confirmation) over the
-  saved profiles. **Untimed and Timed are playable**: word grid, letter
-  rows, twist / clear / last word / enter, the 2:00 clock, bingo and
-  all-words popups, three misses to game over, high scores saved
-  (`docs/reverse-engineering/game-scene.md`). Lightning, Crossword and
-  Word of the Day are still menu stubs.
-- Crossword: grid, placement loop and scoring in
-  `round_crossword.hpp`, reconstructed from confirmed decompilation.
-- Profiles: player list (5 max, 15-char names, exact-duplicate check),
-  per-player progression (bag seed/index, WOTD day, max length, 24
-  trophy slots, counters) and the five high-score tables with the
-  original insert/trim and default-fill rules, in `profile.hpp`;
-  plain-text save files in `profile_store.hpp`, stored under the
-  platform's per-user data directory (`%APPDATA%`, `~/Library/Application
-  Support`, `$XDG_DATA_HOME`). Spec: `docs/reverse-engineering/profiles.md`.
-  Importing the original game's save files is still to do.
+The look and feel may imitate the original; the assets may not. The original `.tree` files, the
+executable, and its images, fonts and sounds are never committed. The importer copies them only on
+your own machine, from your own install, and whether your license allows that is your
+responsibility. The DRM components (`texttwist2_RADRM.dll`, the trial code, the `.nfo` files) are
+not analyzed.
