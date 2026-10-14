@@ -251,6 +251,7 @@ sprites in `dialogs.xml` stay at `alpha="0"`: the exe has no `COMMENTS`, `COMMEN
 `ev_7deed8d25288c6415fd9568bd9abbf9dba4de2b65e19d98d452a12dc2f8155cf`; bounded to Ghidra's
 defined strings). They are leftovers from the first game (`docs/design/original-look-brief.md`
 §7), and the port draws neither.
+
 - End of round: `0x428840` (all words) / `0x425420` (time up without a bingo): the missing
   words are revealed (`SOUND_word_pass_reveal`, `ModifierDelay(3000)`); a miss increments
   `+0x1e8` and plays `SOUND_game_lose_life`; the **third** miss marks the game over
@@ -297,8 +298,22 @@ defined strings). They are leftovers from the first game (`docs/design/original-
   `ev_145f168ef700c17cdca70da2f3fd7f8f846a5d95bb583403c0af92197781be55`,
   `ev_2d7452782ce28eaa417c1f96e2e9313a8beeb47f5695f60eeb2ebc9b140df993`,
   `ev_faa42e184823a6f1cb814bcda1ce22fb7171ed5f5d9f154bb2232d012abcaa66`.
-- After the reveal (CONFIRMED): qualified → `DIALOG_NEXTROUND`; a miss with lives left →
-  the next round starts by itself (`0x425190`); game over → `0x427d10` submits the score
+- Round Passed OK (CONFIRMED, REA batch F). The `DialogPassRound` ctor (`0x409c3a`) wires
+  `BUTTON_OK` to `0x409d10`, which calls its owner's vtable slot `+0xd8` and then hides the
+  dialog (`0x40ce80`). On `GameScene` (vtable `0x590894`) that slot is `0x428aa0`: it hides
+  `DIALOG_NEXTROUND` if present, clears the game-over flag `+0x260`, refreshes the buttons
+  (`0x425710`) and starts the next round (`0x425190`). State 6 opens the dialog through the
+  shared tail `0x426917` and plays no sound. `0x425420` itself: misses `< 3` → reveal,
+  3000 ms `ModifierDelay`, then `0x428a80` when called with 1, else `0x425190`; the third
+  miss is game over either way (`0x428c80(…, 1)`).
+  Evidence: `ev_dd6fcc5bbf07f471abb5218f8c147769ea8ef09ded367d9ebcf518d79e4af5b5`,
+  `ev_6473a7a56b0a87a6bf9d732fd0a324322b9fbb31bee5d40b02eab9ab9bb98a23`,
+  `ev_815617902c71054da54351ed56ef50d162a05796a71500f528f900d8ce2238ab`,
+  `ev_2ab2e50901303d81dbf09d837cba05df2a1c2f3cabfbffc6968e974ea3e55d41`.
+  Port: `GameDialog::PassRound`, `build_pass_round()`; Return presses OK, Esc does nothing.
+- After the reveal (CONFIRMED): qualified → `DIALOG_NEXTROUND`; a Timed time-up miss with
+  lives left → `DIALOG_PASSROUND`; a Pass with lives left → the next round starts by itself
+  (`0x425190`); game over → `0x427d10` submits the score
   and opens `DIALOG_CONGRATS` when it ranks, else `DIALOG_ENDGAME`. Game over deletes the
   saved game (`0x427cc0`).
 - NEXT ROUND (CONFIRMED, `0x425b60`) calls `0x428840(3000)`, which ends the round early.

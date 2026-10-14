@@ -35,11 +35,15 @@ inline constexpr const char* NEXT_ROUND_BODY = "Click to continue\nto the next r
 inline constexpr const char* GAME_OVER_HEADER = "GAME OVER";
 inline constexpr const char* ENDGAME_BODY = "Sorry, you didn't qualify\nfor the next round.";   // TEXT_ENDGAME_BODY
 inline constexpr const char* CONGRATS_BODY = "Congratulations!\nYou earned a\nnew high score!";  // TEXT_CONGRATS_BODY
+inline constexpr const char* PASS_ROUND_TITLE = "Round Passed";              // TEXT_PASS_ROUND_TITLE
+inline constexpr const char* PASS_ROUND_BODY =
+    "One of your passes will\nbe used to progress to\nthe next round.";      // TEXT_PASS_ROUND_BODY
 }  // namespace game_strings
 
 // Kinds used by the game scene (the profile kinds stay in DialogKind).
 enum class GameDialog {
-    None, PauseMenu, ConfirmExit, ConfirmPass, ConfirmGiveUp, HowToPlay, Settings, NextRound, EndGame, Congrats
+    None, PauseMenu, ConfirmExit, ConfirmPass, ConfirmGiveUp, HowToPlay, Settings, NextRound, EndGame, Congrats,
+    PassRound
 };
 
 inline int text_line_count(const std::string& s) {
@@ -145,6 +149,24 @@ inline Dialog build_end_game() {
     d.labels.push_back(body);
     d.buttons.push_back(make_dialog_button("BUTTON_REPLAY", "BUTTON_END_PLAYAGAIN", 271, 173, Anchor::Top, 157, 208));
     d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_END_MENU", 109, 173, Anchor::Top, 157, 208));
+    return d;
+}
+
+// DIALOG_PASSROUND 380x280: a Timed round ran out unqualified with passes
+// left (0x425420(1) -> 0x428a80 -> state 6).
+inline Dialog build_pass_round() {
+    Dialog d;
+    d.w = 380;
+    d.h = 280;
+    TextLabel header{"HEADER", "FONT_DIALOG_HEADERS2", game_strings::PASS_ROUND_TITLE, 191, 16, TextAlign::Center,
+                     Anchor::Top, 0};
+    header.line_height = 36;
+    d.labels.push_back(header);
+    TextLabel body{"BODY_TEXT", "FONT_NEXTROUND02", game_strings::PASS_ROUND_BODY, 192, 85, TextAlign::Center,
+                   Anchor::Top, 2};
+    body.line_height = 36;
+    d.labels.push_back(body);
+    d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", 189, 199, Anchor::Top));
     return d;
 }
 

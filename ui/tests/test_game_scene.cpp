@@ -988,12 +988,57 @@ TEST(timed_clock_counts_down_with_warning_and_time_up) {
     ASSERT_EQ(s.misses(), 1);
     ASSERT_TRUE(s.phase() == GamePhase::Reveal);
     s.update(REVEAL_MS + 20);
-    // First miss: 0x425190 starts the next round by itself, no dialog.
+    // First miss: 0x425420(1) -> 0x428a80 opens DIALOG_PASSROUND.
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PassRound);
+    s.key_return();                                          // OK -> 0x428aa0 -> 0x425190
     ASSERT_TRUE(s.phase() == GamePhase::Playing);
     ASSERT_TRUE(!s.dialog_open());
     ASSERT_EQ(s.round_number(), 2);
     ASSERT_EQ(s.time_left_ms(), ROUND_MS);
     ASSERT_EQ(f.discards, 0);
+}
+
+TEST(timed_time_up_miss_asks_round_passed_before_the_next_round) {
+    Fixture f(true);
+    auto& s = *f.scene;
+    s.update(ROUND_MS + 10);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_TRUE(!s.dialog_open());                           // the reveal runs first
+    s.update(REVEAL_MS - 100);
+    ASSERT_TRUE(!s.dialog_open());
+    f.sounds.clear();
+    s.update(200);                                           // 3000 ms after the miss
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PassRound);
+    ASSERT_TRUE(s.phase() == GamePhase::AwaitNext);
+    ASSERT_TRUE(!f.played(SoundId::NextRoundAchieved));      // state 6 plays nothing
+    ASSERT_EQ(s.round_number(), 1);
+    ASSERT_EQ(s.misses(), 1);
+    ASSERT_TRUE(!s.button("BUTTON_NextRound")->sprite.visible);   // the round did not qualify
+    const Dialog& d = s.dialog();
+    ASSERT_EQ(d.w, 380);
+    ASSERT_EQ(d.h, 280);
+    ASSERT_EQ(d.label("HEADER")->text, std::string(game_strings::PASS_ROUND_TITLE));
+    ASSERT_EQ(d.label("BODY_TEXT")->text, std::string(game_strings::PASS_ROUND_BODY));
+    ASSERT_TRUE(d.button("BUTTON_OK") != nullptr);
+    s.update(60000);                                         // the dialog waits; no clock
+    ASSERT_EQ(s.round_number(), 1);
+    s.key_escape();                                          // needs OK, Esc does nothing
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PassRound);
+    s.key_return();
+    ASSERT_TRUE(!s.dialog_open());
+    ASSERT_EQ(s.round_number(), 2);
+    ASSERT_TRUE(s.phase() == GamePhase::Playing);
+}
+
+TEST(untimed_pass_never_shows_round_passed) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    s.press("BUTTON_Pass_2");
+    s.key_return();                                          // PASS? YES
+    s.update(REVEAL_MS + 20);
+    ASSERT_EQ(s.misses(), 1);
+    ASSERT_TRUE(!s.dialog_open());                           // 0x425420(0): straight on
+    ASSERT_EQ(s.round_number(), 2);
 }
 
 TEST(timed_round_with_bingo_advances_on_time_up) {
@@ -1019,6 +1064,10 @@ TEST(three_misses_end_the_game_with_high_score) {
     for (int i = 0; i < 3; ++i) {                          // then 3 misses
         s.update(ROUND_MS + 10);
         s.update(REVEAL_MS + 20);
+        if (i < 2) {                                       // misses 1 and 2: Round Passed
+            ASSERT_TRUE(s.dialog_kind() == GameDialog::PassRound);
+            s.key_return();
+        }
     }
     ASSERT_EQ(s.misses(), 3);
     ASSERT_EQ(s.round_number(), 4);

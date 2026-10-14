@@ -791,6 +791,7 @@ public:
                 if (name == "BUTTON_YES") pass_round();
                 break;
             case GameDialog::NextRound:
+            case GameDialog::PassRound:   // OK 0x409d10 -> GameScene 0x428aa0 -> 0x425190
                 close_dialog();
                 next_round();
                 break;
@@ -1034,13 +1035,15 @@ private:
     // Round over. Every path reveals the missing words
     // (SOUND_word_pass_reveal) and waits 3000 ms, then:
     //   qualified (0x428840)      -> DIALOG_NEXTROUND, OK starts the next round
-    //   missed, lives left (0x425420 -> 0x425190) -> the next round starts by itself
+    //   passed, lives left (0x425420(0) -> 0x425190) -> the next round starts by itself
+    //   time up unqualified, lives left (0x425420(1) -> 0x428a80, state 6)
+    //                             -> DIALOG_PASSROUND, OK starts the next round
     //   third miss / give up (0x425420 else, 0x428c80 -> 0x427d10)
     //                             -> high score, DIALOG_CONGRATS or DIALOG_ENDGAME
     void end_round(RoundEnd why) {
         round_end_ = why;
         return_all_letters();
-        enum class After { NextDialog, AutoNext, GameOver } after = After::NextDialog;
+        enum class After { NextDialog, PassDialog, AutoNext, GameOver } after = After::NextDialog;
         switch (why) {
             case RoundEnd::AllWords:
             case RoundEnd::TimeUpQualified:
@@ -1051,7 +1054,8 @@ private:
             case RoundEnd::Passed:
                 misses_ += 1;
                 play(SoundId::LoseLife);
-                after = misses_ >= LIVES ? After::GameOver : After::AutoNext;
+                if (misses_ >= LIVES) after = After::GameOver;
+                else after = why == RoundEnd::TimeUpMissed ? After::PassDialog : After::AutoNext;
                 break;
             case RoundEnd::None: break;
         }
@@ -1073,6 +1077,10 @@ private:
                     phase_ = GamePhase::AwaitNext;
                     play(SoundId::NextRoundAchieved);   // 0x426860 case 3
                     open_dialog(GameDialog::NextRound);
+                    break;
+                case After::PassDialog:
+                    phase_ = GamePhase::AwaitNext;   // 0x426860 case 6: no sound
+                    open_dialog(GameDialog::PassRound);
                     break;
                 case After::AutoNext: start_round(round_number_ + 1); break;
                 case After::GameOver: finish_game(); break;
@@ -1145,6 +1153,7 @@ private:
                 break;
             case GameDialog::EndGame: dialog_ = build_end_game(); break;
             case GameDialog::Congrats: dialog_ = build_congrats(); break;
+            case GameDialog::PassRound: dialog_ = build_pass_round(); break;
             case GameDialog::None: dialog_ = Dialog{}; break;
         }
         for (auto& b : buttons_) b.hover = b.pressed = false;
@@ -1324,7 +1333,9 @@ private:
         const std::size_t available = balls_.size() - played;
         for (auto& b : buttons_) {
             const std::string& n = b.sprite.name;
-            if (n == "BUTTON_NextRound") { b.sprite.visible = (playing && q) || phase_ == GamePhase::AwaitNext; b.enabled = b.sprite.visible; }
+            // 0x425710: NEXT ROUND only for a qualified round, so not behind
+            // DIALOG_PASSROUND (AwaitNext after a time-up miss).
+            if (n == "BUTTON_NextRound") { b.sprite.visible = (playing || phase_ == GamePhase::AwaitNext) && q; b.enabled = b.sprite.visible; }
             else if (n == "BUTTON_Pass_2") { b.sprite.visible = playing && !q && misses_ == 0; b.enabled = b.sprite.visible; }
             else if (n == "BUTTON_Pass") { b.sprite.visible = playing && !q && misses_ == 1; b.enabled = b.sprite.visible; }
             else if (n == "BUTTON_GiveUp") { b.sprite.visible = playing && !q && misses_ >= 2; b.enabled = b.sprite.visible; }
