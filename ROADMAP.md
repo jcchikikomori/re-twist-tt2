@@ -24,6 +24,7 @@ This document describes the current status and the upcoming milestones of this p
 8. Clickable links on the succeeded words (redirects to the definition of the word from the dictionary online)
 9. Pause menu & confirmation screen when exiting the game
 10. "How to Play" screen
+11. Achivement system (unlocked achievements should appear in the middle of the game)
 
 ## Identified bugs
 
