@@ -158,7 +158,8 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   link is exactly the word's 20×20 tiles (`ev_1ad1091b984c1710a0261de8a812dcfec1fcc42275c16d332e45481f3cbfb93d`).
   Port: `GameScene::shown_slot_at()` and `Services::open_url` (`SDL_OpenURL`; a headless run
   only logs the URL). The port acts on mouse release, like its balls; the original acts on
-  press.
+  press. Deliberate deviation: the old `dictionary.reference.com` address only redirects
+  now, so the port opens `https://www.dictionary.com/browse/<word>` directly.
 - Score label (CONFIRMED, `0x424730`): after a correct word the score `+0x308` goes through
   `0x449c90` (`sprintf("%d")`) straight into `LABEL_Score` (`+0x23c`, cached by `0x423a20`)
   via its set-text slot `+0xc4`. There is **no count-up**: the label jumps to the new total

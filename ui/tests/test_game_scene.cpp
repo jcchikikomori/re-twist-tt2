@@ -1206,7 +1206,8 @@ TEST(pointer_hot_over_letter_balls_without_changing_them) {
 }
 
 // 0x433500: a shown word under the pointer gets the hand cursor, and a
-// click opens http://dictionary.reference.com/browse/<word> (0x58feec).
+// click opens its dictionary.com page (the original's 0x58feec
+// dictionary.reference.com link, updated).
 static const SlotView* slot_with(const GameScene& s, bool (*pick)(const SlotView&)) {
     for (const auto& v : s.slots()) if (pick(v)) return &v;
     return nullptr;
@@ -1227,7 +1228,7 @@ TEST(clicking_a_found_word_opens_its_definition) {
     f.sounds.clear();
     s.mouse_up(lx, ly);
     ASSERT_EQ(f.urls.size(), std::size_t{1});
-    ASSERT_EQ(f.urls[0], std::string("http://dictionary.reference.com/browse/car"));
+    ASSERT_EQ(f.urls[0], std::string("https://www.dictionary.com/browse/car"));
     ASSERT_TRUE(s.typed().empty());                        // no ball moved
     ASSERT_TRUE(f.sounds.empty());                         // and no sound
 }

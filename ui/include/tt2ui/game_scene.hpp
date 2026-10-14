@@ -423,9 +423,12 @@ enum class GamePhase {
 // Passed: PASS or GIVE UP answered YES (0x4253a0 -> 0x425420(0)).
 enum class RoundEnd { None, AllWords, TimeUpQualified, TimeUpMissed, NextRound, Passed };
 
-// 0x433500: a clicked word goes to this page (string at 0x58feec) with the
-// word appended as is; the slot words are already lowercase a-z.
-inline constexpr const char* DEFINITION_URL_PREFIX = "http://dictionary.reference.com/browse/";
+// 0x433500: a clicked word goes to a dictionary page with the word
+// appended as is; the slot words are already lowercase a-z. Deliberate
+// deviation: the original's http://dictionary.reference.com/browse/
+// (0x58feec) now only redirects, so the port goes straight to the
+// HTTPS dictionary.com page it lands on.
+inline constexpr const char* DEFINITION_URL_PREFIX = "https://www.dictionary.com/browse/";
 inline std::string definition_url(const std::string& word) { return DEFINITION_URL_PREFIX + word; }
 
 struct SlotView {
