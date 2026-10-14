@@ -120,6 +120,7 @@ const std::map<std::string, std::string> kImageFiles = {
     {"SMALL_LETTERS", "images/gamescene/anagram_text.png"},
     {"SMALL_LETTERS_UNGUESSED", "images/gamescene/anagram_letters_revealed.png"},
     {"IMAGE_LETTERBALL_ANIM", "images/gamescene/letterball_anim.png"},
+    {"LetterBox", "images/gamescene/letterBox.png"},
     {"IMAGE_PANEL_BG", "images/gamescene/panel_bg.png"},
     {"IMAGE_PANEL_BOTTOM", "images/gamescene/panel_bottom.png"},
     {"IMAGE_PANEL_CORNERL", "images/gamescene/panel_cornerL.png"},
@@ -262,6 +263,29 @@ void paint_pearl(SDL_Surface* s, SDL_Rect cell, int f) {
     }
 }
 
+// Procedural LetterBox (placeholder build): frame 0 a royal-blue square
+// with a darker round socket, frame 1 a small gold dot. New geometry in
+// the original's colours.
+void paint_letter_box(SDL_Surface* s, SDL_Rect cell, int f) {
+    const float cx = cell.x + cell.w * 0.5f, cy = cell.y + cell.h * 0.5f;
+    Uint32* px = static_cast<Uint32*>(s->pixels);
+    const int pitch = s->pitch / 4;
+    for (int y = cell.y; y < cell.y + cell.h; ++y)
+        for (int x = cell.x; x < cell.x + cell.w; ++x) {
+            const float d = std::hypot(x + 0.5f - cx, y + 0.5f - cy);
+            Uint32 c = SDL_MapRGBA(s->format, 0, 0, 0, 0);
+            if (f == 1) {
+                if (d <= 14.0f) c = SDL_MapRGBA(s->format, 0xf7, 0xb8, 0x10, 255);
+            } else {
+                const bool rim = x - cell.x < 2 || y - cell.y < 2 || cell.x + cell.w - x <= 2 || cell.y + cell.h - y <= 2;
+                if (rim) c = SDL_MapRGBA(s->format, 0x7f, 0x9a, 0xdc, 255);
+                else if (d <= 29.0f) c = SDL_MapRGBA(s->format, 0x0c, 0x2c, 0x8c, 255);
+                else c = SDL_MapRGBA(s->format, 0x15, 0x54, 0xdc, 255);
+            }
+            px[y * pitch + x] = c;
+        }
+}
+
 // Procedural IMAGE_BURST: a soft white glow that pulses over the 20
 // frames (the sprite's colour mod turns it orange).
 void paint_burst(SDL_Surface* s, SDL_Rect cell, int f) {
@@ -305,11 +329,12 @@ SDL_Surface* make_placeholder(const SheetSpec& spec) {
     else if (spec.image_id == "COMMENTS" || spec.image_id == "GAME_OVER" ||
              spec.image_id.rfind("IMAGE_POPUP", 0) == 0) { r = 0x16; g = 0x9c; b = 0xd8; }
 
-    if (spec.image_id == "IMAGE_LETTERBALL_ANIM" || spec.image_id == "IMAGE_BURST") {
+    if (spec.image_id == "IMAGE_LETTERBALL_ANIM" || spec.image_id == "IMAGE_BURST" || spec.image_id == "LetterBox") {
         SDL_FillRect(s, nullptr, SDL_MapRGBA(s->format, 0, 0, 0, 0));
         for (int f = 0; f < spec.frames; ++f) {
             SDL_Rect cell{spec.frame_x(f), spec.frame_y(f), spec.frame_w, spec.frame_h};
             if (spec.image_id == "IMAGE_BURST") paint_burst(s, cell, f);
+            else if (spec.image_id == "LetterBox") paint_letter_box(s, cell, f);
             else paint_pearl(s, cell, f % BALL_FRAMES_PER_LETTER);
         }
         return s;
@@ -854,6 +879,7 @@ void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
         }
     }
 
+    for (const auto& box : g.letter_boxes()) draw_sprite(ren, assets, box);   // under the balls (0x43ab90)
     for (const auto& b : g.balls()) draw_letter_ball(ren, assets, b, 0, 0);
 
     // UI bar and its labels (dialogs.xml SCENE_GAME, y = 574).

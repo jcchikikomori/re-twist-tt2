@@ -151,6 +151,36 @@ TEST(row_geometry_is_centred_on_400) {
     ASSERT_TRUE(ball_center_x(6, 5) == 193.0f + 5 * 69.0f + 34.5f);
 }
 
+// LetterBox (0x43ab90): one 69x69 cell per letter in each row; the
+// played row shows the blue socket, the available row the gold dot.
+TEST(letter_boxes_sit_under_every_cell_of_both_rows) {
+    const auto boxes = letter_boxes(6);
+    ASSERT_EQ(boxes.size(), std::size_t{12});
+    for (int i = 0; i < 6; ++i) {
+        const SpriteState& played = boxes[static_cast<std::size_t>(i)];
+        const SpriteState& avail = boxes[static_cast<std::size_t>(6 + i)];
+        ASSERT_TRUE(played.x == ball_center_x(6, i));
+        ASSERT_TRUE(avail.x == ball_center_x(6, i));
+        ASSERT_TRUE(played.y == PLAYED_ROW_Y + BALL_HALF);
+        ASSERT_TRUE(avail.y == AVAILABLE_ROW_Y + BALL_HALF);
+        ASSERT_EQ(played.frame, LETTERBOX_PLAYED_FRAME);
+        ASSERT_EQ(avail.frame, LETTERBOX_AVAILABLE_FRAME);
+        ASSERT_TRUE(played.anchor == Anchor::Center);
+    }
+    // Worked example, 6 letters: the row starts at 400 - 6*69/2 = 193, so
+    // the first box spans x 193..262 and y 213..282.
+    ASSERT_TRUE(boxes[0].left() == 193.0f);
+    ASSERT_TRUE(boxes[0].top() == PLAYED_ROW_Y);
+    ASSERT_EQ(boxes[0].sheet.frame_w, LETTERBOX_SIZE);
+    ASSERT_EQ(boxes[0].sheet.frame_h, LETTERBOX_SIZE);
+    ASSERT_EQ(boxes[0].sheet.image_id, std::string("LetterBox"));
+}
+
+TEST(letter_boxes_are_empty_without_letters) {
+    ASSERT_TRUE(letter_boxes(0).empty());
+    ASSERT_TRUE(letter_boxes(-3).empty());
+}
+
 // ---- round start -------------------------------------------------------
 
 static std::string ball_order(const GameScene& s) {
@@ -230,6 +260,24 @@ TEST(buttons_follow_the_layout_and_qualified_flag) {
 }
 
 // ---- letters -------------------------------------------------------------
+
+// The boxes belong to the rows, not the balls: playing a letter leaves
+// every box where it was.
+TEST(scene_letter_boxes_follow_the_rack_not_the_balls) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    const auto before = s.letter_boxes();
+    ASSERT_EQ(before.size(), 2 * s.balls().size());
+    s.type_letter(s.rack()[0]);
+    s.update(1000);
+    const auto after = s.letter_boxes();
+    ASSERT_EQ(after.size(), before.size());
+    for (std::size_t i = 0; i < after.size(); ++i) {
+        ASSERT_TRUE(after[i].x == before[i].x);
+        ASSERT_TRUE(after[i].y == before[i].y);
+        ASSERT_EQ(after[i].frame, before[i].frame);
+    }
+}
 
 TEST(typing_moves_balls_to_played_row_and_back) {
     Fixture f(false);

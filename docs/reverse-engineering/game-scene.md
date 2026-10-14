@@ -70,6 +70,20 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
 - `0x4396e0`: two containers; the **available** row at `y = 295` (`0x43938000`) and the
   **played** row at `y = 213` (`0x43550000`); both at `x = 400 - n * 69 / 2` for a rack of
   `n` letters. Every ball starts in the available row.
+- `0x43ab90` (container ctor, vtable `LetterBox`): for each of the `n` cells it adds a
+  `LetterBox` sprite (`letterBox.png` 69×138, `separateframes`, two 69×69 frames stacked),
+  centred at `(i * 69 + 34.5, 34.5)`, then calls the frame setter (`+0x90`) with the ctor's
+  last argument, which is also stored at `+0x1fc`. `0x4396e0` passes `0` for the played row
+  and `1` for the available row. So the played row shows **frame 0, the blue socket**, and
+  the available row shows **frame 1, a small gold dot** that only shows once its ball has
+  left. The ctor adds the box sprites as children before any ball, so the balls draw on top
+  (CONFIRMED, `ev_e11281bbae6a2b25910dd49db8eac3c1aa06a218e26450545d930b77278ce6f0`,
+  `ev_1d91c94d9aa7fe85e2dfc5bb04c4d07a2a1d0ceec059ce96e912902af7609a98`,
+  `ev_44cb03845ebe64efc330368a5848148a7b2810fc4eeb8f8f76df83569b8d5538`). The same setter
+  takes `n + 3` on the 12-frame `IMAGE_CROSSWORDHIGHLIGHT`, which is why `+0x90` reads as
+  "set frame". Crossword rows use `XwordBox` instead, and the ctor also builds hidden
+  `IMAGE_BLITZDOT`, `IMAGE_XWORD_OVERLAY` and `IMAGE_HINT_LETTERS` sprites for the other
+  modes. `letterBox_shadow.png` has no `resources.xml` entry, so the game never loads it.
 - `0x43bad0` / `0x43c370`: inside a container a ball sits at `(i * 69 + 34.5, 34.5)`; with
   index `-1` a ball goes to the **first empty cell** of the row.
 - `0x439d00` (`LetterBall`): sprite `IMAGE_LETTERBALL_ANIM` (`letterball_anim.png`
@@ -269,6 +283,7 @@ All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
 | `0x431e50` | `AnagramTable` layout (columns / rows) |
 | `0x430800` | One word of the grid (tiles + small letters) |
 | `0x4396e0` | `AnagramTable` ctor: grid position, two `LetterballContainer`s, balls |
+| `0x43ab90` | `LetterBox` ctor (the letter row container): cell sprites, frame by row |
 | `0x439d00` | `LetterBall` ctor: `IMAGE_LETTERBALL_ANIM` frame = letter × 17 |
 | `0x43bad0` | Put a ball into a container cell (first free cell for index −1) |
 | `0x43c370` / `0x43c940` | Container relayout / reveal animation |

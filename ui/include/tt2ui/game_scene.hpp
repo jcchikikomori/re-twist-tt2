@@ -130,6 +130,35 @@ constexpr int BALL_RELAYOUT_MS = 400;        // 0x43a4c0 (no container): 0x190, 
 inline float row_left(int n) { return 400.0f - static_cast<float>(n) * BALL_PITCH * 0.5f; }
 inline float ball_center_x(int n, int slot) { return row_left(n) + static_cast<float>(slot) * BALL_PITCH + BALL_HALF; }
 
+// The cell art under each ball. Both rows are LetterBox containers
+// (0x43ab90, vtable LetterBox): for every cell the ctor adds a "LetterBox"
+// sprite (letterBox.png 69x138, two 69x69 frames stacked) centred at
+// (i * 69 + 34.5, 34.5) and sets its frame to the ctor's last argument.
+// 0x4396e0 passes 0 for the played row (frame 0, the blue socket) and 1
+// for the available row (frame 1, a small gold dot that the resting ball
+// covers). The container's children are drawn before the balls it holds.
+constexpr int LETTERBOX_SIZE = 69;
+constexpr int LETTERBOX_PLAYED_FRAME = 0;
+constexpr int LETTERBOX_AVAILABLE_FRAME = 1;
+
+inline SheetSpec letter_box_sheet() { return sheet("LetterBox", 69, 138, 1, 2, 2); }
+
+// The played row's n cells, then the available row's n cells.
+inline std::vector<SpriteState> letter_boxes(int n) {
+    std::vector<SpriteState> out;
+    for (int row = 0; row < 2 && n > 0; ++row) {
+        const bool played = row == 0;
+        const float y = (played ? PLAYED_ROW_Y : AVAILABLE_ROW_Y) + BALL_HALF;
+        for (int i = 0; i < n; ++i) {
+            SpriteState s = sprite("LETTERBOX", letter_box_sheet(), ball_center_x(n, i), y);
+            s.anchor = Anchor::Center;
+            s.frame = played ? LETTERBOX_PLAYED_FRAME : LETTERBOX_AVAILABLE_FRAME;
+            out.push_back(s);
+        }
+    }
+    return out;
+}
+
 struct LetterBall {
     char letter = 0;
     bool played = false;    // which row it sits in
@@ -309,6 +338,7 @@ public:
     float table_y() const { return TABLE_Y; }
     const std::vector<SlotView>& slots() const { return slots_; }
     const std::vector<LetterBall>& balls() const { return balls_; }
+    std::vector<SpriteState> letter_boxes() const { return tt2ui::letter_boxes(static_cast<int>(balls_.size())); }
     // DIALOG_NEXTROUND letterballs, dialog-local; empty for other dialogs.
     const std::vector<LetterBall>& dialog_balls() const { return dialog_balls_; }
     // DIALOG_HELP page state; meaningful while dialog_kind() == HowToPlay.
