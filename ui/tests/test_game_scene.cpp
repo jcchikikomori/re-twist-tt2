@@ -1173,6 +1173,98 @@ TEST(mouse_buttons_hover_press_and_fire) {
     ASSERT_EQ(s.round_number(), 1);
 }
 
+// 0x425710: the letter buttons follow the two rows. TWIST needs two
+// balls left to shuffle, CLEAR and ENTER need played letters (ENTER three
+// in the port, one in the original), LAST needs an empty row and a word.
+static bool on(GameScene& s, const char* n) { return s.button(n)->enabled; }
+
+TEST(letter_buttons_follow_the_rows) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    // Nothing played, nothing submitted yet: TWIST is the only one.
+    ASSERT_TRUE(on(s, "BUTTON_Twist"));
+    ASSERT_TRUE(!on(s, "BUTTON_Clear"));
+    ASSERT_TRUE(!on(s, "BUTTON_Enter"));
+    ASSERT_TRUE(!on(s, "BUTTON_LastWord"));
+    f.type("c");                                           // one letter: CLEAR, not ENTER
+    ASSERT_TRUE(on(s, "BUTTON_Clear"));
+    ASSERT_TRUE(!on(s, "BUTTON_Enter"));
+    ASSERT_TRUE(on(s, "BUTTON_Twist"));
+    f.type("a");                                           // two letters: still no ENTER
+    ASSERT_TRUE(!on(s, "BUTTON_Enter"));
+    f.type("r");                                           // three: ENTER
+    ASSERT_TRUE(on(s, "BUTTON_Enter"));
+    s.press("BUTTON_Clear");                               // back to the start
+    ASSERT_TRUE(s.typed().empty());
+    ASSERT_TRUE(!on(s, "BUTTON_Clear"));
+    ASSERT_TRUE(!on(s, "BUTTON_Enter"));
+    f.type("car");
+    s.press("BUTTON_Enter");                               // submitted: LAST can recall it
+    ASSERT_EQ(s.score(), 90);
+    ASSERT_TRUE(on(s, "BUTTON_LastWord"));
+    ASSERT_TRUE(!on(s, "BUTTON_Clear"));
+    f.type("a");                                           // a letter in the row: no LAST
+    ASSERT_TRUE(!on(s, "BUTTON_LastWord"));
+    s.backspace();
+    ASSERT_TRUE(on(s, "BUTTON_LastWord"));
+}
+
+TEST(twist_needs_two_balls_left) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    const std::string rack = s.rack();
+    f.type(rack.substr(0, rack.size() - 2));               // two left: can still swap
+    ASSERT_TRUE(on(s, "BUTTON_Twist"));
+    f.type(rack.substr(rack.size() - 2, 1));               // one left: nothing to shuffle
+    ASSERT_TRUE(!on(s, "BUTTON_Twist"));
+    f.type(rack.substr(rack.size() - 1));
+    ASSERT_TRUE(!on(s, "BUTTON_Twist"));
+    ASSERT_TRUE(on(s, "BUTTON_Enter"));
+}
+
+TEST(disabled_letter_buttons_ignore_presses) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    s.press("BUTTON_LastWord");                            // no last word yet
+    ASSERT_TRUE(s.typed().empty());
+    f.type("ca");
+    f.sounds.clear();
+    s.press("BUTTON_Enter");                               // two letters: the button is off
+    ASSERT_EQ(s.typed(), std::string("ca"));
+    ASSERT_TRUE(f.sounds.empty());
+    s.key_return();                                        // the keyboard still submits, as in 0x427560
+    ASSERT_TRUE(s.typed().empty());
+    ASSERT_TRUE(f.played(SoundId::WordReject));
+}
+
+TEST(last_word_does_not_carry_into_the_next_round) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type(s.rack());
+    s.key_return();                                        // bingo
+    ASSERT_TRUE(on(s, "BUTTON_LastWord"));
+    s.press("BUTTON_NextRound");
+    s.update(REVEAL_MS + 16);
+    s.dialog_press("BUTTON_OK");                           // round 2
+    ASSERT_EQ(s.round_number(), 2);
+    ASSERT_TRUE(s.last_word().empty());
+    ASSERT_TRUE(!on(s, "BUTTON_LastWord"));
+    s.key_return();                                        // Return on an empty row recalls nothing
+    ASSERT_TRUE(s.typed().empty());
+}
+
+TEST(letter_buttons_are_off_outside_play) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type(s.rack());
+    s.key_return();                                        // bingo: qualified
+    s.press("BUTTON_NextRound");                           // reveal phase
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    for (const char* n : {"BUTTON_Twist", "BUTTON_Clear", "BUTTON_Enter", "BUTTON_LastWord"})
+        ASSERT_TRUE(!on(s, n));
+    ASSERT_TRUE(on(s, "BUTTON_Menu"));
+}
+
 TEST(pointer_hot_tracks_button_hover) {
     Fixture f(false);
     auto& s = *f.scene;

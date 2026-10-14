@@ -353,6 +353,11 @@ inline std::vector<Particle> next_round_particles(const std::vector<LetterBall>&
 // ---------------------------------------------------------------------------
 
 constexpr int ROUND_MS = 120000;          // 0x425c50: +0x2fc
+// Deliberate deviation: the original enables ENTER from one played letter
+// (0x425807: size > 0). No board word is shorter than 3 letters, so the
+// port keeps the button off until then. Return on the keyboard still
+// submits any non-empty row, as in the original (0x427560).
+constexpr std::size_t ENTER_MIN_LETTERS = 3;
 constexpr int WARNING_MS = 10000;         // 0x425c50: +0x304 (countdown starts at 10 s)
 constexpr int LIVES = 3;                  // 0x425420: game over when the miss counter reaches 3
 constexpr int REVEAL_MS = 3000;           // 0x428840 / 0x425420 / 0x428c80: ModifierDelay(3000) after the reveal
@@ -741,6 +746,11 @@ public:
     // A scene button (also used by the keyboard shortcuts and tests).
     void press(const std::string& name) {
         if (dialog_open()) return;
+        // A disabled letter button ignores presses, as a click on it would.
+        if (name == "BUTTON_Twist" || name == "BUTTON_Clear" || name == "BUTTON_LastWord" || name == "BUTTON_Enter") {
+            const MenuButton* b = button(name);
+            if (b && !b->enabled) return;
+        }
         if (name == "BUTTON_Twist") twist();
         else if (name == "BUTTON_Clear") clear();
         else if (name == "BUTTON_LastWord") last_word_again();
@@ -882,6 +892,9 @@ private:
 
     void setup_round(int number, const tt2::ClassicRound::Result& res) {
         round_number_ = number;
+        // The last word lives in the round object (+0x1f4, string +0x64),
+        // which 0x4396e0 builds empty every round: LAST starts off.
+        last_word_.clear();
         round_end_ = RoundEnd::None;
         phase_ = GamePhase::Playing;
         time_left_ms_ = ROUND_MS;
@@ -1183,6 +1196,7 @@ private:
         b.target_y = (played_row ? PLAYED_ROW_Y : AVAILABLE_ROW_Y) + BALL_HALF;
         b.move_ms = ms;
         b.move_elapsed_ms = 0;
+        refresh_buttons();   // every letter move changes TWIST / CLEAR / ENTER / LAST
     }
     // 0x43bad0(index = -1): the ball goes to the first empty cell of the row.
     void place(std::size_t i) {
@@ -1296,9 +1310,18 @@ private:
     // NEXT ROUND, PASS x2, PASS and GIVE UP share one spot (317, 473); the
     // refresh 0x425710 shows one: qualified -> NEXT ROUND, else by misses
     // 0 -> BUTTON_Pass_2, 1 -> BUTTON_Pass, 2 -> GIVE UP (game-scene.md §5).
+    // The same refresh gates the letter buttons on the two rows:
+    //   TWIST  more than one ball left in the available row (0x4257c3);
+    //   CLEAR  at least one letter played (0x425858);
+    //   LAST   nothing played and a last word to recall (0x42580f);
+    //   ENTER  at least one letter played (0x425807) in the original;
+    //          the port waits for ENTER_MIN_LETTERS (an enhancement).
     void refresh_buttons() {
         const bool playing = phase_ == GamePhase::Playing;
         const bool q = round_ && round_->qualified();
+        std::size_t played = 0;
+        for (const auto& b : balls_) if (b.played) ++played;
+        const std::size_t available = balls_.size() - played;
         for (auto& b : buttons_) {
             const std::string& n = b.sprite.name;
             if (n == "BUTTON_NextRound") { b.sprite.visible = (playing && q) || phase_ == GamePhase::AwaitNext; b.enabled = b.sprite.visible; }
@@ -1306,6 +1329,10 @@ private:
             else if (n == "BUTTON_Pass") { b.sprite.visible = playing && !q && misses_ == 1; b.enabled = b.sprite.visible; }
             else if (n == "BUTTON_GiveUp") { b.sprite.visible = playing && !q && misses_ >= 2; b.enabled = b.sprite.visible; }
             else if (n == "BUTTON_Menu") { b.enabled = true; }
+            else if (n == "BUTTON_Twist") { b.enabled = playing && available > 1; }
+            else if (n == "BUTTON_Clear") { b.enabled = playing && played > 0; }
+            else if (n == "BUTTON_LastWord") { b.enabled = playing && played == 0 && !last_word_.empty(); }
+            else if (n == "BUTTON_Enter") { b.enabled = playing && played >= ENTER_MIN_LETTERS; }
             else { b.enabled = playing; }
         }
     }

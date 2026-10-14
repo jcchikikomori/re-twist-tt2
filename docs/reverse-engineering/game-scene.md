@@ -160,6 +160,24 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   only logs the URL). The port acts on mouse release, like its balls; the original acts on
   press. Deliberate deviation: the old `dictionary.reference.com` address only redirects
   now, so the port opens `https://www.dictionary.com/browse/<word>` directly.
+- Letter buttons (CONFIRMED, listing of `0x425710`,
+  `ev_da78430350f5563c2d366b5f0ab813b4ebe44f7cd3e87fa0b07d0ad8d7e134f7`). The refresh runs
+  after ENTER and after every ball click. When `+0x260` (game over) or `+0x2f9` (a reveal
+  is running) is set, all nine buttons are disabled. Otherwise MENU is on, and the rest
+  follow the two rows: `0x43c0c0` reads the played row, `0x43c170` the available row.
+
+  | Button | Enabled when | Address |
+  | --- | --- | --- |
+  | TWIST | more than one ball in the available row | `0x4257c3` (`cmp eax, 1; setg`) |
+  | ENTER | at least one letter played | `0x425807` (`test; setg`) |
+  | LAST WORD | nothing played and the round's last word is not empty | `0x42580f`–`0x42582e` |
+  | CLEAR | at least one letter played | `0x425858` (`test; setg`) |
+
+  So at a round start TWIST is the only one on. The last word is the string at `+0x64` of
+  the round object (`+0x1f4`), which `0x4396e0` builds empty every round, so LAST starts
+  off each round. Port deviation: ENTER waits for 3 letters (`ENTER_MIN_LETTERS`), because
+  no board word is shorter; Return on the keyboard still submits any non-empty row
+  (`0x427560`).
 - Score label (CONFIRMED, `0x424730`): after a correct word the score `+0x308` goes through
   `0x449c90` (`sprintf("%d")`) straight into `LABEL_Score` (`+0x23c`, cached by `0x423a20`)
   via its set-text slot `+0xc4`. There is **no count-up**: the label jumps to the new total
@@ -424,7 +442,7 @@ All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
 | `0x427d10` | Game over: high score, then `DIALOG_CONGRATS` or `DIALOG_ENDGAME` |
 | `0x426860` / `0x427058` | Scene state machine (`+0x20c`) / its jump table |
 | `0x425b60` | Button dispatcher (Menu, NextRound, Pass / GiveUp, Clear, Enter, LastWord, Twist) |
-| `0x425710` | Button refresh: NEXT ROUND / Pass_2 / Pass / GIVE UP |
+| `0x425710` | Button refresh: letter buttons, NEXT ROUND / Pass_2 / Pass / GIVE UP |
 | `0x4253a0` / `0x425420` | Pass / Give Up YES / miss path (reveal or game over) |
 | `0x409100` | `DIALOG_NEXTROUND` letterballs and particles |
 | `0x4513d0` | Smoothstep easing `(3 − 2t)·t²` |
