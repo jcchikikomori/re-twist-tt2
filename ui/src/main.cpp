@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -126,6 +127,14 @@ const std::map<std::string, std::string> kImageFiles = {
     {"BUTTON_REMOVE", "images/gui/button_remove.png"},
     {"BUTTON_YES", "images/gui/button_yes.png"},
     {"BUTTON_NO", "images/gui/button_no.png"},
+    // In-game dialogs (resources.xml, sections default / trophyscene).
+    {"BUTTON_PAUSE_RESUME", "images/gui/button_pause_resume.png"},
+    {"BUTTON_PAUSE_SETTINGS", "images/gui/button_pause_settings.png"},
+    {"BUTTON_PAUSE_END", "images/gui/button_pause_endgame.png"},
+    {"BUTTON_PAUSE_HELP", "images/gui/button_pause_help.png"},
+    {"BUTTON_END_MENU", "images/gui/button_end_menu.png"},
+    {"BUTTON_END_PLAYAGAIN", "images/gui/button_end_playagain.png"},
+    {"IMAGE_BURST", "images/trophyscene/burst.png"},
     {"INPUT_BOX", "images/gui/inputlabel.png"},
     {"CURSOR", "images/gui/cursor.png"},
     {"NAME_SELECT_BUTTON", "images/gui/name_select_button.png"},
@@ -141,6 +150,7 @@ const std::map<std::string, FontFile> kFontFiles = {
     {"FONT_DIALOG_HEADERS2", {"fonts/font_dialog_headers2.xml", 4}},
     {"FONT_UI_LABELS", {"fonts/font_uibar_labels.xml", 2}},
     {"FONT_UI_NUMBERS", {"fonts/font_uibar_numbers.xml", 3}},
+    {"FONT_NEXTROUND02", {"fonts/font_nextround02.xml", 4}},
 };
 
 const std::map<SoundId, std::string> kSoundFiles = {
@@ -193,6 +203,54 @@ bool read_text(const std::string& path, std::string& out) {
     return true;
 }
 
+// Procedural letter ball for IMAGE_LETTERBALL_ANIM (placeholder build):
+// a pearl-white sphere lit from the top left, new geometry in the
+// original's colour language. Within each 17-frame letter row the shape
+// follows the sheet's motion: frames 0-3 the ball turning edge-on and
+// back (horizontal squash), 4-11 the round resting pearl, 12-16 a
+// morph towards a rounded square tile. The letter itself is drawn on
+// top at render time.
+void paint_pearl(SDL_Surface* s, SDL_Rect cell, int f) {
+    static const float squash[17] = {1.0f, 0.78f, 0.18f, 0.78f, 1, 1, 1, 1, 1, 1, 1, 1, 0.92f, 1, 1, 1, 1};
+    static const float power[17] = {2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2.6f, 3.4f, 4.6f, 7.0f};
+    const float sx = squash[f], n = power[f];
+    const float r = (f == 12 ? 25.0f : 27.5f);
+    const float cx = cell.x + cell.w * 0.5f, cy = cell.y + cell.h * 0.5f;
+    Uint32* px = static_cast<Uint32*>(s->pixels);
+    const int pitch = s->pitch / 4;
+    for (int y = cell.y; y < cell.y + cell.h; ++y) {
+        for (int x = cell.x; x < cell.x + cell.w; ++x) {
+            const float u = (x + 0.5f - cx) / (r * sx), v = (y + 0.5f - cy) / r;
+            const float d = std::pow(std::fabs(u), n) + std::pow(std::fabs(v), n);   // superellipse
+            if (d > 1.0f) continue;
+            const float edge = std::min(1.0f, (1.0f - d) * r * 0.5f);              // ~1 px antialias
+            const float nz = std::sqrt(std::max(0.0f, 1.0f - std::min(1.0f, u * u + v * v)));
+            // Lambert from the upper left plus a tight specular spot.
+            const float lx = -0.45f, ly = -0.55f, lz = 0.70f;
+            const float lam = std::max(0.0f, u * lx + v * ly + nz * lz);
+            const float spec = std::pow(std::max(0.0f, lam), 24.0f);
+            const float shade = 0.60f + 0.40f * lam;
+            auto ch = [&](float base) { return static_cast<Uint8>(std::min(255.0f, base * shade + 255.0f * spec * 0.6f)); };
+            px[y * pitch + x] = SDL_MapRGBA(s->format, ch(236), ch(238), ch(246), static_cast<Uint8>(255 * edge));
+        }
+    }
+}
+
+// Procedural IMAGE_BURST: a soft white glow that pulses over the 20
+// frames (the sprite's colour mod turns it orange).
+void paint_burst(SDL_Surface* s, SDL_Rect cell, int f) {
+    const float phase = 0.75f + 0.25f * std::sin(static_cast<float>(f) / 20.0f * 6.2831853f);
+    const float cx = cell.x + cell.w * 0.5f, cy = cell.y + cell.h * 0.5f, r = cell.w * 0.5f * phase;
+    Uint32* px = static_cast<Uint32*>(s->pixels);
+    const int pitch = s->pitch / 4;
+    for (int y = cell.y; y < cell.y + cell.h; ++y)
+        for (int x = cell.x; x < cell.x + cell.w; ++x) {
+            const float d = std::hypot(x + 0.5f - cx, y + 0.5f - cy) / r;
+            const float a = d >= 1.0f ? 0.0f : (1.0f - d) * (1.0f - d) * 0.8f;
+            px[y * pitch + x] = SDL_MapRGBA(s->format, 255, 255, 255, static_cast<Uint8>(255 * a));
+        }
+}
+
 // Placeholder art: the original colour language (royal blue / cyan /
 // gold) with new geometry. Each frame of a sheet gets a slightly
 // different shade so animations stay visible.
@@ -221,6 +279,15 @@ SDL_Surface* make_placeholder(const SheetSpec& spec) {
     else if (spec.image_id == "COMMENTS" || spec.image_id == "GAME_OVER" ||
              spec.image_id.rfind("IMAGE_POPUP", 0) == 0) { r = 0x16; g = 0x9c; b = 0xd8; }
 
+    if (spec.image_id == "IMAGE_LETTERBALL_ANIM" || spec.image_id == "IMAGE_BURST") {
+        SDL_FillRect(s, nullptr, SDL_MapRGBA(s->format, 0, 0, 0, 0));
+        for (int f = 0; f < spec.frames; ++f) {
+            SDL_Rect cell{spec.frame_x(f), spec.frame_y(f), spec.frame_w, spec.frame_h};
+            if (spec.image_id == "IMAGE_BURST") paint_burst(s, cell, f);
+            else paint_pearl(s, cell, f % BALL_FRAMES_PER_LETTER);
+        }
+        return s;
+    }
     for (int f = 0; f < spec.frames; ++f) {
         SDL_Rect cell{spec.frame_x(f), spec.frame_y(f), spec.frame_w, spec.frame_h};
         const int shade = spec.frames > 1 ? (f * 40) / spec.frames : 0;
@@ -447,7 +514,11 @@ void draw_sprite(SDL_Renderer* ren, Assets& assets, const SpriteState& s, float 
     if (s.flip == Flip::Horizontal || s.flip == Flip::Both) flip |= SDL_FLIP_HORIZONTAL;
     if (s.flip == Flip::Vertical || s.flip == Flip::Both) flip |= SDL_FLIP_VERTICAL;
     SDL_SetTextureAlphaMod(img.texture, static_cast<Uint8>(s.alpha * 255));
+    SDL_SetTextureColorMod(img.texture, (s.tint >> 16) & 0xFF, (s.tint >> 8) & 0xFF, s.tint & 0xFF);
+    SDL_SetTextureBlendMode(img.texture, s.additive ? SDL_BLENDMODE_ADD : SDL_BLENDMODE_BLEND);
     SDL_RenderCopyEx(ren, img.texture, &src, &dst, 0.0, nullptr, static_cast<SDL_RendererFlip>(flip));
+    SDL_SetTextureColorMod(img.texture, 255, 255, 255);
+    SDL_SetTextureBlendMode(img.texture, SDL_BLENDMODE_BLEND);
 }
 
 // Draw `text` with a bitmap font. (x, y) is the anchor: Top = top-centre
@@ -531,8 +602,36 @@ void draw_dialog_frame(SDL_Renderer* ren, Assets& assets, const Dialog& d) {
          FRAME_SIDE_W, FRAME_BOTTOM_H);
 }
 
-void draw_dialog(SDL_Renderer* ren, Assets& assets, const ProfileFlow& flow) {
-    const Dialog& d = flow.dialog();
+// Upper-case label for a placeholder button: "BUTTON_PAUSE_RESUME" -> "RESUME".
+std::string placeholder_button_label(const std::string& name) {
+    std::string label = name.rfind("BUTTON_", 0) == 0 ? name.substr(7) : name;
+    for (auto& c : label) c = c == '_' ? ' ' : static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return label;
+}
+
+// A label that may span several lines ("\n"), `line_height` apart.
+SDL_Rect draw_label_text(SDL_Renderer* ren, Assets& assets, const TextLabel& l, const std::string& text, float ox,
+                         float oy) {
+    SDL_Rect last{};
+    const int lh = l.line_height > 0 ? l.line_height : assets.font(l.font_id).font.glyph_height();
+    std::size_t start = 0;
+    int line = 0;
+    while (true) {
+        const std::size_t nl = text.find('\n', start);
+        const std::string part = text.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+        last = draw_text(ren, assets, l.font_id, part, l.x + ox, l.y + oy + static_cast<float>(line * lh), l.align,
+                         l.anchor, l.char_spacing);
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+        ++line;
+    }
+    return last;
+}
+
+// Any dialog: darkening, DEFAULT_PAINTER frame, sprites, buttons, labels.
+// `input` / `cursor` drive the INPUT_TEXT label of the name dialog.
+void draw_dialog(SDL_Renderer* ren, Assets& assets, const Dialog& d, const std::string& input = {},
+                 bool cursor = false) {
     // dodarkenbackground="true": DIALOG_BACKGROUND_ALPHA over the scene.
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(ren, 0, 0, 0, static_cast<Uint8>(DIALOG_BACKGROUND_ALPHA * 255));
@@ -541,14 +640,19 @@ void draw_dialog(SDL_Renderer* ren, Assets& assets, const ProfileFlow& flow) {
     draw_dialog_frame(ren, assets, d);
     const float ox = d.left(), oy = d.top();
     for (const SpriteState& s : d.sprites) draw_sprite(ren, assets, s, ox, oy);
-    for (const MenuButton& b : d.buttons) draw_sprite(ren, assets, b.sprite, ox, oy);
+    for (const MenuButton& b : d.buttons) {
+        draw_sprite(ren, assets, b.sprite, ox, oy);
+        if (b.sprite.visible && assets.image(b.sprite.sheet).placeholder && b.sprite.name.rfind("NAME_", 0) != 0)
+            draw_text(ren, assets, "PLACEHOLDER_2", placeholder_button_label(b.sprite.name),
+                      b.sprite.left() + ox + b.sprite.sheet.frame_w * 0.5f,
+                      b.sprite.top() + oy + b.sprite.sheet.frame_h * 0.5f, TextAlign::Center, Anchor::Center, -1);
+    }
     for (const TextLabel& l : d.labels) {
         if (!l.visible) continue;
         std::string text = l.text;
-        if (l.name == "INPUT_TEXT") text = flow.input_text();
-        const SDL_Rect run = draw_text(ren, assets, l.font_id, text, l.x + ox, l.y + oy, l.align, l.anchor,
-                                       l.char_spacing);
-        if (l.name == "INPUT_TEXT" && flow.cursor_visible()) {
+        if (l.name == "INPUT_TEXT") text = input;
+        const SDL_Rect run = draw_label_text(ren, assets, l, text, ox, oy);
+        if (l.name == "INPUT_TEXT" && cursor) {
             // CURSOR 20x20 after the text, cursory="-8" (INFERRED placement).
             SpriteState cur = sprite("CURSOR", sheet("CURSOR", 20, 20), 0, 0);
             cur.x = static_cast<float>(run.x + run.w + 1);
@@ -650,11 +754,15 @@ void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
     for (const auto& b : g.balls()) {
         SpriteState sp = sprite("BALL", balls, b.x, b.y);
         sp.anchor = Anchor::Center;
-        sp.frame = (b.letter - 'a') * BALL_FRAMES_PER_LETTER + BALL_IDLE_FRAME;
+        sp.frame = b.sheet_frame();   // pearl at rest, flip frames while revealing
         draw_sprite(ren, assets, sp);
-        if (balls_placeholder) {
+        // Placeholder: royal-blue letter once the flip shows it (frame 3+).
+        if (balls_placeholder && b.frame >= 3) {
             const std::string ch(1, static_cast<char>(b.letter - 'a' + 'A'));
+            Font& font = assets.font("PLACEHOLDER_5");
+            for (SDL_Texture* t : font.layers) if (t) SDL_SetTextureColorMod(t, 0x10, 0x3c, 0xb0);
             draw_text(ren, assets, "PLACEHOLDER_5", ch, b.x, b.y, TextAlign::Center, Anchor::Center, -1);
+            for (SDL_Texture* t : font.layers) if (t) SDL_SetTextureColorMod(t, 255, 255, 255);
         }
     }
 
@@ -727,7 +835,8 @@ int main(int argc, char** argv) {
     std::string debug_player;
     std::string data_dir = TT2_DATA_DIR;
     std::string auto_play;     // --play untimed|timed: start a game as soon as the menu is up
-    std::string auto_type;     // --type "word\nword": feed keystrokes into the game (smoke tests)
+    std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
+                               // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_dir = argv[++i];
@@ -840,11 +949,44 @@ int main(int argc, char** argv) {
     constexpr int GAME_FADE_HALF_MS = 250;
     int game_fade_out = 0, game_fade_in = 0;
     bool pending_start = false, pending_timed = false, pending_exit = false;
-    auto request_game = [&](bool timed) {
-        if (!players.current()) { profile.open_player_select(); return; }
+    // Saved game to continue in the next start_game (0x4242a0 / 0x42a460).
+    std::unique_ptr<tt2::SavedGame> pending_resume;
+    auto mode_name = [](bool timed) { return tt2::save_mode_name(timed ? tt2::GameMode::Timed : tt2::GameMode::Untimed); };
+    auto begin_game = [&](bool timed) {
         pending_start = true;
         pending_timed = timed;
         game_fade_out = GAME_FADE_HALF_MS;
+    };
+    // "Continue the game?" (CTEXT_START_SAVEGAME, 0x42dc80) on the menu.
+    Dialog menu_dialog;
+    bool menu_dialog_open = false;
+    bool menu_dialog_timed = false;
+    auto request_game = [&](bool timed) {
+        if (!players.current()) { profile.open_player_select(); return; }
+        if (!save_dir.empty() && store.has_saved_game(players.current()->name, mode_name(timed))) {
+            menu_dialog = build_yes_no(game_strings::SAVEGAME_HEADER, game_strings::SAVEGAME_BODY);
+            menu_dialog_open = true;
+            menu_dialog_timed = timed;
+            return;
+        }
+        begin_game(timed);
+    };
+    auto menu_dialog_press = [&](const std::string& name) {
+        if (name.empty() || !menu_dialog_open) return;
+        assets.play_sound(SoundId::Button);
+        menu_dialog_open = false;
+        const std::string player = players.current() ? players.current()->name : std::string();
+        const char* mode = mode_name(menu_dialog_timed);
+        if (name == "BUTTON_YES") {
+            auto g = std::make_unique<tt2::SavedGame>();
+            if (store.load_saved_game(player, mode, *g)) pending_resume = std::move(g);
+            else std::fprintf(stderr, "warning: saved game for %s is unreadable; starting again\n", player.c_str());
+        } else if (name == "BUTTON_NO") {
+            store.remove_saved_game(player, mode);   // "Select 'No' to start again."
+        } else {
+            return;
+        }
+        begin_game(menu_dialog_timed);
     };
     services.menu_action = [&](const std::string& name) {
         if (name == "BUTTON_QUIT") running = false;
@@ -859,8 +1001,24 @@ int main(int argc, char** argv) {
         gs.play_sound = [&](SoundId id) { assets.play_sound(id); };
         gs.on_profile_change = pservices.on_change;
         gs.on_exit = [&] { pending_exit = true; game_fade_out = GAME_FADE_HALF_MS; };
+        const std::string player = players.current()->name;
+        const std::string mode = mode_name(pending_timed);
+        gs.save_game = [&store, player, mode, &save_dir](const tt2::SavedGame& g) {
+            if (save_dir.empty()) return;
+            if (!store.save_saved_game(player, mode, g))
+                std::fprintf(stderr, "warning: could not write %s\n", store.saved_game_path(player, mode).string().c_str());
+            else std::printf("game: saved %s for %s\n", mode.c_str(), player.c_str());
+        };
+        gs.discard_save = [&store, player, mode, &save_dir] {
+            if (!save_dir.empty()) store.remove_saved_game(player, mode);
+        };
+        // INFERRED (0x409fa0 / 0x40a1f0 silence and restore the stream for
+        // DialogPause): the music drops while the pause menu is up.
+        gs.on_pause = [audio](bool paused) { if (audio) Mix_VolumeMusic(paused ? 0 : MIX_MAX_VOLUME / 2); };
         game = std::make_unique<GameScene>(common_tree, full_tree, *players.current(), &highscores, pending_timed,
-                                           gs, static_cast<std::int64_t>(SDL_GetTicks()));
+                                           gs, static_cast<std::int64_t>(SDL_GetTicks()), pending_resume.get());
+        if (pending_resume) std::printf("game: resumed round %d\n", pending_resume->round);
+        pending_resume.reset();
         assets.play_stream(SoundId::MusicInGame1);
         std::printf("game: %s, rack %s, %zu slots\n", pending_timed ? "timed" : "untimed", game->rack().c_str(),
                     game->slots().size());
@@ -883,7 +1041,11 @@ int main(int argc, char** argv) {
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) running = false;
+            if (e.type == SDL_QUIT) {
+                running = false;
+                if (game) game->leave();   // 0x427b20: closing the window saves a running round
+            }
+            if (game && e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) game->focus_lost();
             if (profile.open()) {
                 // A dialog is modal: it eats the input.
                 if (e.type == SDL_TEXTINPUT) profile.text_input(e.text.text);
@@ -924,6 +1086,20 @@ int main(int argc, char** argv) {
                     game->mouse_up(e.button.x, e.button.y);
                 continue;
             }
+            if (menu_dialog_open) {
+                if (e.type == SDL_KEYDOWN) {
+                    const auto k = e.key.keysym.sym;
+                    if (k == SDLK_RETURN || k == SDLK_KP_ENTER) menu_dialog_press("BUTTON_YES");
+                    else if (k == SDLK_ESCAPE) menu_dialog_open = false;   // INFERRED: cancel
+                }
+                if (e.type == SDL_MOUSEMOTION && dialog_mouse_move(menu_dialog, e.motion.x, e.motion.y))
+                    assets.play_sound(SoundId::ButtonRollover);
+                if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
+                    dialog_mouse_down(menu_dialog, e.button.x, e.button.y);
+                if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)
+                    menu_dialog_press(dialog_mouse_up(menu_dialog, e.button.x, e.button.y));
+                continue;
+            }
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = false;
             if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0) {
                 auto* menu = flow.selection();
@@ -939,6 +1115,7 @@ int main(int argc, char** argv) {
         // item, arrow everywhere else.
         bool hot = false;
         if (profile.open()) hot = profile.pointer_over_clickable();
+        else if (menu_dialog_open) hot = dialog_pointer_hot(menu_dialog);
         else if (game) hot = game->pointer_over_clickable();
         else if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             hot = flow.selection()->pointer_over_clickable();
@@ -969,6 +1146,16 @@ int main(int argc, char** argv) {
         } else if (game_fade_in > 0) {
             game_fade_in = std::max(0, game_fade_in - dt);
         }
+        // --type also answers the menu's "Continue the game?" prompt: '|' YES, '~' NO.
+        if (menu_dialog_open && !auto_type.empty() && (auto_type.front() == '|' || auto_type.front() == '~')) {
+            auto_type_ms += dt;
+            if (auto_type_ms >= 300) {
+                auto_type_ms = 0;
+                const char c = auto_type.front();
+                auto_type.erase(0, 1);
+                menu_dialog_press(c == '|' ? "BUTTON_YES" : "BUTTON_NO");
+            }
+        }
         if (game) {
             game->update(dt);
             // --type: one key every 300 ms while a round is being played.
@@ -979,12 +1166,15 @@ int main(int argc, char** argv) {
                 auto_type.erase(0, 1);
                 if (c == '\n' || c == '|') game->key_return();
                 else if (c == ' ') game->key_space();
+                else if (c == '~') game->key_escape();                  // pause menu / back
+                else if (c == '$') game->dialog_press("BUTTON_STOP");   // pause menu STOP
                 else game->type_letter(c);
             }
         } else {
             flow.update(dt);
         }
         profile.update(dt);
+        if (menu_dialog_open) dialog_tick(menu_dialog, dt);
         simulated_ms += dt;
         if (flow.current() != last_scene) {
             last_scene = flow.current();
@@ -1011,7 +1201,9 @@ int main(int argc, char** argv) {
                           Anchor::Center, 2);
             }
         }
-        if (profile.open()) draw_dialog(ren, assets, profile);
+        if (game && game->dialog_open()) draw_dialog(ren, assets, game->dialog());
+        if (menu_dialog_open) draw_dialog(ren, assets, menu_dialog);
+        if (profile.open()) draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
         float black = flow.black_alpha();
         if (game_fade_out > 0) black = std::max(black, 1.0f - static_cast<float>(game_fade_out) / GAME_FADE_HALF_MS);
         if (game_fade_in > 0) black = std::max(black, static_cast<float>(game_fade_in) / GAME_FADE_HALF_MS);

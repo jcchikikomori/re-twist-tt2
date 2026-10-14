@@ -4,7 +4,7 @@ This document describes the current status and the upcoming milestones of this p
 
 ## Updated
 
-`Tue, 13 Oct 2026 14:10:00 GMT+8`
+`Wed, 14 Oct 2026 13:10:00 GMT+8`
 
 ## Milestones (so far)
 
@@ -28,6 +28,7 @@ This document describes the current status and the upcoming milestones of this p
 ## Identified bugs
 
 1. The word (that can advance to the next round) during starting the level (or next level) was shown, ended up cheating.
+   Fixed: the balls are now dealt scrambled (the original deal order is still untraced).
 2. No animations during the game.
 3. When hovering the items on the main menu, it triggers a sound effect which is not on a original game (no sound effect).
 
@@ -58,6 +59,11 @@ This document describes the current status and the upcoming milestones of this p
   progression counters (`game_scene.hpp`, headless-tested). Found and fixed on the way: the C++
   `.tree` codec read the grammar in the wrong order and produced garbage racks from the real
   dictionaries; it now matches the exe (`0x43e070`) and the Python reference decoder byte-for-byte.
+- Untimed polish (goals 4, 7 and 9): the resume system (`saved_game.hpp`, the menu's "Continue the
+  game?" prompt, save on STOP / window close, delete on load and on game over), the pause menu with its
+  "Exit Game?" confirmation and the "Give Up?" confirmation (`game_dialogs.hpp`), pearl letter balls
+  that flip in one by one and slide at the decompiled speeds, and the round-end feedback: reveal,
+  next-round sparkle, GAME OVER and new-high-score dialogs. Spec: `game-scene.md` §4–§7.
 
 ## Future Goals
 

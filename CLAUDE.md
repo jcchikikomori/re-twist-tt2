@@ -35,7 +35,7 @@ ctest --test-dir build --output-on-failure    # unit tests
 
 | Path | Owner / purpose |
 | --- | --- |
-| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp`, `round_crossword.hpp`, `profile.hpp` (players, progression, high scores; spec in `docs/reverse-engineering/profiles.md`), `profile_store.hpp` (plain-text save files). |
+| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp`, `round_crossword.hpp`, `profile.hpp` (players, progression, high scores; spec in `docs/reverse-engineering/profiles.md`), `profile_store.hpp` (plain-text save files), `saved_game.hpp` (the resumable Classic game). |
 | `engine/tests/` | Unit tests, one file per header plus `test_main.cpp` (the in-tree test harness). |
 | `src/main.cpp` | The driver / smoke test for the engine. |
 | `tools/tree_cli.cpp` | Dictionary tool: `decode`, `encode`, `merge`, `diff`, `verify`. Replaces the old `tools/tree-cli.ts`. |
@@ -200,7 +200,9 @@ the address-level walkthrough of the gameplay code is in
   headless scene model (`sprite.hpp`, `modifier.hpp`,
   `welcome_flow.hpp`, `bitmap_font.hpp` for the GF2 `fonts/*.xml`
   format, `profile_dialogs.hpp` for the name-input / player-select
-  dialogs, `game_scene.hpp` for the Classic Untimed / Timed scene),
+  dialogs, `game_scene.hpp` for the Classic Untimed / Timed scene,
+  `game_dialogs.hpp` for its pause menu, confirmations and round-end
+  dialogs),
   `ui/src/main.cpp` is the SDL2 front end, and `ui/tests/` holds the
   headless tests. Timings and layout for the welcome flow come from
   `docs/reverse-engineering/welcome-flow.md`, the game scene geometry

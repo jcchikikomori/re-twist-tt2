@@ -12,6 +12,7 @@
 #include <system_error>
 
 #include "tt2/profile.hpp"
+#include "tt2/saved_game.hpp"
 
 namespace tt2 {
 
@@ -84,6 +85,50 @@ public:
     bool save(const PlayerManager& pm) const { return write_file(profiles_path(), serialize(pm)); }
     bool save(const HighScoreManager& hm) const { return write_file(highscores_path(), serialize(hm)); }
 
+    // ---- saved games (saved_game.hpp) ---------------------------------
+    // The original keeps one file per player and mode under a
+    // "savegames" folder (PlayerManager ctor 0x460900, scene start
+    // 0x4242a0). Here: <dir>/savegames/<player>/<MODE>.txt, with the
+    // player name percent-encoded so any allowed name maps to a safe
+    // file name.
+    static constexpr const char* SAVEGAMES_DIR = "savegames";
+
+    static std::string encode_file_name(std::string_view s) {
+        static const char* hex = "0123456789ABCDEF";
+        std::string out;
+        for (unsigned char c : s) {
+            const bool safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                              c == '-' || c == '_';
+            if (safe) out.push_back(static_cast<char>(c));
+            else { out.push_back('%'); out.push_back(hex[c >> 4]); out.push_back(hex[c & 15]); }
+        }
+        if (out.empty()) out = "_";
+        return out;
+    }
+    std::filesystem::path saved_game_path(const std::string& player, const std::string& mode) const {
+        return dir_ / SAVEGAMES_DIR / encode_file_name(player) / (encode_file_name(mode) + ".txt");
+    }
+    bool has_saved_game(const std::string& player, const std::string& mode) const {
+        std::error_code ec;
+        return std::filesystem::is_regular_file(saved_game_path(player, mode), ec);
+    }
+    // True only when a well-formed save was read; `out` is untouched otherwise.
+    bool load_saved_game(const std::string& player, const std::string& mode, SavedGame& out) const {
+        std::string text;
+        if (!read_file(saved_game_path(player, mode), text)) return false;
+        return parse(text, out);
+    }
+    bool save_saved_game(const std::string& player, const std::string& mode, const SavedGame& g) const {
+        return write_file(saved_game_path(player, mode), serialize(g));
+    }
+    // 0x461840: delete the file once the game is over or loaded. True
+    // when the file is gone afterwards (missing counts as success).
+    bool remove_saved_game(const std::string& player, const std::string& mode) const {
+        std::error_code ec;
+        std::filesystem::remove(saved_game_path(player, mode), ec);
+        return !ec;
+    }
+
 private:
     static bool read_file(const std::filesystem::path& p, std::string& out) {
         std::ifstream in(p, std::ios::binary);
@@ -96,7 +141,7 @@ private:
 
     bool write_file(const std::filesystem::path& p, const std::string& text) const {
         std::error_code ec;
-        std::filesystem::create_directories(dir_, ec);
+        std::filesystem::create_directories(p.parent_path(), ec);
         if (ec) return false;
         // Write next to the target and rename, so a crash never leaves a
         // half-written profile behind.

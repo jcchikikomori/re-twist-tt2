@@ -13,6 +13,7 @@
 // labels; this file owns the state and the rules.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <functional>
@@ -37,6 +38,7 @@ struct TextLabel {
     int char_spacing = -1;    // -1: use the font's
     int max_width = 0;        // > 0: the renderer wraps / clips (unused by the model)
     bool visible = true;
+    int line_height = 0;      // dialogs.xml `lineheight` for multi-line text ("\n"); 0 = glyph height
 };
 
 enum class DialogKind { None, NewPlayer, PlayerSelect, Confirm, Message };
@@ -74,6 +76,16 @@ struct Dialog {
         return nullptr;
     }
 };
+
+// A dialog button: `image` is a 4-row sheet (normal / hover / pressed /
+// disabled) of `w` x `h` pixels; (x, y) is dialog-local with anchor `a`.
+inline MenuButton make_dialog_button(const char* name, const char* image, float x, float y, Anchor a, int w = 119,
+                                     int h = 200) {
+    MenuButton b;
+    b.sprite = sprite(name, sheet(image, w, h, 1, 4, 4), x, y);
+    b.sprite.anchor = a;
+    return b;
+}
 
 // DEFAULT_PAINTER frame fill. The nine border PNGs are opaque only in a
 // thin outer band and fade to transparent towards the inside (an inner
@@ -431,10 +443,7 @@ private:
     static int row_y(int row) { return NAME_ROW_Y + row * NAME_ROW_SPACING; }
     static MenuButton button(const char* name, const char* image, float x, float y, Anchor a, int w = 119,
                              int h = 200) {
-        MenuButton b;
-        b.sprite = sprite(name, sheet(image, w, h, 1, 4, 4), x, y);
-        b.sprite.anchor = a;
-        return b;
+        return make_dialog_button(name, image, x, y, a, w, h);
     }
     bool hit(const MenuButton& b, float x, float y) const {
         return b.sprite.visible && b.contains(x - dialog_.left(), y - dialog_.top());

@@ -3,6 +3,8 @@
 
 #include "test_harness.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -41,14 +43,20 @@ struct Fixture {
     std::vector<SoundId> sounds;
     int saves = 0;
     int exits = 0;
+    int discards = 0;
+    std::vector<tt2::SavedGame> saved;
+    std::vector<bool> pauses;
     std::unique_ptr<GameScene> scene;
 
-    explicit Fixture(bool timed, bool with_hs = true) {
+    explicit Fixture(bool timed, bool with_hs = true, std::int64_t seed = 0) {
         GameScene::Services s;
         s.play_sound = [this](SoundId id) { sounds.push_back(id); };
         s.on_profile_change = [this] { ++saves; };
         s.on_exit = [this] { ++exits; };
-        scene = std::make_unique<GameScene>(com, ful, profile, with_hs ? &hs : nullptr, timed, s, 0);
+        s.save_game = [this](const tt2::SavedGame& g) { saved.push_back(g); };
+        s.discard_save = [this] { ++discards; };
+        s.on_pause = [this](bool p) { pauses.push_back(p); };
+        scene = std::make_unique<GameScene>(com, ful, profile, with_hs ? &hs : nullptr, timed, s, seed);
     }
     bool played(SoundId id) const {
         for (auto s : sounds) if (s == id) return true;
@@ -128,6 +136,26 @@ TEST(row_geometry_is_centred_on_400) {
 
 // ---- round start -------------------------------------------------------
 
+static std::string ball_order(const GameScene& s) {
+    std::string order(s.balls().size(), ' ');
+    for (const auto& b : s.balls()) order[static_cast<std::size_t>(b.slot)] = b.letter;
+    return order;
+}
+
+// ROADMAP bug #1: the balls used to spell the rack word, giving away the bingo.
+TEST(scene_deals_the_rack_scrambled) {
+    for (std::int64_t seed = 0; seed < 20; ++seed) {
+        Fixture f(false, true, seed);
+        auto& s = *f.scene;
+        const std::string order = ball_order(s);
+        ASSERT_TRUE(order != s.rack());
+        std::string a = order, b = s.rack();
+        std::sort(a.begin(), a.end());
+        std::sort(b.begin(), b.end());
+        ASSERT_EQ(a, b);                                   // same letters, new order
+    }
+}
+
 TEST(scene_starts_round_one_with_rack_and_board) {
     Fixture f(false);
     auto& s = *f.scene;
@@ -145,7 +173,19 @@ TEST(scene_starts_round_one_with_rack_and_board) {
     // Board slots sit on the centred table.
     ASSERT_TRUE(s.table_x() == 400.0f - s.table().width * 0.5f);
     ASSERT_EQ(s.slots()[0].y, 15);
-    ASSERT_TRUE(f.played(SoundId::LetterLoad));
+    // The balls flip in one after another (0x43c940); each flip ends with
+    // SOUND_letter_load on the resting pearl frame.
+    ASSERT_TRUE(!f.played(SoundId::LetterLoad));
+    ASSERT_EQ(s.balls()[0].frame, 0);
+    s.update(BALL_REVEAL_FRAME_MS * (BALL_IDLE_FRAME + 1));
+    int loads = 0;
+    for (auto id : f.sounds) if (id == SoundId::LetterLoad) ++loads;
+    ASSERT_EQ(loads, 1);
+    s.update(BALL_REVEAL_STAGGER_MS * 4);
+    loads = 0;
+    for (auto id : f.sounds) if (id == SoundId::LetterLoad) ++loads;
+    ASSERT_EQ(loads, 5);
+    for (const auto& b : s.balls()) ASSERT_EQ(b.frame, BALL_IDLE_FRAME);
     ASSERT_EQ(f.saves, 1);                             // bag state persisted
     ASSERT_EQ(f.profile.bag.index, std::uint32_t{1});
     ASSERT_TRUE(s.typed().empty());
@@ -177,6 +217,10 @@ TEST(typing_moves_balls_to_played_row_and_back) {
     Fixture f(false);
     auto& s = *f.scene;
     const std::string rack = s.rack();
+    // The rack is dealt scrambled: find the cell that holds rack[2].
+    int home = -1;
+    for (const auto& b : s.balls()) if (b.letter == rack[2] && (home < 0 || b.slot < home)) home = b.slot;
+    ASSERT_TRUE(home >= 0);
     s.type_letter(rack[2]);
     ASSERT_EQ(s.typed(), std::string(1, rack[2]));
     const LetterBall* moved = nullptr;
@@ -198,7 +242,7 @@ TEST(typing_moves_balls_to_played_row_and_back) {
     ASSERT_TRUE(s.typed().empty());
     ASSERT_TRUE(f.played(SoundId::LetterClear));
     // The ball returned to the first free cell of the rack (its old one here).
-    ASSERT_EQ(moved->slot, 2);
+    ASSERT_EQ(moved->slot, home);
     s.backspace();                                         // nothing to remove
     ASSERT_TRUE(s.typed().empty());
 }
@@ -379,10 +423,13 @@ TEST(all_words_ends_round_and_next_round_starts) {
     ASSERT_TRUE(score >= 1000 + 100 * static_cast<std::int32_t>(words.size()));
     s.type_letter('c');                                    // input ignored now
     ASSERT_TRUE(s.typed().empty());
-    s.update(16);                                          // no reveal delay: all found
+    s.update(16);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);           // 0x428840: always 3 s
+    s.update(REVEAL_MS);
     ASSERT_TRUE(s.phase() == GamePhase::AwaitNext);
-    ASSERT_TRUE(s.button("BUTTON_NextRound")->sprite.visible);
-    s.press("BUTTON_NextRound");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+    ASSERT_TRUE(f.played(SoundId::NextRoundAchieved));
+    s.dialog_press("BUTTON_OK");
     ASSERT_EQ(s.round_number(), 2);
     ASSERT_TRUE(s.phase() == GamePhase::Playing);
     ASSERT_EQ(s.score(), score);                           // score carries over
@@ -443,10 +490,12 @@ TEST(timed_clock_counts_down_with_warning_and_time_up) {
     ASSERT_EQ(s.misses(), 1);
     ASSERT_TRUE(s.phase() == GamePhase::Reveal);
     s.update(REVEAL_MS + 20);
-    ASSERT_TRUE(s.phase() == GamePhase::AwaitNext);       // first miss: play on
-    s.key_return();
+    // First miss: 0x425190 starts the next round by itself, no dialog.
+    ASSERT_TRUE(s.phase() == GamePhase::Playing);
+    ASSERT_TRUE(!s.dialog_open());
     ASSERT_EQ(s.round_number(), 2);
     ASSERT_EQ(s.time_left_ms(), ROUND_MS);
+    ASSERT_EQ(f.discards, 0);
 }
 
 TEST(timed_round_with_bingo_advances_on_time_up) {
@@ -465,19 +514,22 @@ TEST(three_misses_end_the_game_with_high_score) {
     auto& s = *f.scene;
     f.type(s.rack());
     s.key_return();                                        // bingo: 1250 > the lowest default entry
-    for (int i = 0; i < 4; ++i) {
-        s.update(ROUND_MS + 10);                           // round 1 qualified, then 3 misses
+    s.update(ROUND_MS + 10);                               // round 1 qualified
+    s.update(REVEAL_MS + 20);
+    ASSERT_TRUE(s.phase() == GamePhase::AwaitNext);
+    s.key_return();                                        // DIALOG_NEXTROUND OK
+    for (int i = 0; i < 3; ++i) {                          // then 3 misses
+        s.update(ROUND_MS + 10);
         s.update(REVEAL_MS + 20);
-        if (i < 3) {
-            ASSERT_TRUE(s.phase() == GamePhase::AwaitNext);
-            s.key_return();
-        }
     }
     ASSERT_EQ(s.misses(), 3);
     ASSERT_EQ(s.round_number(), 4);
     ASSERT_TRUE(s.phase() == GamePhase::GameOver);
-    s.update(600);
+    ASSERT_EQ(f.discards, 1);                              // the save goes with the game
     ASSERT_TRUE(s.game_over_sprite().alpha == 1.0f);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::Congrats);  // a new high score
+    s.key_return();
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);
     ASSERT_EQ(s.game_over_sprite().frame, 0);
     ASSERT_TRUE(f.played(SoundId::HighScoreAchieved));
     const auto& table = f.hs.table(tt2::GameMode::Timed);
@@ -495,19 +547,32 @@ TEST(three_misses_end_the_game_with_high_score) {
 TEST(give_up_and_menu_leave_the_game) {
     Fixture f(false, false);
     auto& s = *f.scene;
+    s.press("BUTTON_GiveUp");                              // asks first
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::ConfirmGiveUp);
+    ASSERT_TRUE(s.paused());
+    s.dialog_press("BUTTON_NO");
+    ASSERT_TRUE(!s.dialog_open());
+    ASSERT_TRUE(s.phase() == GamePhase::Playing);
     s.press("BUTTON_GiveUp");
+    s.key_return();                                        // Return = YES
     ASSERT_TRUE(s.last_round_end() == RoundEnd::GaveUp);
     s.update(REVEAL_MS + 20);
     ASSERT_TRUE(s.phase() == GamePhase::GameOver);
-    s.mouse_up(400, 300);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);   // score 0: no high score
+    s.mouse_up(400, 300);                                  // a stray click does nothing
+    ASSERT_EQ(f.exits, 0);
+    s.dialog_press("BUTTON_OK");                           // MENU
     ASSERT_EQ(f.exits, 1);
 
     Fixture g(false, false);
-    g.scene->press("BUTTON_Menu");
-    ASSERT_EQ(g.exits, 1);
+    g.scene->press("BUTTON_Menu");                         // the pause menu, not an exit
+    ASSERT_EQ(g.exits, 0);
+    ASSERT_TRUE(g.scene->dialog_kind() == GameDialog::PauseMenu);
     Fixture h(true, false);
-    h.scene->key_escape();                                 // Esc = give up
-    ASSERT_TRUE(h.scene->last_round_end() == RoundEnd::GaveUp);
+    h.scene->key_escape();                                 // Esc = pause menu
+    ASSERT_TRUE(h.scene->dialog_kind() == GameDialog::PauseMenu);
+    h.scene->key_escape();                                 // and back
+    ASSERT_TRUE(!h.scene->dialog_open());
 }
 
 TEST(mouse_buttons_hover_press_and_fire) {
@@ -541,4 +606,276 @@ TEST(pointer_hot_tracks_button_hover) {
     ASSERT_TRUE(s.pointer_over_clickable());
     s.mouse_move(0, 0);
     ASSERT_TRUE(!s.pointer_over_clickable());
+}
+
+// ---- ball animation (0x43a4c0 / 0x43a820 / 0x43c370) -----------------------
+
+TEST(ball_flip_runs_frames_0_to_11_then_rests_as_a_pearl) {
+    LetterBall b;
+    b.letter = 'c';
+    b.frame = 0;
+    b.reveal_delay_ms = 120;
+    b.reveal_elapsed_ms = 0;
+    ASSERT_TRUE(b.revealing());
+    ASSERT_TRUE(!b.tick(100));                             // still waiting
+    ASSERT_EQ(b.frame, 0);
+    ASSERT_TRUE(!b.tick(20 + 3 * BALL_REVEAL_FRAME_MS));   // 3 frames in
+    ASSERT_EQ(b.frame, 3);
+    ASSERT_TRUE(b.tick(9 * BALL_REVEAL_FRAME_MS));         // last frame reached
+    ASSERT_EQ(b.frame, BALL_IDLE_FRAME);
+    ASSERT_TRUE(!b.revealing());
+    ASSERT_TRUE(!b.tick(1000));                            // only once
+    ASSERT_EQ(b.sheet_frame(), 2 * BALL_FRAMES_PER_LETTER + BALL_IDLE_FRAME);
+}
+
+TEST(ball_slides_in_a_straight_line_over_its_duration) {
+    LetterBall b;
+    b.letter = 'a';
+    b.start_x = b.x = 100;
+    b.start_y = b.y = 300;
+    b.target_x = 200;
+    b.target_y = 200;
+    b.move_ms = BALL_MOVE_MS;
+    b.tick(BALL_MOVE_MS / 2);
+    ASSERT_TRUE(b.x == 150.0f && b.y == 250.0f);
+    b.tick(BALL_MOVE_MS);
+    ASSERT_TRUE(b.x == 200.0f && b.y == 200.0f);
+}
+
+TEST(placing_takes_300_ms_and_twist_400_ms) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    s.update(5000);                                        // let the flips finish
+    s.type_letter(s.rack()[0]);
+    const LetterBall* placed = nullptr;
+    for (const auto& b : s.balls()) if (b.played) placed = &b;
+    ASSERT_EQ(placed->move_ms, BALL_MOVE_MS);
+    s.update(BALL_MOVE_MS - 1);
+    ASSERT_TRUE(placed->y != placed->target_y);
+    s.update(1);
+    ASSERT_TRUE(placed->y == placed->target_y);
+    s.press("BUTTON_Clear");
+    s.update(1000);
+    s.press("BUTTON_Twist");
+    for (const auto& b : s.balls()) ASSERT_EQ(b.move_ms, BALL_RELAYOUT_MS);
+}
+
+// ---- pause menu and confirmations -----------------------------------------
+
+TEST(pause_menu_layout_matches_dialog_menu) {
+    const Dialog d = build_pause_menu();
+    ASSERT_EQ(d.w, 322);
+    ASSERT_EQ(d.h, 390);
+    ASSERT_EQ(d.buttons.size(), std::size_t{4});
+    ASSERT_TRUE(d.button("BUTTON_RESUME")->sprite.y == 290.0f);
+    ASSERT_TRUE(d.button("BUTTON_STOP")->sprite.y == 224.0f);
+    ASSERT_EQ(d.button("BUTTON_STOP")->sprite.sheet.image_id, std::string("BUTTON_PAUSE_END"));
+    ASSERT_EQ(d.button("BUTTON_HOWTOPLAY")->sprite.sheet.frame_h, 52);
+    ASSERT_EQ(d.label("PAUSE_HEADER")->text, std::string("PAUSE MENU"));
+}
+
+TEST(yes_no_dialog_grows_with_its_message) {
+    const Dialog one = build_yes_no("H", "one line");
+    ASSERT_EQ(one.h, YESNO_MIN_H);
+    ASSERT_TRUE(one.button("BUTTON_YES")->sprite.y == static_cast<float>(YESNO_BUTTON_Y + YESNO_LINE_H));
+    const Dialog four = build_yes_no(game_strings::EXIT_HEADER, game_strings::EXIT_BODY);
+    const int button_y = YESNO_BUTTON_Y + 4 * YESNO_LINE_H;
+    ASSERT_TRUE(four.button("BUTTON_NO")->sprite.y == static_cast<float>(button_y));
+    ASSERT_EQ(four.h, button_y + YESNO_BUTTON_H + YESNO_BOTTOM_PAD);
+    ASSERT_EQ(four.label("MESSAGE")->line_height, YESNO_LINE_H);
+    const Dialog ok = build_yes_no("H", "m", true);
+    ASSERT_TRUE(ok.button("BUTTON_OK") != nullptr);
+    ASSERT_TRUE(ok.button("BUTTON_YES") == nullptr);
+}
+
+TEST(pause_menu_freezes_the_clock_and_resumes) {
+    Fixture f(true);
+    auto& s = *f.scene;
+    s.press("BUTTON_Menu");
+    ASSERT_TRUE(s.paused());
+    ASSERT_EQ(f.pauses.size(), std::size_t{1});
+    ASSERT_TRUE(f.pauses.back());
+    s.update(30000);
+    ASSERT_EQ(s.time_left_ms(), ROUND_MS);                 // nothing moved
+    s.type_letter(s.rack()[0]);                            // input goes to the dialog
+    ASSERT_TRUE(s.typed().empty());
+    s.dialog_press("BUTTON_RESUME");
+    ASSERT_TRUE(!s.dialog_open());
+    ASSERT_TRUE(!f.pauses.back());
+    s.update(1000);
+    ASSERT_EQ(s.time_left_ms(), ROUND_MS - 1000);
+    s.focus_lost();                                        // losing focus pauses too
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+    s.key_return();                                        // Return = RESUME
+    ASSERT_TRUE(!s.dialog_open());
+}
+
+TEST(pause_menu_help_and_settings_are_not_available_yet) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    s.press("BUTTON_Menu");
+    s.dialog_press("BUTTON_SETTINGS");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NotAvailable);
+    s.key_escape();
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+    s.dialog_press("BUTTON_HOWTOPLAY");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NotAvailable);
+    s.dialog_press("BUTTON_OK");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+    s.dialog_press("BUTTON_DOES_NOT_EXIST");               // ignored
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+}
+
+TEST(stop_asks_then_saves_and_leaves) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type("car");
+    s.key_return();                                        // one found word
+    f.type("ca");                                          // half-typed letters are not saved
+    s.press("BUTTON_Menu");
+    s.dialog_press("BUTTON_STOP");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::ConfirmExit);
+    ASSERT_EQ(s.dialog().label("HEADER")->text, std::string("Exit Game?"));
+    s.key_escape();                                        // NO: back to the menu
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+    ASSERT_EQ(f.exits, 0);
+    s.dialog_press("BUTTON_STOP");
+    s.dialog_press("BUTTON_YES");
+    ASSERT_EQ(f.exits, 1);
+    ASSERT_EQ(f.saved.size(), std::size_t{1});
+    const auto& g = f.saved[0];
+    ASSERT_EQ(g.mode, std::string("CLASSIC_UNTIMED"));
+    ASSERT_EQ(g.word, s.rack());
+    ASSERT_EQ(g.round, 1);
+    ASSERT_EQ(g.score, 90);
+    ASSERT_EQ(g.fail_count, 0);
+    ASSERT_TRUE(!g.qualified);
+    ASSERT_EQ(g.found_words.size(), std::size_t{1});
+    ASSERT_EQ(g.found_words[0], std::string("car"));
+    ASSERT_TRUE(g.valid());
+}
+
+TEST(nothing_is_saved_once_the_round_is_over) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type(s.rack());
+    s.key_return();
+    s.press("BUTTON_NextRound");                           // round over, revealing
+    ASSERT_TRUE(!s.can_save());
+    s.leave();
+    ASSERT_TRUE(f.saved.empty());
+    s.update(REVEAL_MS + 1);
+    s.key_escape();                                        // the round-end dialog needs a choice
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+}
+
+TEST(saved_game_resumes_where_it_left_off) {
+    Fixture f(true);
+    f.type(f.scene->rack());
+    f.scene->key_return();                                 // bingo: qualified
+    f.type("car");
+    f.scene->key_return();
+    f.scene->update(15000);
+    const tt2::SavedGame g = f.scene->snapshot();
+    ASSERT_TRUE(g.qualified);
+    ASSERT_EQ(g.time_ms, ROUND_MS - 15000);
+
+    Fixture r(true);
+    GameScene::Services sv;
+    int discards = 0;
+    sv.discard_save = [&] { ++discards; };
+    tt2::SavedGame later = g;
+    later.round = 4;
+    later.fail_count = 2;
+    GameScene resumed(r.com, r.ful, r.profile, nullptr, true, sv, 0, &later);
+    ASSERT_EQ(discards, 1);                                // 0x42a460 deletes the file
+    ASSERT_EQ(resumed.rack(), g.word);
+    ASSERT_TRUE(ball_order(resumed) != g.word);           // the resumed rack is scrambled too
+    ASSERT_EQ(resumed.round_number(), 4);
+    ASSERT_EQ(resumed.misses(), 2);
+    ASSERT_EQ(resumed.score(), g.score);
+    ASSERT_EQ(resumed.time_left_ms(), ROUND_MS - 15000);
+    ASSERT_TRUE(resumed.qualified());
+    int found = 0;
+    for (const auto& v : resumed.slots()) if (v.found) ++found;
+    ASSERT_EQ(found, 2);
+    ASSERT_TRUE(resumed.button("BUTTON_NextRound")->sprite.visible);
+    ASSERT_TRUE(resumed.phase() == GamePhase::Playing);
+    // A second bingo no longer earns the qualifying bonus.
+    const std::int32_t before = resumed.score();
+    for (char c : resumed.rack()) resumed.type_letter(c);
+    resumed.key_return();
+    ASSERT_EQ(resumed.score(), before);                    // duplicate: nothing
+    // Bag untouched by a resume.
+    ASSERT_EQ(r.profile.bag.index, std::uint32_t{1});
+}
+
+TEST(unusable_save_starts_a_fresh_game) {
+    Fixture f(false);
+    GameScene::Services sv;
+    int discards = 0;
+    sv.discard_save = [&] { ++discards; };
+    tt2::SavedGame bad;
+    bad.word = "x";                                        // invalid
+    GameScene s(f.com, f.ful, f.profile, nullptr, false, sv, 0, &bad);
+    ASSERT_EQ(discards, 0);
+    ASSERT_EQ(s.round_number(), 1);
+    ASSERT_EQ(s.rack().size(), std::size_t{5});
+    ASSERT_EQ(std::string(s.save_mode()), std::string("CLASSIC_UNTIMED"));
+}
+
+TEST(end_game_play_again_starts_round_one) {
+    Fixture f(false, false);
+    auto& s = *f.scene;
+    f.type("car");
+    s.key_return();
+    s.press("BUTTON_GiveUp");
+    s.dialog_press("BUTTON_YES");
+    s.update(REVEAL_MS + 1);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);
+    ASSERT_EQ(s.dialog().label("BODY_TEXT")->line_height, 38);
+    s.dialog_press("BUTTON_REPLAY");
+    ASSERT_TRUE(!s.dialog_open());
+    ASSERT_TRUE(s.phase() == GamePhase::Playing);
+    ASSERT_EQ(s.round_number(), 1);
+    ASSERT_EQ(s.score(), 0);
+    ASSERT_EQ(s.misses(), 0);
+    ASSERT_EQ(f.exits, 0);
+}
+
+TEST(dialog_buttons_respond_to_the_mouse) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    s.press("BUTTON_Menu");
+    const Dialog& d = s.dialog();
+    const MenuButton* resume = d.button("BUTTON_RESUME");
+    // Anchor top: the button's centre column is x = 163 in the dialog.
+    const float x = d.left() + 163, y = d.top() + 290 + 20;
+    s.mouse_move(x, y);
+    ASSERT_TRUE(resume->hover);
+    ASSERT_TRUE(s.pointer_over_clickable());
+    ASSERT_TRUE(f.played(SoundId::ButtonRollover));
+    s.mouse_down(x, y);
+    s.update(0);
+    ASSERT_EQ(resume->sprite.frame, 2);
+    s.mouse_up(x, y);
+    ASSERT_TRUE(!s.dialog_open());
+    s.mouse_move(1, 1);
+    ASSERT_TRUE(!s.pointer_over_clickable());
+}
+
+TEST(round_end_dialogs_carry_the_sparkle) {
+    const Dialog n = build_next_round();
+    ASSERT_EQ(n.w, 380);
+    ASSERT_EQ(n.h, 320);
+    ASSERT_EQ(n.sprites.size(), std::size_t{1});
+    ASSERT_TRUE(n.sprites[0].additive);
+    ASSERT_EQ(n.sprites[0].tint, 0xFFA800u);
+    ASSERT_EQ(n.sprites[0].frame_time_ms, 40);
+    const Dialog c = build_congrats();
+    ASSERT_EQ(c.sprites[0].frame, 4);
+    const Dialog e = build_end_game();
+    ASSERT_EQ(e.h, 260);
+    ASSERT_EQ(e.button("BUTTON_REPLAY")->sprite.sheet.frame_h, 52);
+    ASSERT_EQ(text_line_count("a\nb\nc"), 3);
 }

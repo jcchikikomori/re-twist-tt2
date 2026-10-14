@@ -1,0 +1,190 @@
+// In-game dialogs of the Classic scene, headless: the pause menu, the
+// yes/no confirmations (exit, give up, continue a saved game), and the
+// round-end feedback (next round, game over, new high score).
+//
+// Layout numbers are the dialogs.xml values quoted in
+// docs/reverse-engineering/game-scene.md §6. Coordinates are local to
+// the dialog's top-left corner; every dialog here is `autocenter`, so
+// Dialog::left() / top() place it in the middle of the 800x600 screen.
+// The renderer draws the DEFAULT_PAINTER frame and the 0.7 darkening
+// exactly as for the profile dialogs.
+#pragma once
+
+#include <string>
+
+#include "tt2ui/profile_dialogs.hpp"
+
+namespace tt2ui {
+
+// Strings from text.xml / commontext.xml.
+namespace game_strings {
+inline constexpr const char* PAUSE_MENU = "PAUSE MENU";                       // CTEXT_MAKE_CHOICE
+inline constexpr const char* EXIT_HEADER = "Exit Game?";                      // CTEXT_MENU_STOP_HEADER
+inline constexpr const char* EXIT_BODY =
+    "Are you sure you want\nto leave this game?\nYour game will be\nsaved for next time.";   // CTEXT_MENU_STOP
+inline constexpr const char* GIVEUP_HEADER = "Give Up?";                      // TEXT_DIALOG_GIVEUP_HEADER
+inline constexpr const char* GIVEUP_BODY = "Are you sure you wish\nto end this game?";   // TEXT_DIALOG_GIVEUP
+inline constexpr const char* SAVEGAME_HEADER = "Continue the game?";          // CTEXT_SAVEGAME_HEADER
+inline constexpr const char* SAVEGAME_BODY =
+    "Do you want to continue your last played game?\n(Select 'No' to start again.)";   // CTEXT_START_SAVEGAME
+inline constexpr const char* NOT_AVAILABLE_HEADER = "Not available";          // CTEXT_NOT_AVAILABLE_HEADER
+inline constexpr const char* NOT_AVAILABLE =
+    "This option is not available yet.";                                      // CTEXT_NOT_AVAILABLE (first sentence)
+inline constexpr const char* NEXT_ROUND_BODY = "Click to continue\nto the next round!";   // TEXT_NEXT_ROUND_BODY
+inline constexpr const char* GAME_OVER_HEADER = "GAME OVER";
+inline constexpr const char* ENDGAME_BODY = "Sorry, you didn't qualify\nfor the next round.";   // TEXT_ENDGAME_BODY
+inline constexpr const char* CONGRATS_BODY = "Congratulations!\nYou earned a\nnew high score!";  // TEXT_CONGRATS_BODY
+}  // namespace game_strings
+
+// Kinds used by the game scene (the profile kinds stay in DialogKind).
+enum class GameDialog { None, PauseMenu, ConfirmExit, ConfirmGiveUp, NotAvailable, NextRound, EndGame, Congrats };
+
+inline int text_line_count(const std::string& s) {
+    int n = 1;
+    for (char c : s) if (c == '\n') ++n;
+    return n;
+}
+
+// DIALOG_MENU 322x390 (0x407f40 wires the four buttons).
+inline Dialog build_pause_menu() {
+    Dialog d;
+    d.w = 322;
+    d.h = 390;
+    d.labels.push_back(TextLabel{"PAUSE_HEADER", "FONT_DIALOG_HEADERS2", game_strings::PAUSE_MENU, 163, 19,
+                                 TextAlign::Center, Anchor::Top, 0});
+    // 181x208 sheets, 4 rows of 52.
+    d.buttons.push_back(make_dialog_button("BUTTON_HOWTOPLAY", "BUTTON_PAUSE_HELP", 162, 87, Anchor::Top, 181, 208));
+    d.buttons.push_back(make_dialog_button("BUTTON_SETTINGS", "BUTTON_PAUSE_SETTINGS", 163, 155, Anchor::Top, 181, 208));
+    d.buttons.push_back(make_dialog_button("BUTTON_STOP", "BUTTON_PAUSE_END", 163, 224, Anchor::Top, 181, 208));
+    d.buttons.push_back(make_dialog_button("BUTTON_RESUME", "BUTTON_PAUSE_RESUME", 163, 290, Anchor::Top, 181, 208));
+    return d;
+}
+
+// DIALOG_YESNO: 400x180 minimum. 0x40b470 moves both buttons down by
+// the height of the MESSAGE label (lineheight 30 per line) and grows the
+// dialog to fit. INFERRED: no extra padding, so a one-line message gives
+// exactly the 180 px minimum (100 + 30 + a 50 px button row).
+constexpr int YESNO_MIN_W = 400;
+constexpr int YESNO_MIN_H = 180;
+constexpr int YESNO_LINE_H = 30;
+constexpr int YESNO_BUTTON_Y = 100;
+constexpr int YESNO_BUTTON_H = 50;
+constexpr int YESNO_BOTTOM_PAD = 0;
+
+inline Dialog build_yes_no(const char* header, const std::string& message, bool single_ok = false) {
+    Dialog d;
+    d.w = YESNO_MIN_W;
+    const int msg_h = text_line_count(message) * YESNO_LINE_H;
+    const int button_y = YESNO_BUTTON_Y + msg_h;
+    d.h = std::max(YESNO_MIN_H, button_y + YESNO_BUTTON_H + YESNO_BOTTOM_PAD);
+    d.labels.push_back(TextLabel{"HEADER", "FONT_DIALOG_HEADERS2", header, 200, 13, TextAlign::Center, Anchor::Top, -1});
+    TextLabel msg{"MESSAGE", "FONT_SETTINGSTEXT", message, 200, 87, TextAlign::Center, Anchor::Top, -1, 390};
+    msg.line_height = YESNO_LINE_H;
+    d.labels.push_back(msg);
+    if (single_ok) {
+        d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", 200, static_cast<float>(button_y), Anchor::Top));
+    } else {
+        d.buttons.push_back(make_dialog_button("BUTTON_YES", "BUTTON_YES", 190, static_cast<float>(button_y), Anchor::TopRight));
+        d.buttons.push_back(make_dialog_button("BUTTON_NO", "BUTTON_NO", 210, static_cast<float>(button_y), Anchor::TopLeft));
+    }
+    return d;
+}
+
+// The orange IMAGE_BURST sparkle behind the round-end text
+// (IMAGE_BURST 2000x400, 10x2 frames of 200x200, frametime 40,
+// colour #FFA800, additive).
+inline SpriteState sparkle(float x, float y, int first_frame) {
+    SpriteState s = sprite("SPARKLE", sheet("IMAGE_BURST", 2000, 400, 10, 2, 20), x, y);
+    s.anchor = Anchor::Center;
+    s.frame = first_frame;
+    s.frame_time_ms = 40;
+    s.additive = true;
+    s.tint = 0xFFA800;
+    return s;
+}
+
+// DIALOG_NEXTROUND 380x320. The eight letterball sprites of the XML are
+// not drawn yet (their letters are set in code we have not traced).
+inline Dialog build_next_round() {
+    Dialog d;
+    d.w = 380;
+    d.h = 320;
+    d.sprites.push_back(sparkle(191, 154, 8));
+    TextLabel body{"BODY_TEXT", "FONT_NEXTROUND02", game_strings::NEXT_ROUND_BODY, 192, 133, TextAlign::Center,
+                   Anchor::Top, 2};
+    body.line_height = 36;
+    d.labels.push_back(body);
+    d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", 190, 239, Anchor::Top));
+    return d;
+}
+
+// DIALOG_ENDGAME 380x260: MENU (BUTTON_OK) and PLAY AGAIN (BUTTON_REPLAY),
+// 157x208 sheets.
+inline Dialog build_end_game() {
+    Dialog d;
+    d.w = 380;
+    d.h = 260;
+    d.labels.push_back(TextLabel{"HEADER", "FONT_DIALOG_HEADERS2", game_strings::GAME_OVER_HEADER, 190, 14,
+                                 TextAlign::Center, Anchor::Top, 0});
+    TextLabel body{"BODY_TEXT", "FONT_NEXTROUND02", game_strings::ENDGAME_BODY, 192, 88, TextAlign::Center,
+                   Anchor::Top, 1};
+    body.line_height = 38;
+    d.labels.push_back(body);
+    d.buttons.push_back(make_dialog_button("BUTTON_REPLAY", "BUTTON_END_PLAYAGAIN", 271, 173, Anchor::Top, 157, 208));
+    d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_END_MENU", 109, 173, Anchor::Top, 157, 208));
+    return d;
+}
+
+// DIALOG_CONGRATS 380x320 (new high score).
+inline Dialog build_congrats() {
+    Dialog d;
+    d.w = 380;
+    d.h = 320;
+    d.sprites.push_back(sparkle(191, 138, 4));
+    TextLabel body{"BODY_TEXT", "FONT_NEXTROUND02", game_strings::CONGRATS_BODY, 193, 107, TextAlign::Center,
+                   Anchor::Top, 2};
+    body.line_height = 38;
+    d.labels.push_back(body);
+    d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", 190, 239, Anchor::Top));
+    return d;
+}
+
+// ---- input helpers shared by every dialog ----------------------------
+
+inline bool dialog_hit(const Dialog& d, const MenuButton& b, float x, float y) {
+    return b.enabled && b.sprite.visible && b.contains(x - d.left(), y - d.top());
+}
+
+// Returns true when the pointer entered a button (play the rollover).
+inline bool dialog_mouse_move(Dialog& d, float x, float y) {
+    bool entered = false;
+    for (auto& b : d.buttons) {
+        const bool over = dialog_hit(d, b, x, y);
+        if (over && !b.hover) entered = true;
+        b.hover = over;
+        if (!over) b.pressed = false;
+    }
+    return entered;
+}
+inline void dialog_mouse_down(Dialog& d, float x, float y) {
+    for (auto& b : d.buttons) b.pressed = dialog_hit(d, b, x, y);
+}
+// The name of the button released over, or "".
+inline std::string dialog_mouse_up(Dialog& d, float x, float y) {
+    std::string clicked;
+    for (auto& b : d.buttons) {
+        if (b.pressed && dialog_hit(d, b, x, y)) clicked = b.sprite.name;
+        b.pressed = false;
+    }
+    return clicked;
+}
+inline bool dialog_pointer_hot(const Dialog& d) {
+    for (const auto& b : d.buttons) if (b.hover && b.enabled) return true;
+    return false;
+}
+inline void dialog_tick(Dialog& d, int dt_ms) {
+    for (auto& s : d.sprites) s.tick_auto_frames(dt_ms);
+    for (auto& b : d.buttons) b.sprite.frame = b.frame_for_state();
+}
+
+}  // namespace tt2ui

@@ -44,13 +44,22 @@ public:
         : cfg_(cfg), common_(&common), full_(&full) {}
 
     Result start(Random& rng, Bag& bag, std::int64_t seed) {
-        Result r;
+        std::string rack;
         if (cfg_.wotd) {
-            r.rack = Bag::word_of_the_day(*common_, seed);
+            rack = Bag::word_of_the_day(*common_, seed);
         } else {
             const std::size_t L = Bag::classic_target_length(rng, cfg_.max_word_length);
-            r.rack = bag.pick_classic(L, rng);
+            rack = bag.pick_classic(L, rng);
         }
+        return start_with_rack(rack);
+    }
+
+    // Start a round from a known rack instead of the bag: the saved-game
+    // load (0x42a460) rebuilds round 1 from the stored WORD and then
+    // overwrites the counters with `restore` / `restore_guess`.
+    Result start_with_rack(const std::string& rack) {
+        Result r;
+        r.rack = rack;
 
         Board b = Board::build(r.rack, *common_, cfg_.board_per_length_cap);
         r.sub_anagrams = b.all();
@@ -102,6 +111,32 @@ public:
             r.placed_word    = o.placed_word;
         }
         return r;
+    }
+
+    // Saved-game restore (0x42a460 -> 0x433090 -> 0x432b20): place a
+    // previously found word in its slot without scoring it. Returns the
+    // same report as `guess` with `points_awarded` 0 and `bingo` false.
+    GuessReport restore_guess(const std::string& word_raw) {
+        GuessReport r;
+        if (!filled_board_) return r;
+        GuessProcessor proc(*filled_board_, *common_, *full_);
+        GuessOutcome o = proc.apply(word_raw);
+        r.status = o.status;
+        r.filled_last = o.filled_last;
+        if (o.status == GuessStatus::Accepted || o.status == GuessStatus::Uncommon) {
+            filled_board_->mark_filled(o.slot_index, o.placed_word);
+            found_ += 1;
+            r.slot_index  = o.slot_index;
+            r.placed_word = o.placed_word;
+        }
+        return r;
+    }
+    // Saved-game restore: SCORE / LONGESTWORD / TIME overwrite the
+    // counters after the words are back on the board.
+    void restore(std::int32_t score, bool qualified, std::uint32_t time_left_ms) noexcept {
+        score_ = score;
+        qualified_ = qualified;
+        time_left_ms_ = cfg_.timed ? time_left_ms : 0;
     }
 
     std::int32_t  score() const noexcept { return score_; }

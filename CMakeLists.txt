@@ -132,6 +132,7 @@ if(TT2_BUILD_TESTS)
         engine/tests/test_round_classic.cpp
         engine/tests/test_round_crossword.cpp
         engine/tests/test_profile.cpp
+        engine/tests/test_saved_game.cpp
     )
     target_link_libraries(tt2_tests PRIVATE tt2_engine tt2_platform)
 

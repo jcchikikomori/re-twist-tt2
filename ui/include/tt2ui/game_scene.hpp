@@ -19,7 +19,9 @@
 #include "tt2/profile.hpp"
 #include "tt2/random.hpp"
 #include "tt2/round_classic.hpp"
+#include "tt2/saved_game.hpp"
 #include "tt2/word_tree.hpp"
+#include "tt2ui/game_dialogs.hpp"
 #include "tt2ui/modifier.hpp"
 #include "tt2ui/sprite.hpp"
 #include "tt2ui/welcome_flow.hpp"
@@ -109,7 +111,16 @@ constexpr float AVAILABLE_ROW_Y = 295.0f; // 0x4396e0: container y of the rack
 constexpr int BALL_W = 60;                // IMAGE_LETTERBALL_ANIM 1020x1560, 17 columns, 26 rows
 constexpr int BALL_H = 60;
 constexpr int BALL_FRAMES_PER_LETTER = 17;   // 0x439d00: frame = (letter - 'a') * 17
-constexpr int BALL_IDLE_FRAME = 16;          // last frame of the row: the square "chicklet" (INFERRED)
+// The resting ball is the round "pearl": the round-start flip (0x43a820)
+// runs a ModifierFrame from the letter's first frame to first + 11 and
+// stops there. Frames 0-2 are the blank ball turning edge-on, 3 shows
+// the letter edge-on, 4-11 the letter ball; 12-16 morph into the square
+// tile used elsewhere (CONFIRMED range, frame contents read off the sheet).
+constexpr int BALL_IDLE_FRAME = 11;
+constexpr int BALL_REVEAL_FRAME_MS = 60;     // 0x43a820: ModifierFrame(60 ms)
+constexpr int BALL_REVEAL_STAGGER_MS = 120;  // 0x43c940: delay += 0x78 per ball
+constexpr int BALL_MOVE_MS = 300;            // 0x43a4c0: ModifierLocationLine(0x12c) for place / take back
+constexpr int BALL_RELAYOUT_MS = 400;        // 0x43a4c0 (no container): 0x190, used by the twist relayout
 
 // x of the left edge of a row holding `n` letters (0x4396e0: 400 - n*69/2).
 inline float row_left(int n) { return 400.0f - static_cast<float>(n) * BALL_PITCH * 0.5f; }
@@ -121,6 +132,46 @@ struct LetterBall {
     int slot = 0;           // cell index inside that row
     float x = 0, y = 0;     // current centre on screen
     float target_x = 0, target_y = 0;
+    // Slide: a straight line from (start_x, start_y) to the target over
+    // move_ms (ModifierLocationLine; linear easing INFERRED).
+    float start_x = 0, start_y = 0;
+    int move_ms = 0, move_elapsed_ms = 0;
+    // Round-start flip: wait reveal_delay_ms, then frames 0..11.
+    int frame = BALL_IDLE_FRAME;   // offset inside the letter's 17-frame row
+    int reveal_delay_ms = 0;
+    int reveal_elapsed_ms = -1;    // -1: not flipping
+    bool revealing() const { return reveal_elapsed_ms >= 0; }
+    // Frame index in IMAGE_LETTERBALL_ANIM.
+    int sheet_frame() const { return (letter - 'a') * BALL_FRAMES_PER_LETTER + frame; }
+    // Advance the slide and the flip; true when the flip just finished.
+    bool tick(int dt) {
+        if (move_ms > 0 && move_elapsed_ms < move_ms) {
+            move_elapsed_ms = std::min(move_ms, move_elapsed_ms + dt);
+            const float t = static_cast<float>(move_elapsed_ms) / static_cast<float>(move_ms);
+            x = start_x + (target_x - start_x) * t;
+            y = start_y + (target_y - start_y) * t;
+        } else {
+            x = target_x;
+            y = target_y;
+        }
+        if (!revealing()) return false;
+        int left = dt;
+        if (reveal_delay_ms > 0) {
+            const int used = std::min(reveal_delay_ms, left);
+            reveal_delay_ms -= used;
+            left -= used;
+            if (reveal_delay_ms > 0) return false;
+        }
+        reveal_elapsed_ms += left;
+        const int last = BALL_IDLE_FRAME;
+        if (reveal_elapsed_ms >= (last + 1) * BALL_REVEAL_FRAME_MS) {
+            frame = last;
+            reveal_elapsed_ms = -1;
+            return true;
+        }
+        frame = reveal_elapsed_ms / BALL_REVEAL_FRAME_MS;
+        return false;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -130,11 +181,11 @@ struct LetterBall {
 constexpr int ROUND_MS = 120000;          // 0x425c50: +0x2fc
 constexpr int WARNING_MS = 10000;         // 0x425c50: +0x304 (countdown starts at 10 s)
 constexpr int LIVES = 3;                  // 0x425420: game over when the miss counter reaches 3
-constexpr int REVEAL_MS = 3000;           // 0x425420: ModifierDelay(3000) after the reveal
+constexpr int REVEAL_MS = 3000;           // 0x428840 / 0x425420 / 0x428c80: ModifierDelay(3000) after the reveal
 constexpr int COMMENT_SHOW_MS = 2000;     // INFERRED: commentary fade timing
 constexpr int COMMENT_FADE_MS = 250;
 constexpr int POPUP_FRAME_MS = 60;        // INFERRED: bingo / all-words popup frame time
-constexpr float BALL_MOVE_SPEED = 900.0f; // INFERRED: px/s for the ball slide
+
 
 // Frames of images/gamescene/tt_commentary.png (189x648, 9 rows).
 enum class Comment {
@@ -148,9 +199,9 @@ enum class Comment {
 
 enum class GamePhase {
     Playing,
-    Reveal,      // missing words shown, waiting REVEAL_MS (time up / give up / all words)
-    AwaitNext,   // round over, NEXT ROUND button (or any click) starts the next one
-    GameOver,    // GAME_OVER sprite shown, click returns to the menu
+    Reveal,      // round over: missing words shown, waiting REVEAL_MS
+    AwaitNext,   // DIALOG_NEXTROUND is up; OK starts the next round
+    GameOver,    // DIALOG_ENDGAME (or DIALOG_CONGRATS) is up
 };
 
 enum class RoundEnd { None, AllWords, TimeUpQualified, TimeUpMissed, NextRound, GaveUp };
@@ -169,10 +220,17 @@ public:
         std::function<void()> on_profile_change;   // bag / counters changed: save
         std::function<void()> on_exit;             // back to the main menu
         std::function<std::uint32_t()> seed_millis = [] { return 0u; };   // timeGetTime() for the bag
+        // Saved games (0x427b20 save on leave, 0x461840 delete).
+        std::function<void(const tt2::SavedGame&)> save_game;
+        std::function<void()> discard_save;
+        // The pause menu is open (true) or closed: the front end lowers the music.
+        std::function<void(bool)> on_pause;
     };
 
+    // `resume`: a saved game to continue (0x42a460); nullptr starts round 1.
     GameScene(const tt2::WordTree& common, const tt2::WordTree& full, tt2::PlayerProfile& profile,
-              tt2::HighScoreManager* highscores, bool timed, Services services, std::int64_t rng_seed)
+              tt2::HighScoreManager* highscores, bool timed, Services services, std::int64_t rng_seed,
+              const tt2::SavedGame* resume = nullptr)
         : common_(common), full_(full), profile_(profile), highscores_(highscores), timed_(timed),
           services_(std::move(services)), rng_(rng_seed), bag_(common, profile.bag) {
         build_buttons();
@@ -186,7 +244,7 @@ public:
         popup_all_ = sprite("POPUP_ALLWORDS", sheet("IMAGE_POPUP_ALLWORDS", 2280, 420, 6, 3, 18), 400, 150);
         popup_all_.anchor = Anchor::Center;
         popup_all_.visible = false;
-        start_round(1);
+        if (!(resume && resume_game(*resume))) start_round(1);
     }
 
     // ---- state for the renderer -------------------------------------
@@ -217,6 +275,38 @@ public:
     const SpriteState& popup_bingo() const { return popup_bingo_; }
     const SpriteState& popup_all_words() const { return popup_all_; }
     const char* background_id() const { return timed_ ? "gamescene/BACKGROUND_TIMED" : "gamescene/BACKGROUND"; }
+    bool dialog_open() const { return dialog_kind_ != GameDialog::None; }
+    GameDialog dialog_kind() const { return dialog_kind_; }
+    const Dialog& dialog() const { return dialog_; }
+    Dialog& dialog() { return dialog_; }
+    // The clock and the animations stand still while one of these is up.
+    bool paused() const {
+        return dialog_kind_ == GameDialog::PauseMenu || dialog_kind_ == GameDialog::ConfirmExit ||
+               dialog_kind_ == GameDialog::ConfirmGiveUp || dialog_kind_ == GameDialog::NotAvailable;
+    }
+    const char* save_mode() const { return tt2::save_mode_name(mode()); }
+
+    // 0x427b20: a round still being played is saved when the scene is left.
+    bool can_save() const { return phase_ == GamePhase::Playing && !finished_ && round_ != nullptr; }
+    // 0x429dd0: WORD, ROUND, TIME, LONGESTWORD, SCORE, DAY, FAILCOUNT and
+    // the found words in board order.
+    tt2::SavedGame snapshot() const {
+        tt2::SavedGame g;
+        g.mode = save_mode();
+        g.word = rack_;
+        g.round = round_number_;
+        g.time_ms = time_left_ms_;
+        g.qualified = qualified();
+        g.score = score_;
+        g.day = -1;
+        g.fail_count = misses_;
+        for (const auto& v : slots_) if (v.found) g.found_words.push_back(v.word);
+        return g;
+    }
+    // Leaving the scene (menu STOP, closing the window): save a running round.
+    void leave() {
+        if (can_save() && services_.save_game) services_.save_game(snapshot());
+    }
 
     // UI bar texts (0x426360: minutes label "<m>:" and seconds "%02d").
     std::string score_text() const { return std::to_string(score_); }
@@ -240,7 +330,7 @@ public:
 
     // ---- input ------------------------------------------------------
     void type_letter(char c) {
-        if (phase_ != GamePhase::Playing) return;
+        if (phase_ != GamePhase::Playing || dialog_open()) return;
         if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
         if (c < 'a' || c > 'z') return;
         // First available ball with that letter, left to right (0x427680 scans the row in order).
@@ -252,7 +342,7 @@ public:
         if (best >= 0) place(static_cast<std::size_t>(best));
     }
     void backspace() {
-        if (phase_ != GamePhase::Playing) return;
+        if (phase_ != GamePhase::Playing || dialog_open()) return;
         int last = -1;
         for (std::size_t i = 0; i < balls_.size(); ++i) {
             if (!balls_[i].played) continue;
@@ -261,29 +351,46 @@ public:
         if (last >= 0) unplace(static_cast<std::size_t>(last));
     }
     void key_return() {
-        switch (phase_) {
-            case GamePhase::Playing: submit(); break;
-            case GamePhase::AwaitNext: next_round(); break;
-            case GamePhase::GameOver: exit_to_menu(); break;
-            default: break;
+        if (dialog_open()) {
+            switch (dialog_kind_) {
+                case GameDialog::PauseMenu: dialog_press("BUTTON_RESUME"); break;
+                case GameDialog::ConfirmExit:
+                case GameDialog::ConfirmGiveUp: dialog_press("BUTTON_YES"); break;
+                default: dialog_press("BUTTON_OK"); break;
+            }
+            return;
+        }
+        if (phase_ == GamePhase::Playing) submit();
+    }
+    void key_space() { if (phase_ == GamePhase::Playing && !dialog_open()) twist(); }
+    // INFERRED: Esc opens the pause menu, and backs out of it.
+    void key_escape() {
+        switch (dialog_kind_) {
+            case GameDialog::None: open_pause_menu(); break;
+            case GameDialog::PauseMenu: dialog_press("BUTTON_RESUME"); break;
+            case GameDialog::ConfirmExit:
+            case GameDialog::ConfirmGiveUp: dialog_press("BUTTON_NO"); break;
+            case GameDialog::NotAvailable: dialog_press("BUTTON_OK"); break;
+            default: break;   // round-end dialogs need a choice
         }
     }
-    void key_space() { if (phase_ == GamePhase::Playing) twist(); }
-    void key_escape() {
-        // INFERRED: Esc behaves like the in-game Menu button (leave the game).
-        if (phase_ == GamePhase::GameOver || phase_ == GamePhase::AwaitNext) exit_to_menu();
-        else give_up();
-    }
+    // 0x428b60, event 0x206 (INFERRED: the window lost focus): show the menu.
+    void focus_lost() { if (!dialog_open()) open_pause_menu(); }
 
     // True while the pointer sits on a clickable button — the SDL
     // front end switches to the hand cursor for this.
     bool pointer_over_clickable() const {
+        if (dialog_open()) return dialog_pointer_hot(dialog_);
         for (const auto& b : buttons_)
             if (b.hover && b.enabled && b.sprite.visible) return true;
         return false;
     }
 
     void mouse_move(float x, float y) {
+        if (dialog_open()) {
+            if (dialog_mouse_move(dialog_, x, y)) play(SoundId::ButtonRollover);
+            return;
+        }
         for (auto& b : buttons_) {
             const bool over = b.sprite.visible && b.enabled && b.contains(x, y);
             if (over && !b.hover) play(SoundId::ButtonRollover);
@@ -292,9 +399,15 @@ public:
         }
     }
     void mouse_down(float x, float y) {
+        if (dialog_open()) { dialog_mouse_down(dialog_, x, y); return; }
         for (auto& b : buttons_) b.pressed = b.sprite.visible && b.enabled && b.contains(x, y);
     }
     void mouse_up(float x, float y) {
+        if (dialog_open()) {
+            const std::string name = dialog_mouse_up(dialog_, x, y);
+            if (!name.empty()) dialog_press(name);
+            return;
+        }
         for (auto& b : buttons_) {
             const bool over = b.sprite.visible && b.enabled && b.contains(x, y);
             const bool fire = b.pressed && over;
@@ -315,38 +428,71 @@ public:
                     if (is_last_played(i)) { unplace(i); return; }
                 }
             }
-            return;
         }
-        if (phase_ == GamePhase::AwaitNext) next_round();
-        else if (phase_ == GamePhase::GameOver) exit_to_menu();
     }
 
+    // A scene button (also used by the keyboard shortcuts and tests).
     void press(const std::string& name) {
+        if (dialog_open()) return;
         if (name == "BUTTON_Twist") twist();
         else if (name == "BUTTON_Clear") clear();
         else if (name == "BUTTON_LastWord") last_word_again();
         else if (name == "BUTTON_Enter") submit();
-        else if (name == "BUTTON_NextRound") { if (phase_ == GamePhase::AwaitNext || qualified()) next_round(); }
-        else if (name == "BUTTON_GiveUp") give_up();
-        else if (name == "BUTTON_Menu") exit_to_menu();
+        else if (name == "BUTTON_NextRound") { if (phase_ == GamePhase::Playing && qualified()) next_round(); }
+        else if (name == "BUTTON_GiveUp") { if (phase_ == GamePhase::Playing) open_dialog(GameDialog::ConfirmGiveUp); }
+        else if (name == "BUTTON_Menu") open_pause_menu();
+    }
+
+    // A button of the open dialog (mouse, keyboard and tests).
+    void dialog_press(const std::string& name) {
+        const MenuButton* b = dialog_.button(name);
+        if (!dialog_open() || !b || !b->enabled) return;
+        play(SoundId::Button);
+        switch (dialog_kind_) {
+            case GameDialog::PauseMenu:
+                if (name == "BUTTON_RESUME") close_dialog();
+                else if (name == "BUTTON_STOP") open_dialog(GameDialog::ConfirmExit);
+                else open_dialog(GameDialog::NotAvailable);   // HOWTOPLAY / SETTINGS: not built yet
+                break;
+            case GameDialog::NotAvailable: open_dialog(GameDialog::PauseMenu); break;
+            case GameDialog::ConfirmExit:
+                // 0x408320: YES leaves (the round is saved on the way out,
+                // 0x427b20); NO goes back to the menu (INFERRED).
+                if (name == "BUTTON_YES") { close_dialog(); leave(); exit_to_menu(); }
+                else open_dialog(GameDialog::PauseMenu);
+                break;
+            case GameDialog::ConfirmGiveUp:
+                close_dialog();
+                if (name == "BUTTON_YES") give_up();
+                break;
+            case GameDialog::NextRound:
+                close_dialog();
+                next_round();
+                break;
+            case GameDialog::Congrats: open_dialog(GameDialog::EndGame); break;   // INFERRED order
+            case GameDialog::EndGame:
+                close_dialog();
+                if (name == "BUTTON_REPLAY") new_game();
+                else exit_to_menu();
+                break;
+            case GameDialog::None: break;
+        }
     }
 
     // ---- simulation -------------------------------------------------
     void update(int dt_ms) {
         if (finished_) return;
+        if (dialog_open()) dialog_tick(dialog_, dt_ms);
+        if (paused()) return;
+        const int round_before = round_number_;
         queue_.update(dt_ms);
         comment_queue_.update(dt_ms);
         popup_queue_.update(dt_ms);
-        // Ball slide (INFERRED easing: constant speed).
-        const float step = BALL_MOVE_SPEED * static_cast<float>(dt_ms) / 1000.0f;
-        for (auto& b : balls_) {
-            const float dx = b.target_x - b.x, dy = b.target_y - b.y;
-            const float d = std::sqrt(dx * dx + dy * dy);
-            if (d <= step) { b.x = b.target_x; b.y = b.target_y; }
-            else { b.x += dx / d * step; b.y += dy / d * step; }
-        }
+        for (auto& b : balls_)
+            if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43a940 after each flip
         // Timer (0x426d59: only CLASSIC_TIMED / WOTD tick).
-        if (phase_ == GamePhase::Playing && timed_) {
+        // A round started by the queue this frame begins at a full 2:00.
+        if (phase_ == GamePhase::Playing && timed_ && round_number_ == round_before) {
             const int before = time_left_ms_;
             time_left_ms_ = std::max(0, time_left_ms_ - dt_ms);
             // 10 s warning: one SOUND_game_clock_countdown per second (0x425f47).
@@ -361,20 +507,54 @@ public:
 
 private:
     // ---- round flow -------------------------------------------------
-    void start_round(int number) {
-        round_number_ = number;
-        round_end_ = RoundEnd::None;
-        phase_ = GamePhase::Playing;
-        time_left_ms_ = ROUND_MS;
+    tt2::ClassicRound::Config round_config() const {
         tt2::ClassicRound::Config cfg;
         cfg.timed = timed_;
         cfg.max_word_length = static_cast<std::size_t>(profile_.max_word_length);
         cfg.round_ms = timed_ ? ROUND_MS : 0;
-        round_ = std::make_unique<tt2::ClassicRound>(common_, full_, cfg);
+        return cfg;
+    }
+
+    void start_round(int number) {
+        round_ = std::make_unique<tt2::ClassicRound>(common_, full_, round_config());
         const auto res = round_->start(rng_, bag_, 0);
-        rack_ = res.rack;
         profile_.bag = bag_.state();
         if (services_.on_profile_change) services_.on_profile_change();
+        setup_round(number, res);
+    }
+
+    // 0x42a460: round 1 is rebuilt from WORD, the counters come back from
+    // the file, every found word is placed again, then the file is
+    // deleted. False (and nothing changed) when the save cannot be used.
+    bool resume_game(const tt2::SavedGame& g) {
+        if (!g.valid()) return false;
+        auto round = std::make_unique<tt2::ClassicRound>(common_, full_, round_config());
+        const auto res = round->start_with_rack(g.word);
+        if (res.board_words.empty()) return false;
+        round_ = std::move(round);
+        setup_round(g.round, res);
+        for (const auto& w : g.found_words) {
+            const auto rep = round_->restore_guess(w);
+            if (rep.slot_index < slots_.size()) {
+                slots_[rep.slot_index].found = true;
+                slots_[rep.slot_index].word = rep.placed_word;
+            }
+        }
+        score_ = g.score;
+        misses_ = g.fail_count;
+        if (timed_) time_left_ms_ = std::min(ROUND_MS, g.time_ms);
+        round_->restore(0, g.qualified, static_cast<std::uint32_t>(time_left_ms_));
+        if (services_.discard_save) services_.discard_save();
+        refresh_buttons();
+        return true;
+    }
+
+    void setup_round(int number, const tt2::ClassicRound::Result& res) {
+        round_number_ = number;
+        round_end_ = RoundEnd::None;
+        phase_ = GamePhase::Playing;
+        time_left_ms_ = ROUND_MS;
+        rack_ = res.rack;
         // Board.
         slots_.clear();
         table_ = layout_anagram_table(res.board_words);
@@ -386,20 +566,45 @@ private:
             slots_.push_back(v);
         }
         // Rack: every ball starts in the available row (0x4396e0 loop).
+        const std::string order = scrambled(rack_);
         balls_.clear();
         const int n = static_cast<int>(rack_.size());
         for (int i = 0; i < n; ++i) {
             LetterBall b;
-            b.letter = rack_[static_cast<std::size_t>(i)];
+            b.letter = order[static_cast<std::size_t>(i)];
             b.played = false;
             b.slot = i;
-            b.target_x = b.x = ball_center_x(n, i);
-            b.target_y = b.y = AVAILABLE_ROW_Y + BALL_HALF;
+            b.start_x = b.target_x = b.x = ball_center_x(n, i);
+            b.start_y = b.target_y = b.y = AVAILABLE_ROW_Y + BALL_HALF;
+            // 0x43c940: each ball flips in 120 ms after the previous one.
+            b.frame = 0;
+            b.reveal_delay_ms = i * BALL_REVEAL_STAGGER_MS;
+            b.reveal_elapsed_ms = 0;
             balls_.push_back(b);
         }
-        play(SoundId::LetterLoad);
         game_over_.alpha = 0.0f;
         refresh_buttons();
+    }
+
+    // The rack letters in the order the balls are laid out. DEVIATION /
+    // INFERRED: the order the shipped game deals the balls in was not
+    // traced. Laying them out in word order handed the player the bingo
+    // (ROADMAP "Identified bugs" #1), so they are shuffled with the game
+    // LCG like a twist, and shuffled again (up to 8 tries) while they still
+    // spell the rack word.
+    std::string scrambled(const std::string& word) {
+        std::vector<char> letters(word.begin(), word.end());
+        for (int tries = 0; tries < 8 && std::string(letters.begin(), letters.end()) == word; ++tries)
+            rng_.shuffle(letters);
+        return std::string(letters.begin(), letters.end());
+    }
+
+    // DIALOG_ENDGAME "PLAY AGAIN": a fresh game in the same mode.
+    void new_game() {
+        score_ = 0;
+        misses_ = 0;
+        last_word_.clear();
+        start_round(1);
     }
 
     void submit() {
@@ -466,42 +671,57 @@ private:
         end_round(RoundEnd::GaveUp);
     }
 
-    // 0x428840 (all words) / 0x425420 (missed): reveal the board, wait,
-    // then either carry on or finish the game.
+    // Round over. Every path reveals the missing words
+    // (SOUND_word_pass_reveal) and waits 3000 ms, then:
+    //   qualified (0x428840)      -> DIALOG_NEXTROUND, OK starts the next round
+    //   missed, lives left (0x425420 -> 0x425190) -> the next round starts by itself
+    //   third miss / give up (0x425420 else, 0x428c80 -> 0x427d10)
+    //                             -> high score, DIALOG_CONGRATS or DIALOG_ENDGAME
     void end_round(RoundEnd why) {
         round_end_ = why;
         return_all_letters();
-        bool game_over = false;
+        enum class After { NextDialog, AutoNext, GameOver } after = After::NextDialog;
         switch (why) {
             case RoundEnd::AllWords:
             case RoundEnd::TimeUpQualified:
             case RoundEnd::NextRound:
                 profile_.rounds_completed[static_cast<std::size_t>(mode())] += 1;
-                play(SoundId::NextRoundAchieved);
                 break;
             case RoundEnd::TimeUpMissed:
                 misses_ += 1;
                 play(SoundId::LoseLife);
-                game_over = misses_ >= LIVES;
+                after = misses_ >= LIVES ? After::GameOver : After::AutoNext;
                 break;
             case RoundEnd::GaveUp:
-                game_over = true;
+                after = After::GameOver;
                 break;
             case RoundEnd::None: break;
         }
         if (services_.on_profile_change) services_.on_profile_change();
-        const bool need_reveal = !round_->complete();
-        if (need_reveal) {
+        if (after == After::GameOver && services_.discard_save) services_.discard_save();   // 0x461840
+        if (!round_->complete())
             for (auto& s : slots_) if (!s.found) s.revealed = true;
-            play(SoundId::WordPassReveal);
-        }
+        play(SoundId::WordPassReveal);
         phase_ = GamePhase::Reveal;
         refresh_buttons();
-        const GamePhase after = game_over ? GamePhase::GameOver : GamePhase::AwaitNext;
-        queue_.push_delay(need_reveal ? REVEAL_MS : 0);
+        if (after == After::GameOver) {
+            game_over_.frame = 0;
+            game_over_.alpha = 0.0f;
+            queue_.push_alpha(&game_over_, 0.0f, 1.0f, 500);
+            queue_.push_delay(REVEAL_MS - 500);
+        } else {
+            queue_.push_delay(REVEAL_MS);
+        }
         queue_.push_method([this, after] {
-            phase_ = after;
-            if (after == GamePhase::GameOver) finish_game();
+            switch (after) {
+                case After::NextDialog:
+                    phase_ = GamePhase::AwaitNext;
+                    play(SoundId::NextRoundAchieved);   // 0x426860 case 3
+                    open_dialog(GameDialog::NextRound);
+                    break;
+                case After::AutoNext: start_round(round_number_ + 1); break;
+                case After::GameOver: finish_game(); break;
+            }
             refresh_buttons();
         });
     }
@@ -517,16 +737,43 @@ private:
         start_round(round_number_ + 1);
     }
 
+    // 0x427d10: a positive score goes to the high-score table; a new
+    // entry shows DIALOG_CONGRATS, anything else DIALOG_ENDGAME.
     void finish_game() {
-        game_over_.frame = 0;
-        game_over_.alpha = 0.0f;
-        queue_.push_alpha(&game_over_, 0.0f, 1.0f, 500);
+        phase_ = GamePhase::GameOver;
+        bool high = false;
         if (highscores_ && score_ > 0) {
             const int rank = highscores_->submit(mode(), profile_.name, score_, std::to_string(round_number_));
-            if (rank >= 0) play(SoundId::HighScoreAchieved);
+            if (rank >= 0) { play(SoundId::HighScoreAchieved); high = true; }
             if (services_.on_profile_change) services_.on_profile_change();
         }
+        open_dialog(high ? GameDialog::Congrats : GameDialog::EndGame);
     }
+
+    // ---- dialogs ----------------------------------------------------
+    void open_pause_menu() {
+        if (finished_ || dialog_open()) return;
+        open_dialog(GameDialog::PauseMenu);
+    }
+    void open_dialog(GameDialog kind) {
+        const bool was_paused = paused();
+        dialog_kind_ = kind;
+        switch (kind) {
+            case GameDialog::PauseMenu: dialog_ = build_pause_menu(); break;
+            case GameDialog::ConfirmExit: dialog_ = build_yes_no(game_strings::EXIT_HEADER, game_strings::EXIT_BODY); break;
+            case GameDialog::ConfirmGiveUp: dialog_ = build_yes_no(game_strings::GIVEUP_HEADER, game_strings::GIVEUP_BODY); break;
+            case GameDialog::NotAvailable:
+                dialog_ = build_yes_no(game_strings::NOT_AVAILABLE_HEADER, game_strings::NOT_AVAILABLE, true);
+                break;
+            case GameDialog::NextRound: dialog_ = build_next_round(); break;
+            case GameDialog::EndGame: dialog_ = build_end_game(); break;
+            case GameDialog::Congrats: dialog_ = build_congrats(); break;
+            case GameDialog::None: dialog_ = Dialog{}; break;
+        }
+        for (auto& b : buttons_) b.hover = b.pressed = false;
+        if (paused() != was_paused && services_.on_pause) services_.on_pause(paused());
+    }
+    void close_dialog() { open_dialog(GameDialog::None); }
 
     void exit_to_menu() {
         if (finished_) return;
@@ -550,11 +797,15 @@ private:
         for (const auto& b : balls_) if (b.played && b.slot > balls_[i].slot) return false;
         return balls_[i].played;
     }
-    void move_to(LetterBall& b, bool played_row, int slot) {
+    void move_to(LetterBall& b, bool played_row, int slot, int ms = BALL_MOVE_MS) {
         b.played = played_row;
         b.slot = slot;
+        b.start_x = b.x;
+        b.start_y = b.y;
         b.target_x = ball_center_x(static_cast<int>(balls_.size()), slot);
         b.target_y = (played_row ? PLAYED_ROW_Y : AVAILABLE_ROW_Y) + BALL_HALF;
+        b.move_ms = ms;
+        b.move_elapsed_ms = 0;
     }
     // 0x43bad0(index = -1): the ball goes to the first empty cell of the row.
     void place(std::size_t i) {
@@ -600,7 +851,8 @@ private:
         std::vector<int> slots;
         for (std::size_t i : avail) slots.push_back(balls_[i].slot);
         rng_.shuffle(slots);
-        for (std::size_t k = 0; k < avail.size(); ++k) move_to(balls_[avail[k]], false, slots[k]);
+        // 0x43c370: the relayout slides every ball to its new cell in 400 ms.
+        for (std::size_t k = 0; k < avail.size(); ++k) move_to(balls_[avail[k]], false, slots[k], BALL_RELAYOUT_MS);
         profile_.twists += 1;
         play(SoundId::WordTwist);
     }
@@ -678,6 +930,8 @@ private:
     std::vector<MenuButton> buttons_;
     SpriteState commentary_, game_over_, popup_bingo_, popup_all_;
     ModifierQueue queue_, comment_queue_, popup_queue_;
+    GameDialog dialog_kind_ = GameDialog::None;
+    Dialog dialog_;
 };
 
 }  // namespace tt2ui

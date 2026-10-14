@@ -74,9 +74,15 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   index `-1` a ball goes to the **first empty cell** of the row.
 - `0x439d00` (`LetterBall`): sprite `IMAGE_LETTERBALL_ANIM` (`letterball_anim.png`
   1020×1560, 17 columns × 26 rows of 60×60); the row is the letter, frame
-  `(letter - 'a') * 17`. The last frame of a row is the square "chicklet" that the game
-  shows at rest (INFERRED from the sheet: frames 0–2 are the blank ball, 3–14 the ball
-  flipping, 15–16 the square tile; `IMAGE_CHICKLET_SHEEN` is overlaid on it).
+  `(letter - 'a') * 17`. The ctor also builds an `IMAGE_LETTERBALL_50` / `_40` sprite and
+  an `IMAGE_CHICKLET_SHEEN` overlay; the Classic scene does not show them (not drawn here).
+- Round-start flip (CONFIRMED, `0x43c940` → `0x43a820`): ball `i` waits `i * 120` ms, then a
+  `ModifierFrame` runs frames `first .. first + 11` at **60 ms** per frame and plays
+  `SOUND_letter_load` when it ends (`0x43a940`). The ball **rests on frame 11**, the round
+  pearl; frames 12–16 morph it into the square chicklet and are not used by this scene.
+- Move (CONFIRMED, `0x43a4c0`): into a container a ball slides with `ModifierLocationLine`
+  in **300 ms** (plus a `ModifierScale`); the twist relayout (`0x43c370`) uses **400 ms**.
+  The easing function (label `0x4513d0`) does not decompile; linear is INFERRED.
 - `0x427680` (mouse): a click on an available ball plays it (`SOUND_letter_place`); a click
   on the **last** played ball takes it back (`SOUND_letter_clear`).
 - Twist: INFERRED as a `std::random_shuffle` of the available balls with the game LCG
@@ -103,7 +109,12 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
 - End of round: `0x428840` (all words) / `0x425420` (time up without a bingo): the missing
   words are revealed (`SOUND_word_pass_reveal`, `ModifierDelay(3000)`); a miss increments
   `+0x1e8` and plays `SOUND_game_lose_life`; the **third** miss marks the game over
-  (`+0x260 = 1`, high-score save `0x428c80`). Give Up ends the game at once.
+  (`+0x260 = 1`, high-score save `0x428c80`). Every reveal holds **3000 ms**. Give Up asks
+  first (`0x425b60` sets `+0x20c = 4`; `0x426860` case 4 opens the "Give Up?" yes/no).
+- After the reveal (CONFIRMED): qualified → `DIALOG_NEXTROUND`; a miss with lives left →
+  the next round starts by itself (`0x425190`); game over → `0x427d10` submits the score
+  and opens `DIALOG_CONGRATS` when it ranks, else `DIALOG_ENDGAME`. Game over deletes the
+  saved game (`0x427cc0`).
 - INFERRED: NEXT ROUND / GIVE UP share one spot and swap on the qualified flag; pressing
   NEXT ROUND while qualified ends the round early; the clock labels are hidden in Untimed;
   the GAME OVER sprite fades in over 500 ms and a click returns to the menu; the
@@ -115,7 +126,42 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   profiles. Progress counters (`TRACKER/SOLVED`, `HARD_SOLVED`, `TWISTS`, rounds per mode)
   and the bag state are written back to the player profile after every change.
 
-## 6. Address index
+## 6. Dialogs (dialogs.xml, CONFIRMED unless marked)
+
+All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
+
+| Dialog | Size | Contents |
+| --- | --- | --- |
+| `DIALOG_MENU` (pause) | 322×390 | `PAUSE_HEADER` "PAUSE MENU" at (163, 19); 181×208 buttons HOW TO PLAY (162, 87), SETTINGS (163, 155), STOP (163, 224), RESUME (163, 290) |
+| `DIALOG_YESNO` | 400×180 min | `HEADER`, `MESSAGE` (line height 30); `0x40b470` moves YES / NO down by the message height and grows the **height** only |
+| `DIALOG_NEXTROUND` | 380×320 | `IMAGE_BURST` sparkle (frametime 40, `#FFA800`, additive) at (191, 154); "Click to continue to the next round!"; OK at (190, 239) |
+| `DIALOG_ENDGAME` | 380×260 | "GAME OVER" (190, 14); body (192, 88), line height 38; PLAY AGAIN (271, 173), MENU (109, 173) |
+| `DIALOG_CONGRATS` | 380×320 | sparkle frame 4 at (191, 138); "Congratulations! You earned a new high score!" (193, 107) |
+
+- `0x407f40` wires the pause menu. STOP opens `0x408320`: "Exit Game?" / "Are you sure you
+  want to leave this game? Your game will be saved for next time." YES saves and leaves.
+- `0x428b60` event `0x206` opens the pause menu; INFERRED to be the window losing focus.
+- Not implemented: HOW TO PLAY / SETTINGS (they show "Not available"), the eight
+  letterball sprites of `DIALOG_NEXTROUND`, `DialogPause` (`0x409e50`, key `p`, which
+  clashes with typing), and the Pass dialog.
+
+## 7. Saved games (CONFIRMED)
+
+- `PlayerManager` (`0x460900`) keeps a `savegames` folder next to `players`. On scene start
+  (`0x4242a0`) a save for the mode (`CLASSIC_TIMED`, `CLASSIC_UNTIMED`, `WORD_OF_THE_DAY`)
+  is loaded with `0x42a460`; otherwise a fresh game starts (`0x425c50`).
+- The menu asks first (`0x42dc80`): "Continue the game?" / "Do you want to continue your
+  last played game? (Select 'No' to start again.)". NO deletes the save.
+- Save (`0x429dd0`), called when the scene is left mid-round (`0x427b20`, only when
+  `+0x264 == 0`): `WORD`, `ROUND`, `TIME`, `LONGESTWORD` (the qualified flag), `SCORE`,
+  `DAY`, `FAILCOUNT` and a `WORD_LIST` of the found words (`0x432cb0`).
+- Load rebuilds round 1 from `WORD`, overwrites the counters, places every listed word
+  again without scoring (`0x433090` → `0x432b20`), then **deletes the file** (`0x461840`).
+  A Word of the Day save from another `DAY` starts a new game.
+- Our file is plain text (`tt2/saved_game.hpp`), one per player and mode, at
+  `savegames/<player>/<MODE>.txt`; the original binary format is not reproduced.
+
+## 8. Address index
 
 | Address | What |
 | --- | --- |
@@ -129,3 +175,10 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
 | `0x439d00` | `LetterBall` ctor: `IMAGE_LETTERBALL_ANIM` frame = letter × 17 |
 | `0x43bad0` | Put a ball into a container cell (first free cell for index −1) |
 | `0x43c370` / `0x43c940` | Container relayout / reveal animation |
+| `0x43a820` / `0x43a940` | Ball flip (12 frames, 60 ms) / its `SOUND_letter_load` |
+| `0x43a4c0` | Ball move: 300 ms into a container, 400 ms on relayout |
+| `0x407f40` / `0x408320` | Pause menu ctor / "Exit Game?" confirmation |
+| `0x40b470` | Yes/no dialog: buttons below the message, height grows |
+| `0x4242a0` / `0x42dc80` | Scene start (load or new game) / "Continue the game?" prompt |
+| `0x429dd0` / `0x42a460` | Save / load the running game |
+| `0x427d10` | Game over: high score, then `DIALOG_CONGRATS` or `DIALOG_ENDGAME` |

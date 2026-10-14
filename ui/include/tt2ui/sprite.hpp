@@ -55,6 +55,8 @@ struct SpriteState {
     Rect clip;              // relative to the frame's top-left
     int frame_time_ms = 0;  // > 0: loop through all frames automatically
     int frame_accum_ms = 0;
+    bool additive = false;  // blendmode="additive"
+    unsigned tint = 0xFFFFFF;   // color="#RRGGBB" (multiplied in)
 
     // Top-left corner on screen after applying the anchor.
     float left() const {

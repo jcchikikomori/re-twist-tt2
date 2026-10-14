@@ -230,3 +230,58 @@ TEST(classic_wotd_caps_per_length_at_5) {
         ASSERT_TRUE(c <= 5);
     }
 }
+
+// ---- saved-game restore (0x42a460) ---------------------------------------
+
+TEST(classic_round_starts_from_a_given_rack) {
+    auto com = common();
+    auto ful = full();
+    ClassicRound r(com, ful, ClassicRound::Config{});
+    const auto res = r.start_with_rack("caret");
+    ASSERT_EQ(res.rack, std::string("caret"));
+    ASSERT_TRUE(!res.board_words.empty());
+    ASSERT_EQ(r.rack(), std::string("caret"));
+    ASSERT_EQ(r.score(), 0);
+    ASSERT_TRUE(!r.qualified());
+    // The board is the same one a bag pick of the same word would give.
+    Board b = Board::build("caret", com, 0);
+    ASSERT_EQ(res.slot_count, b.all().size());
+}
+
+TEST(classic_round_restore_places_words_without_scoring) {
+    auto com = common();
+    auto ful = full();
+    ClassicRound r(com, ful, ClassicRound::Config{});
+    r.start_with_rack("caret");
+    const auto a = r.restore_guess("care");
+    ASSERT_TRUE(a.status == GuessStatus::Accepted);
+    ASSERT_EQ(a.points_awarded, 0);
+    ASSERT_TRUE(!a.bingo);
+    ASSERT_EQ(a.placed_word, std::string("care"));
+    ASSERT_EQ(r.found(), std::size_t{1});
+    ASSERT_EQ(r.score(), 0);
+    ASSERT_TRUE(!r.qualified());                        // only `restore` sets it
+    // A restored bingo does not qualify by itself either.
+    const auto b = r.restore_guess("caret");
+    ASSERT_TRUE(b.status == GuessStatus::Accepted);
+    ASSERT_TRUE(!r.qualified());
+    // Duplicates and foreign words are reported, not placed.
+    ASSERT_TRUE(r.restore_guess("care").status == GuessStatus::Duplicate);
+    ASSERT_TRUE(r.restore_guess("quux").status == GuessStatus::NotAWord);
+    ASSERT_EQ(r.found(), std::size_t{2});
+    // The counters come back from the file.
+    ClassicRound::Config timed;
+    timed.timed = true;
+    timed.round_ms = 120000;
+    ClassicRound t(com, ful, timed);
+    t.start_with_rack("caret");
+    t.restore(1250, true, 85000);
+    ASSERT_EQ(t.score(), 1250);
+    ASSERT_TRUE(t.qualified());
+    ASSERT_EQ(t.time_left_ms(), std::uint32_t{85000});
+    r.restore(40, false, 85000);
+    ASSERT_EQ(r.time_left_ms(), std::uint32_t{0});       // untimed: the clock stays at 0
+    ASSERT_TRUE(r.restore_guess("x").status == GuessStatus::NotAWord);
+    ClassicRound fresh(com, ful, ClassicRound::Config{});
+    ASSERT_TRUE(fresh.restore_guess("care").status == GuessStatus::NotAWord);   // before start
+}
