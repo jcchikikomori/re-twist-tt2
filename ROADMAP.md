@@ -30,7 +30,8 @@ This document describes the current status and the upcoming milestones of this p
 1. The word (that can advance to the next round) during starting the level (or next level) was shown, ended up cheating.
    Fixed: the balls are now dealt scrambled (the original deal order is still untraced).
 2. No animations during the game.
-3. When hovering the items on the main menu, it triggers a sound effect which is not on a original game (no sound effect).
+3. When hovering the items on the main menu, it triggers a sound effect which is not existing on a original game.
+4. No music during pause screen. It should continue playing in the background.
 
 ## Success stories (what we made, so far)
 
