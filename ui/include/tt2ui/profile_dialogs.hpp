@@ -39,6 +39,10 @@ struct TextLabel {
     int max_width = 0;        // > 0: the renderer wraps / clips (unused by the model)
     bool visible = true;
     int line_height = 0;      // dialogs.xml `lineheight` for multi-line text ("\n"); 0 = glyph height
+    float alpha = 1.0f;       // page fades (HelpPager)
+    // When set, the label is a stand-in for the dialog sprite of that name:
+    // the renderer draws it only while that sprite's image is a placeholder.
+    std::string fallback_for{};
 };
 
 enum class DialogKind { None, NewPlayer, PlayerSelect, Confirm, Message };
@@ -73,6 +77,10 @@ struct Dialog {
     }
     SpriteState* sprite_named(const std::string& name) {
         for (auto& s : sprites) if (s.name == name) return &s;
+        return nullptr;
+    }
+    const SpriteState* sprite_named(const std::string& name) const {
+        for (const auto& s : sprites) if (s.name == name) return &s;
         return nullptr;
     }
 };

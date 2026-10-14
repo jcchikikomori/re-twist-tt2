@@ -194,13 +194,22 @@ TEST(settings_info_opens_the_credits_over_the_settings) {
     ASSERT_EQ(c->w, 798);
     ASSERT_EQ(c->h, 595);
     ASSERT_TRUE(c->button("BUTTON_OK")->sprite.x == 714.0f && c->button("BUTTON_OK")->sprite.y == 535.0f);
-    // This project's own credits, its creator first.
-    ASSERT_EQ(c->label("HEADING_0")->text, std::string("Created by"));
-    ASSERT_EQ(c->label("LINES_0")->text, std::string("John Cyrill Corsanes"));
+    // Page 1 is the original 2008 credits: the GRA_CREDITS picture, with
+    // the same names as text for builds that have no imported picture.
+    ASSERT_TRUE(c->sprite_named("P0_GRA_CREDITS") != nullptr);
+    ASSERT_TRUE(c->sprite_named("P0_GRA_CREDITS")->x == 46.0f && c->sprite_named("P0_GRA_CREDITS")->y == 124.0f);
+    ASSERT_EQ(c->label("P0_ORIG_HEADING_0")->text, std::string("Producer"));
+    ASSERT_EQ(c->label("P0_ORIG_NAMES_0")->text, std::string("Teagen Densmore"));
+    ASSERT_EQ(c->label("P0_ORIG_NAMES_0")->fallback_for, std::string("P0_GRA_CREDITS"));
+    ASSERT_EQ(c->label("P0_MESSAGE")->text, std::string("Copyright \u00a92008 GameHouse, Inc."));
+    ASSERT_TRUE(c->label("P0_MESSAGE")->alpha == 1.0f);
+    // Page 2, this recreation, waits behind NEXT.
+    ASSERT_EQ(c->label("P1_HEADING_0")->text, std::string("Made possible by"));
+    ASSERT_EQ(c->label("P1_LINES_0")->text, std::string("Claude (Anthropic)"));
+    ASSERT_TRUE(c->label("P1_HEADING_0")->alpha == 0.0f && c->label("P1_MESSAGE")->alpha == 0.0f);
+    ASSERT_TRUE(c->label("P1_MESSAGE")->text.find("not affiliated with GameHouse") != std::string::npos);
     ASSERT_EQ(c->label("VERSION")->text, std::string("VERSION ") + TT2_VERSION);
-    ASSERT_TRUE(c->label("MESSAGE")->text.find("GameHouse") != std::string::npos);
-    for (const SpriteState& sp : c->sprites)
-        ASSERT_TRUE(sp.name != "GRA_CREDITS");                   // not the 2008 staff picture
+    ASSERT_TRUE(!c->button("BUTTON_PREV")->sprite.visible && c->button("BUTTON_NEXT")->sprite.visible);
     // The settings underneath ignore presses while the credits are up.
     const int len_before = d.max_word_length();
     ASSERT_TRUE(d.press("SWITCH_LENGTH_8") == SettingsDialog::Result::None);
@@ -233,6 +242,68 @@ TEST(settings_credits_take_the_mouse) {
     d.mouse_down(ox, oy);
     ASSERT_TRUE(d.mouse_up(ox, oy) == SettingsDialog::Result::None);
     ASSERT_TRUE(d.credits() == nullptr);
+}
+
+TEST(settings_credits_next_crossfades_to_the_recreation_page) {
+    Rig r;
+    SettingsDialog d(saved(), 7, true, r.services());
+    d.press("BUTTON_INFO");
+    ASSERT_TRUE(d.press("BUTTON_NEXT") == SettingsDialog::Result::None);
+    ASSERT_EQ(d.credits_dialog()->page(), 1);
+    ASSERT_TRUE(d.credits() != nullptr);                                     // NEXT does not close
+    ASSERT_EQ(r.count(SoundId::Button), 2);                                  // INFO, NEXT
+    d.tick(50);                                                              // t = 0.25
+    const Dialog* c = d.credits();
+    ASSERT_TRUE(c->label("P0_MESSAGE")->alpha == 0.75f && c->sprite_named("P0_GRA_CREDITS")->alpha == 0.75f);
+    ASSERT_TRUE(c->label("P0_ORIG_HEADING_0")->alpha == 0.75f);
+    ASSERT_TRUE(c->label("P1_HEADING_0")->alpha == 0.25f && c->label("P1_MESSAGE")->alpha == 0.25f);
+    d.tick(HELP_FADE_MS);
+    ASSERT_TRUE(c->label("P0_MESSAGE")->alpha == 0.0f && c->label("P1_LINES_0")->alpha == 1.0f);
+    ASSERT_TRUE(c->button("BUTTON_PREV")->sprite.visible && !c->button("BUTTON_NEXT")->sprite.visible);
+    // NEXT is hidden on the last page: a press is ignored, silently.
+    ASSERT_TRUE(d.press("BUTTON_NEXT") == SettingsDialog::Result::None);
+    ASSERT_EQ(d.credits_dialog()->page(), 1);
+    ASSERT_EQ(r.count(SoundId::Button), 2);
+    // PREV goes back to the original credits; OK closes from either page.
+    d.press("BUTTON_PREV");
+    ASSERT_EQ(d.credits_dialog()->page(), 0);
+    d.tick(HELP_FADE_MS);
+    ASSERT_TRUE(c->label("P0_MESSAGE")->alpha == 1.0f && c->label("P1_MESSAGE")->alpha == 0.0f);
+    d.press("BUTTON_NEXT");
+    ASSERT_TRUE(d.press("BUTTON_OK") == SettingsDialog::Result::None);
+    ASSERT_TRUE(d.credits() == nullptr);
+}
+
+TEST(credits_prev_is_hidden_on_the_first_page) {
+    CreditsDialog c;
+    ASSERT_TRUE(!c.press("BUTTON_PREV"));
+    ASSERT_EQ(c.page(), 0);
+    ASSERT_TRUE(!c.press("BUTTON_NOPE"));
+    ASSERT_TRUE(c.press("BUTTON_OK"));
+}
+
+TEST(credits_reopen_on_the_original_page) {
+    Rig r;
+    SettingsDialog d(saved(), 7, true, r.services());
+    d.press("BUTTON_INFO");
+    d.press("BUTTON_NEXT");
+    d.press("BUTTON_CANCEL");                                                // host Esc
+    d.press("BUTTON_INFO");
+    ASSERT_EQ(d.credits_dialog()->page(), 0);
+    ASSERT_TRUE(d.credits()->label("P0_MESSAGE")->alpha == 1.0f);
+}
+
+TEST(credits_name_every_original_section_once) {
+    const Dialog c = build_credits();
+    int headings = 0;
+    for (const TextLabel& l : c.labels)
+        if (l.name.rfind("P0_ORIG_HEADING_", 0) == 0) {
+            ++headings;
+            ASSERT_EQ(l.fallback_for, std::string("P0_GRA_CREDITS"));
+        }
+    ASSERT_EQ(headings, static_cast<int>(sizeof(credits_strings::ORIGINAL) / sizeof(credits_strings::ORIGINAL[0])));
+    // Labels outside the stand-in always draw.
+    ASSERT_TRUE(c.label("P1_HEADING_0")->fallback_for.empty() && c.label("VERSION")->fallback_for.empty());
 }
 
 TEST(settings_alt_enter_is_the_only_fullscreen_shortcut) {

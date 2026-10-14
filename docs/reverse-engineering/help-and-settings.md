@@ -211,8 +211,16 @@ Evidence: `ev_6e6a9b2f0860f144078fced097ce2b18e6765717bf945f04e2560058f5ec86aa`,
 `ev_38cb2daaaa0e59ebc0668b0e8be3c69c97f6822ee1c9e31170fcbf13083ca9eb`.
 
 Port (`credits_dialog.hpp`, owned by `SettingsDialog`): same frame, logo, `VERSION` (the
-CMake project version) and OK. Deliberate deviation: `GRA_CREDITS` credits the people who
-made the 2008 game, not this recreation, so its box holds this project's credits (creator,
-word lists, libraries) and `MESSAGE` names the original game. INFERRED: a child sprite's
-offset scales with its parent, and the logo parts show frame 0.
+CMake project version) and OK, over two pages.
+
+- **Page 1 is the original credits.** `GRA_CREDITS` and `TEXT_CREDITS0` sit where the original
+  puts them. The picture loads only from the user's `imported-assets/`; without it, the
+  `P0_ORIG_*` labels draw the same roles and names as text in the picture's layout (each label's
+  `fallback_for` names the sprite it stands in for).
+- **Page 2 is this recreation.** Deliberate deviation: a second page, reached with NEXT (the help
+  dialog's PREV/NEXT art at (580, 535)) and crossfaded with `HelpPager` over 200 ms, credits Claude
+  (Anthropic), who generated the code, the person who compiled it, the open word lists and SDL2,
+  and its `MESSAGE` says the port is not affiliated with GameHouse.
+
+INFERRED: a child sprite's offset scales with its parent, and the logo parts show frame 0.
 

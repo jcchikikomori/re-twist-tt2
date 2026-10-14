@@ -65,10 +65,14 @@ inline Dialog build_help() {
 }
 
 // The page state of an open DIALOG_HELP; the pictures live in the Dialog.
+// Page i is every sprite and label whose name starts with page_name(i), so
+// DIALOG_CREDITS reuses it for its two pages.
 struct HelpPager {
     int page = 0;
     int from = -1;      // the page fading out, -1 when idle
     int fade_ms = 0;    // elapsed time of the fade
+    int count = HELP_PAGE_COUNT;
+    std::string (*page_name)(int) = help_page_name;
 
     bool fading() const { return from >= 0; }
 
@@ -76,13 +80,13 @@ struct HelpPager {
     // wrapped. INFERRED: a turn during a fade first finishes that fade.
     void turn(Dialog& d, int step) {
         const int to = page + step;
-        if (to < 0 || to >= HELP_PAGE_COUNT) return;
+        if (to < 0 || to >= count) return;
         if (fading()) finish(d);
         from = page;
         page = to;
         fade_ms = 0;
         if (auto* b = d.button("BUTTON_PREV")) b->sprite.visible = page > 0;
-        if (auto* b = d.button("BUTTON_NEXT")) b->sprite.visible = page < HELP_PAGE_COUNT - 1;
+        if (auto* b = d.button("BUTTON_NEXT")) b->sprite.visible = page < count - 1;
     }
 
     void tick(Dialog& d, int dt_ms) {
@@ -101,9 +105,12 @@ private:
         from = -1;
         fade_ms = 0;
     }
-    static void set_alpha(Dialog& d, int i, float a) {
+    void set_alpha(Dialog& d, int i, float a) const {
+        const std::string prefix = page_name(i);
         for (auto& s : d.sprites)
-            if (s.name == help_page_name(i)) s.alpha = a;
+            if (s.name.rfind(prefix, 0) == 0) s.alpha = a;
+        for (auto& l : d.labels)
+            if (l.name.rfind(prefix, 0) == 0) l.alpha = a;
     }
 };
 

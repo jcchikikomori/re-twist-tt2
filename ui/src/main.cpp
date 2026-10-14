@@ -97,6 +97,7 @@ const std::map<std::string, std::string> kImageFiles = {
     {"IMAGE_LOGO_BOUNCE", "images/selectionscene/logo_bounce.png"},
     {"IMAGE_LOGO_COIL", "images/selectionscene/logo_coil.png"},
     {"IMAGE_LOGO_STATIC", "images/selectionscene/logo_static.png"},
+    {"IMAGE_GRA_CREDITS", "images/gui/gra_credits.png"},
     // section default: dialog GUI
     {"BORDER_TOP_LEFT", "images/gui/dialogdefault/top_left.png"},
     {"BORDER_TOP_CENTER", "images/gui/dialogdefault/top.png"},
@@ -718,6 +719,12 @@ std::string placeholder_button_label(const std::string& name, const std::string&
 SDL_Rect draw_label_text(SDL_Renderer* ren, Assets& assets, const TextLabel& l, const std::string& text, float ox,
                          float oy) {
     SDL_Rect last{};
+    if (l.alpha <= 0.0f) return last;
+    // Page fades (HelpPager): every font layer at the label's alpha.
+    std::vector<SDL_Texture*>& layers = assets.font(l.font_id).layers;
+    const Uint8 a = static_cast<Uint8>(std::clamp(l.alpha, 0.0f, 1.0f) * 255.0f);
+    if (a < 255)
+        for (SDL_Texture* t : layers) if (t) SDL_SetTextureAlphaMod(t, a);
     const int lh = l.line_height > 0 ? l.line_height : assets.font(l.font_id).font.glyph_height();
     std::size_t start = 0;
     int line = 0;
@@ -730,6 +737,8 @@ SDL_Rect draw_label_text(SDL_Renderer* ren, Assets& assets, const TextLabel& l, 
         start = nl + 1;
         ++line;
     }
+    if (a < 255)
+        for (SDL_Texture* t : layers) if (t) SDL_SetTextureAlphaMod(t, 255);
     return last;
 }
 
@@ -762,6 +771,12 @@ void draw_dialog(SDL_Renderer* ren, Assets& assets, const Dialog& d, const std::
     }
     for (const TextLabel& l : d.labels) {
         if (!l.visible) continue;
+        if (!l.fallback_for.empty()) {
+            // A text stand-in: only while its picture is missing.
+            const SpriteState* pic = nullptr;
+            for (const SpriteState& s : d.sprites) if (s.name == l.fallback_for) pic = &s;
+            if (!pic || !assets.image(pic->sheet).placeholder) continue;
+        }
         std::string text = l.text;
         if (l.name == "INPUT_TEXT") text = input;
         const SDL_Rect run = draw_label_text(ren, assets, l, text, ox, oy);
@@ -1530,6 +1545,8 @@ int main(int argc, char** argv) {
                 else if (menu_settings && c == '@') menu_settings->press("BUTTON_INFO");
                 else if (menu_settings && c >= '6' && c <= '8')
                     menu_settings->press(SettingsDialog::length_switch(c - '0'));
+                else if (menu_settings && c == '<') menu_settings->press("BUTTON_PREV");   // credits pages
+                else if (menu_settings && c == '>') menu_settings->press("BUTTON_NEXT");
                 else if (c == '<') menu_help_press("BUTTON_PREV");
                 else if (c == '>') menu_help_press("BUTTON_NEXT");
                 else if (c == '~') menu_help_press("BUTTON_OK");
@@ -1559,7 +1576,8 @@ int main(int argc, char** argv) {
                 else if (c >= '6' && c <= '8') game->dialog_press(SettingsDialog::length_switch(c - '0'));
                 else if (c == '<') game->dialog_press("BUTTON_PREV");       // help: previous page
                 else if (c == '>') {
-                    if (game->dialog_kind() == GameDialog::HowToPlay) game->dialog_press("BUTTON_NEXT");
+                    if (game->dialog_kind() == GameDialog::HowToPlay || game->dialog_kind() == GameDialog::Settings)
+                        game->dialog_press("BUTTON_NEXT");                  // help or credits: next page
                     else game->press("BUTTON_NextRound");                   // NEXT ROUND once qualified
                 }
                 else game->type_letter(c);
