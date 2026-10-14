@@ -349,16 +349,34 @@ All are `autocenter` over a 0.7 black backdrop (`DIALOG_BACKGROUND_ALPHA`).
   `IMAGE_PARTICLEBALL` particles: random angle, distance `75 + rand % 50` px, alpha fade
   over `600 + rand % 90` ms, linear easing. Each ball runs the round-start flip `0x43a820`
   with its flag argument 1, so `SOUND_letter_load` (`0x43a940`) plays as each one lands;
-  like the rack, a waiting ball shows its first (blank) frame. UNCONFIRMED: the particles'
-  travel time and delay (two stack values the decompiler leaves uninitialised). Slot
-  positions:
+  like the rack, a waiting ball shows its first (blank) frame. Slot positions:
 
   | Slot | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
   | --- | --- | --- | --- | --- | --- | --- | --- | --- |
   | (x, y) | (60, 34) | (124, 3) | (192, −8) | (259, 1) | (321, 34) | (126, 75) | (192, 61) | (257, 74) |
 
+- `DIALOG_NEXTROUND` particle burst (CONFIRMED from the listing of `0x409100`,
+  `ev_6d98d1f974a40d4e765a68fc65c5a399c3df22821369dbd49eaae6c33319d31e`; the decompiler
+  output leaves both durations uninitialised). Per ball, 8 particles (`[esp+0x3c] = 8` at
+  `0x40935b`), each an `IMAGE_PARTICLEBALL` sprite (`particleball.png`, 18×18) at the ball's
+  centre with alpha 1, linked into the ball's parent just before the ball (`0x409531`–
+  `0x409579`), so it draws under it. A `ModifierDelay` holds it for the **ball's own delay**
+  (`0x4096d9` copies `[esp+0x24]`, the `500 + 200·i` counter). Two modifiers chained after
+  that delay then run together:
+  - `ModifierLocationLine` (ctor `0x486560`, `EDX = 0x2bc` at `0x4098bf`): **700 ms**,
+    linear (`0x4307e0`), to `centre + ((75 + rx)·cos a, (75 + ry)·sin a)`;
+  - `ModifierAlpha` 1 → 0 over `600 + rand % 90` ms (`0x4097b9`–`0x409807`), linear.
+  The draws come from the global LCG (`0x5fde90`) in this order: the angle
+  `a = next(24) / 2^24 · 2π` (`0x40959c`, `CL = 0x18`), `rx = rand % 50`, `ry = rand % 50`,
+  then the fade. The fade (at most 689 ms) always ends before the 700 ms trip, so a particle
+  is gone before it stops. Worked example: ball G (delay 500) with `rx = 20` and `a = 0`
+  starts moving at 500 ms and would reach `x + 95` at 1200 ms, but is invisible from at most
+  1189 ms. Port: `Particle` / `next_round_particles()`, drawn under the dialog balls. The
+  port draws from its own LCG stream so the burst does not shift the deal and twist
+  randomness (a cosmetic deviation). The anchor of `0x442be0` is not traced; the port
+  centres the particle like the balls.
 - HOW TO PLAY and SETTINGS are decoded in `help-and-settings.md`.
-- Not implemented: the next-round particle burst and `DialogPause` (`0x409e50`, key `p`,
+- Not implemented: `DialogPause` (`0x409e50`, key `p`,
   which clashes with typing).
 
 ## 7. Saved games (CONFIRMED)

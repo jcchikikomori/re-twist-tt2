@@ -823,6 +823,83 @@ TEST(next_round_balls_skip_spaces_and_stop_at_eight) {
     ASSERT_TRUE(next_round_balls("   ").empty());
 }
 
+// ---- DIALOG_NEXTROUND particle burst (0x409100) -----------------------------
+
+TEST(particle_waits_then_flies_out_and_fades) {
+    Particle p;
+    p.start_x = 10;
+    p.start_y = 20;
+    p.end_x = 110;                                         // 100 px to the right
+    p.end_y = 20;
+    p.delay_ms = 500;
+    p.fade_ms = 600;
+    p.tick(499);                                           // still on its ball
+    ASSERT_EQ(p.x(), 10.0f);
+    ASSERT_EQ(p.alpha(), 1.0f);
+    p.tick(351);                                           // 350 ms in: 350 / 700 of the way
+    ASSERT_EQ(p.x(), 60.0f);
+    ASSERT_EQ(p.y(), 20.0f);
+    ASSERT_TRUE(std::fabs(p.alpha() - (1.0f - 350.0f / 600.0f)) < 1e-6f);
+    p.tick(250);                                           // 600 ms in: faded out, not there yet
+    ASSERT_EQ(p.alpha(), 0.0f);
+    ASSERT_TRUE(p.x() < 110.0f);
+    p.tick(1000);                                          // the line stops at its end
+    ASSERT_EQ(p.x(), 110.0f);
+    ASSERT_EQ(p.alpha(), 0.0f);
+}
+
+TEST(each_next_round_ball_bursts_eight_particles) {
+    const auto balls = next_round_balls(NEXT_ROUND_LETTERBALLS);
+    tt2::Random rng(42);
+    const auto ps = next_round_particles(balls, rng);
+    ASSERT_EQ(ps.size(), balls.size() * NEXT_ROUND_PARTICLES_PER_BALL);
+    for (std::size_t i = 0; i < ps.size(); ++i) {
+        const LetterBall& b = balls[i / NEXT_ROUND_PARTICLES_PER_BALL];
+        const Particle& p = ps[i];
+        ASSERT_EQ(p.start_x, b.x);                         // from the ball's centre
+        ASSERT_EQ(p.start_y, b.y);
+        ASSERT_EQ(p.delay_ms, b.reveal_delay_ms);          // with the ball (500 + 200 * i)
+        ASSERT_TRUE(p.fade_ms >= 600 && p.fade_ms < 690);
+        const float d = std::hypot(p.end_x - p.start_x, p.end_y - p.start_y);
+        ASSERT_TRUE(d >= 75.0f - 1e-3f && d <= 124.0f + 1e-3f);   // (75 + 0..49) on each axis
+    }
+    // Same seed, same burst; the draws are angle, rx, ry, fade per particle.
+    tt2::Random again(42);
+    const auto ps2 = next_round_particles(balls, again);
+    ASSERT_EQ(ps2[5].end_x, ps[5].end_x);
+    tt2::Random manual(42);
+    manual.next_int();
+    const double a = static_cast<double>(manual.state() >> 24) / 16777216.0 * 6.283185307179586;
+    const int rx = manual.rand(0, 50);
+    const int ry = manual.rand(0, 50);
+    const int fade = 600 + manual.rand(0, 90);
+    ASSERT_EQ(ps[0].end_x, balls[0].x + (75.0f + rx) * static_cast<float>(std::cos(a)));
+    ASSERT_EQ(ps[0].end_y, balls[0].y + (75.0f + ry) * static_cast<float>(std::sin(a)));
+    ASSERT_EQ(ps[0].fade_ms, fade);
+    // No balls, no burst.
+    tt2::Random none(1);
+    ASSERT_TRUE(next_round_particles({}, none).empty());
+}
+
+TEST(next_round_dialog_owns_its_particles) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    ASSERT_TRUE(s.dialog_particles().empty());
+    std::vector<std::string> words;
+    for (const auto& v : s.slots()) words.push_back(v.word);
+    for (const auto& w : words) { f.type(w); s.key_return(); }
+    s.update(REVEAL_MS + 16);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+    ASSERT_EQ(s.dialog_particles().size(), std::size_t{8 * 8});
+    const Particle first = s.dialog_particles()[0];
+    s.update(500 + 350);                                   // G's burst is half way out
+    ASSERT_TRUE(s.dialog_particles()[0].x() != first.x() || s.dialog_particles()[0].y() != first.y());
+    ASSERT_TRUE(s.dialog_particles()[0].alpha() < 1.0f);
+    ASSERT_EQ(s.dialog_particles()[63].alpha(), 1.0f);    // B waits until 2100 ms
+    s.dialog_press("BUTTON_OK");
+    ASSERT_TRUE(s.dialog_particles().empty());             // gone with the dialog
+}
+
 TEST(next_round_dialog_flips_its_balls_with_sound) {
     Fixture f(false);
     auto& s = *f.scene;

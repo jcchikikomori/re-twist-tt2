@@ -148,6 +148,7 @@ const std::map<std::string, std::string> kImageFiles = {
     {"BUTTON_END_MENU", "images/gui/button_end_menu.png"},
     {"BUTTON_END_PLAYAGAIN", "images/gui/button_end_playagain.png"},
     {"IMAGE_BURST", "images/trophyscene/burst.png"},
+    {"IMAGE_PARTICLEBALL", "images/gamescene/particleball.png"},
     // DIALOG_HELP (help-and-settings.md §2).
     // DIALOG_SETTINGS (help-and-settings.md §3).
     {"SLIDER_BACK", "images/gui/slider_back.png"},
@@ -248,7 +249,9 @@ void paint_pearl(SDL_Surface* s, SDL_Rect cell, int f) {
     static const float squash[17] = {1.0f, 0.78f, 0.18f, 0.78f, 1, 1, 1, 1, 1, 1, 1, 1, 0.92f, 1, 1, 1, 1};
     static const float power[17] = {2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2.6f, 3.4f, 4.6f, 7.0f};
     const float sx = squash[f], n = power[f];
-    const float r = (f == 12 ? 25.0f : 27.5f);
+    // 60x60 balls keep their 27.5 px radius; the 18x18 burst particle
+    // (IMAGE_PARTICLEBALL) shrinks to fit its cell.
+    const float r = std::min(f == 12 ? 25.0f : 27.5f, cell.w * 0.5f - 1.0f);
     const float cx = cell.x + cell.w * 0.5f, cy = cell.y + cell.h * 0.5f;
     Uint32* px = static_cast<Uint32*>(s->pixels);
     const int pitch = s->pitch / 4;
@@ -337,7 +340,8 @@ SDL_Surface* make_placeholder(const SheetSpec& spec) {
         r = 0x16; g = 0x9c; b = 0xd8;
     }
 
-    if (spec.image_id == "IMAGE_LETTERBALL_ANIM" || spec.image_id == "IMAGE_BURST" || spec.image_id == "LetterBox") {
+    if (spec.image_id == "IMAGE_LETTERBALL_ANIM" || spec.image_id == "IMAGE_BURST" || spec.image_id == "LetterBox" ||
+        spec.image_id == "IMAGE_PARTICLEBALL") {
         SDL_FillRect(s, nullptr, SDL_MapRGBA(s->format, 0, 0, 0, 0));
         for (int f = 0; f < spec.frames; ++f) {
             SDL_Rect cell{spec.frame_x(f), spec.frame_y(f), spec.frame_w, spec.frame_h};
@@ -984,7 +988,7 @@ int main(int argc, char** argv) {
                                // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP, '>' NEXT ROUND,
                                // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages,
                                // '#' SETTINGS, '6'..'8' max length, '!' fullscreen switch, '^' Alt+Enter,
-                               // '%' the shown PASS / GIVE UP button
+                               // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_dir = argv[++i];
@@ -1457,6 +1461,7 @@ int main(int argc, char** argv) {
                 else if (c == '^') toggle_fullscreen();                      // Alt+Enter
                 else if (c == '%')                                            // the shown PASS / GIVE UP
                     for (const char* n : {"BUTTON_Pass_2", "BUTTON_Pass", "BUTTON_GiveUp"}) game->press(n);
+                else if (c == '}') game->press("BUTTON_NextRound");         // qualified: next round
                 else if (c == '!') game->dialog_press("SWITCH_FULLSCREEN");  // settings: fullscreen
                 else if (c >= '6' && c <= '8') game->dialog_press(SettingsDialog::length_switch(c - '0'));
                 else if (c == '<') game->dialog_press("BUTTON_PREV");       // help: previous page
@@ -1505,6 +1510,15 @@ int main(int argc, char** argv) {
             draw_help(ren, assets, game->dialog());
         } else if (game && game->dialog_open()) {
             draw_dialog(ren, assets, game->dialog());
+            // 0x409100: the burst is linked in under its ball.
+            const SheetSpec particle = sheet("IMAGE_PARTICLEBALL", 18, 18);
+            for (const Particle& p : game->dialog_particles()) {
+                SpriteState sp = sprite("PARTICLE", particle, p.x() + game->dialog().left(),
+                                        p.y() + game->dialog().top());
+                sp.anchor = Anchor::Center;
+                sp.alpha = p.alpha();
+                draw_sprite(ren, assets, sp);
+            }
             for (const LetterBall& b : game->dialog_balls())
                 draw_letter_ball(ren, assets, b, game->dialog().left(), game->dialog().top());
         }

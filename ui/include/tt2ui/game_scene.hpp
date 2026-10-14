@@ -254,7 +254,8 @@ struct LetterBall {
 // (spaces count) waits 500 + 200 * i ms, then runs the round-start flip
 // 0x43a820 with its sound flag set. Upper case is folded to the sheet's
 // a-z rows; a character without a row, or one past slot 8, gets no ball
-// (the original finds no sprite "9"). The particle burst is not drawn yet.
+// (the original finds no sprite "9"). Each ball also bursts 8 particles
+// (next_round_particles below).
 inline constexpr const char* NEXT_ROUND_LETTERBALLS = "Great Job";   // TEXT_NEXT_ROUND_LETTERBALLS
 constexpr int NEXT_ROUND_BALL_SLOTS = 8;
 constexpr float NEXT_ROUND_BALL_XY[NEXT_ROUND_BALL_SLOTS][2] = {
@@ -279,6 +280,70 @@ inline std::vector<LetterBall> next_round_balls(const std::string& text) {
         b.reveal_delay_ms = NEXT_ROUND_BALL_DELAY_MS + NEXT_ROUND_BALL_STEP_MS * static_cast<int>(i);
         b.reveal_elapsed_ms = 0;
         out.push_back(b);
+    }
+    return out;
+}
+
+// DIALOG_NEXTROUND particle burst (0x409100, CONFIRMED from the listing):
+// 8 IMAGE_PARTICLEBALL sprites (particleball.png, 18x18) per ball, linked
+// in just before their ball so they draw under it. Each one waits its
+// ball's delay (ModifierDelay, 0x4096d9 copies the 500 + 200 * i delay),
+// then two modifiers chained after that delay run together:
+//   - ModifierLocationLine, 700 ms (0x4098bf: EDX = 0x2bc), linear
+//     (0x4307e0), from the ball centre to centre + (75 + rx) * cos(a),
+//     (75 + ry) * sin(a);
+//   - ModifierAlpha 1 -> 0 over 600 + rand % 90 ms, linear.
+// Random draws per particle, in this order: the angle a = next(24) / 2^24
+// * 2pi (0x4095a1, CL = 0x18), rx = rand % 50, ry = rand % 50, then the
+// fade rand % 90. The fade always ends first (at most 689 ms), so a
+// particle is gone before it reaches the end of its line.
+constexpr int NEXT_ROUND_PARTICLES_PER_BALL = 8;   // 0x40935b: [esp+0x3c] = 8
+constexpr int PARTICLE_TRAVEL_MS = 700;
+constexpr float PARTICLE_DISTANCE = 75.0f;         // [0x59ba08]
+constexpr int PARTICLE_DISTANCE_SPAN = 50;         // rand % 0x32
+constexpr int PARTICLE_FADE_MS = 600;              // + 0x258
+constexpr int PARTICLE_FADE_SPAN_MS = 90;          // rand % 0x5a
+
+struct Particle {
+    float start_x = 0, start_y = 0;   // dialog-local, the ball's centre
+    float end_x = 0, end_y = 0;
+    int delay_ms = 0;
+    int fade_ms = PARTICLE_FADE_MS;
+    int elapsed_ms = 0;
+
+    void tick(int dt) { elapsed_ms += dt; }
+    int moving_ms() const { return std::max(0, elapsed_ms - delay_ms); }
+    float x() const {
+        const float t = std::min(1.0f, static_cast<float>(moving_ms()) / PARTICLE_TRAVEL_MS);
+        return start_x + (end_x - start_x) * t;
+    }
+    float y() const {
+        const float t = std::min(1.0f, static_cast<float>(moving_ms()) / PARTICLE_TRAVEL_MS);
+        return start_y + (end_y - start_y) * t;
+    }
+    float alpha() const {
+        return 1.0f - std::min(1.0f, static_cast<float>(moving_ms()) / static_cast<float>(fade_ms));
+    }
+};
+
+inline std::vector<Particle> next_round_particles(const std::vector<LetterBall>& balls, tt2::Random& rng) {
+    constexpr double TWO_PI = 6.283185307179586;   // 0x401921fb60000000
+    std::vector<Particle> out;
+    for (const auto& b : balls) {
+        for (int k = 0; k < NEXT_ROUND_PARTICLES_PER_BALL; ++k) {
+            rng.next_int();   // advance, then take the top 24 of the 48 state bits
+            const double a = static_cast<double>(rng.state() >> 24) / 16777216.0 * TWO_PI;
+            const int rx = rng.rand(0, PARTICLE_DISTANCE_SPAN);
+            const int ry = rng.rand(0, PARTICLE_DISTANCE_SPAN);
+            Particle p;
+            p.start_x = b.x;
+            p.start_y = b.y;
+            p.end_x = b.x + (PARTICLE_DISTANCE + static_cast<float>(rx)) * static_cast<float>(std::cos(a));
+            p.end_y = b.y + (PARTICLE_DISTANCE + static_cast<float>(ry)) * static_cast<float>(std::sin(a));
+            p.delay_ms = b.reveal_delay_ms;
+            p.fade_ms = PARTICLE_FADE_MS + rng.rand(0, PARTICLE_FADE_SPAN_MS);
+            out.push_back(p);
+        }
     }
     return out;
 }
@@ -417,6 +482,7 @@ public:
               const tt2::SavedGame* resume = nullptr)
         : common_(common), full_(full), profile_(profile), highscores_(highscores), timed_(timed),
           services_(std::move(services)), rng_(rng_seed), bag_(common, profile.bag) {
+        particle_rng_.set_seed(rng_seed + 1);
         build_buttons();
         popup_.visible = false;
         if (!(resume && resume_game(*resume))) start_round(1);
@@ -450,6 +516,8 @@ public:
     }
     // DIALOG_NEXTROUND letterballs, dialog-local; empty for other dialogs.
     const std::vector<LetterBall>& dialog_balls() const { return dialog_balls_; }
+    // DIALOG_NEXTROUND particle burst, dialog-local; drawn under the balls.
+    const std::vector<Particle>& dialog_particles() const { return dialog_particles_; }
     // DIALOG_HELP page state; meaningful while dialog_kind() == HowToPlay.
     const HelpPager& help() const { return help_; }
     std::vector<MenuButton>& buttons() { return buttons_; }
@@ -732,6 +800,7 @@ public:
         else if (dialog_open()) dialog_tick(dialog_, dt_ms);
         for (auto& b : dialog_balls_)
             if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43a820 flag 1 -> 0x43a940
+        for (auto& p : dialog_particles_) p.tick(dt_ms);
         if (paused()) return;
         const int round_before = round_number_;
         queue_.update(dt_ms);
@@ -1028,6 +1097,7 @@ private:
     void open_dialog(GameDialog kind) {
         dialog_kind_ = kind;
         dialog_balls_.clear();
+        dialog_particles_.clear();
         settings_.reset();
         switch (kind) {
             case GameDialog::PauseMenu: dialog_ = build_pause_menu(); break;
@@ -1055,6 +1125,7 @@ private:
             case GameDialog::NextRound:
                 dialog_ = build_next_round();
                 dialog_balls_ = next_round_balls(NEXT_ROUND_LETTERBALLS);
+                dialog_particles_ = next_round_particles(dialog_balls_, particle_rng_);
                 break;
             case GameDialog::EndGame: dialog_ = build_end_game(); break;
             case GameDialog::Congrats: dialog_ = build_congrats(); break;
@@ -1259,6 +1330,11 @@ private:
     HelpPager help_;                         // DIALOG_HELP page state
     std::optional<SettingsDialog> settings_; // DIALOG_SETTINGS while open
     std::vector<LetterBall> dialog_balls_;   // DIALOG_NEXTROUND letterballs
+    std::vector<Particle> dialog_particles_;
+    // The original draws the burst from its global LCG (0x5fde90); a
+    // separate stream keeps the cosmetic burst from shifting the deal and
+    // twist randomness.
+    tt2::Random particle_rng_;
     std::vector<MenuButton> buttons_;
     bool ball_hot_ = false;   // pointer over a letter ball (hand cursor)
     bool word_hot_ = false;   // pointer over a shown word (hand cursor)
