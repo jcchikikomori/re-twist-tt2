@@ -407,6 +407,19 @@ All are `autocenter` and `dodarkenbackground="true"`.
 - Port: `dialog_fade.hpp` (`DialogFade`, `darken_color`). The renderer draws each dialog
   slot into its own texture; a closing dialog fades out from its last frame. Deviation:
   the port acts on a button at the click, not after the 200 ms hide fade.
+- **A dialog under another never fades** (CONFIRMED, re-read 2026-10-15): the fade lives
+  only in show `0x40ccc0` (`ModifierAlpha(0 → 1)` on the dialog being shown,
+  `ev_09e7db4e965c6ce1803195520b13466e61363f581b31c460a4dfae899e755586`) and hide
+  `0x40ce80` (`ModifierAlpha(1 → 0)` on the dialog being hidden,
+  `ev_bcc7575af53b901909a0c731bf9672eaf083f8b2501217b681479ade36194634`), and a dialog
+  opened over another skips the hide (see "Dialogs stack" below). The darken colour is set
+  once by `0x40d190` (`ev_1abf1dd47f2ab8689ea665a55dad1e3e922644f27cc61a24969d9a147f72a0bd`).
+  So on a push only the new dialog and its backdrop fade in; on a pop only the top one
+  and its backdrop fade out. **Port:** the dialog under the top one lives in its own
+  slot, so a push or pop moves it between slots; `hand_off()` carries its alpha across
+  instead of fading it out of one slot and in to the other (the old out-then-in flicker),
+  and a popped dialog is drawn above the one coming back, over its own fading backdrop
+  (`closing_above()`).
 
 | Dialog | Size | Contents |
 | --- | --- | --- |

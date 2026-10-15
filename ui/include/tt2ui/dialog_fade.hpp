@@ -13,6 +13,10 @@
 //     has no such string.
 // INFERRED: the backdrop fades with its dialog. The routine that draws the
 // colour was not found, so it is assumed to follow the dialog's alpha.
+// CONFIRMED (game-scene.md "Dialogs stack"): a dialog opened over another
+// (0x408320, 0x408250) is shown without hiding the one below, and only show
+// 0x40ccc0 / hide 0x40ce80 add a fade. So the dialog underneath never fades
+// when another opens over it or closes off it: hand_off() below.
 //
 // DialogFade tracks one dialog slot. The renderer keeps the last frame of a
 // dialog that has just closed and fades it out from that frame.
@@ -59,6 +63,7 @@ public:
             if (open_id_ != 0) {
                 closing_id_ = open_id_;
                 closing_alpha_ = open_alpha_;
+                closing_above_ = false;
                 started_closing = true;
             }
             open_id_ = id;
@@ -73,13 +78,39 @@ public:
         return started_closing;
     }
 
+    // Show `id` at `alpha` straight away: it comes from another slot. A
+    // different dialog open here starts closing; returns true then, like
+    // update().
+    bool adopt(int id, float alpha) {
+        bool started_closing = false;
+        if (open_id_ != 0 && open_id_ != id) {
+            closing_id_ = open_id_;
+            closing_alpha_ = open_alpha_;
+            closing_above_ = true;   // it was on top of the one coming back
+            started_closing = true;
+        }
+        open_id_ = id;
+        open_alpha_ = std::clamp(alpha, 0.0f, 1.0f);
+        return started_closing;
+    }
+
+    // Forget the open dialog without fading it: it moved to another slot.
+    void drop() {
+        open_id_ = 0;
+        open_alpha_ = 0.0f;
+    }
+
     int open_id() const { return open_id_; }
     float open_alpha() const { return open_id_ != 0 ? open_alpha_ : 0.0f; }
     bool closing() const { return closing_id_ != 0; }
     int closing_id() const { return closing_id_; }
     float closing_alpha() const { return closing_id_ != 0 ? closing_alpha_ : 0.0f; }
-    // One backdrop per slot: the stronger of the two fades.
-    float backdrop() const { return std::max(open_alpha(), closing_alpha()); }
+    // The closing dialog was popped off the one now open (adopt()): it is
+    // drawn above it, with its own backdrop fading out.
+    bool closing_above() const { return closing_id_ != 0 && closing_above_; }
+    // One backdrop per slot: the stronger of the two fades. With
+    // closing_above() each dialog has its own, so this is the open one's.
+    float backdrop() const { return closing_above() ? open_alpha() : std::max(open_alpha(), closing_alpha()); }
     bool visible() const { return open_id_ != 0 || closing_id_ != 0; }
 
 private:
@@ -87,6 +118,35 @@ private:
     float open_alpha_ = 0.0f;
     int closing_id_ = 0;
     float closing_alpha_ = 0.0f;
+    bool closing_above_ = false;
 };
+
+// Which slots started closing in hand_off(); the renderer keeps their last
+// frame for the fade-out, as after update().
+struct HandOff {
+    bool under_closing = false;
+    bool top_closing = false;
+};
+
+// `under` holds the dialog just below the top one, `top` the top one;
+// `under_id` / `top_id` are what each slot shows now. A push moves the old
+// top into `under`, a pop moves it back. The moving dialog keeps its alpha
+// instead of fading out of one slot and in to the other, so only the pushed
+// dialog fades in, and only the popped one fades out. Call it before update()
+// on either slot.
+inline HandOff hand_off(DialogFade& under, int under_id, DialogFade& top, int top_id) {
+    HandOff h;
+    const int was_top = top.open_id();
+    const int was_under = under.open_id();
+    if (was_top != 0 && was_top != top_id && was_top == under_id && was_under != under_id) {   // pushed
+        h.under_closing = under.adopt(was_top, top.open_alpha());
+        top.drop();
+    } else if (was_under != 0 && was_under != under_id && was_under == top_id && was_top != top_id) {   // popped
+        const float alpha = under.open_alpha();
+        under.drop();
+        h.top_closing = top.adopt(was_under, alpha);
+    }
+    return h;
+}
 
 }  // namespace tt2ui

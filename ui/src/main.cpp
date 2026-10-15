@@ -1433,43 +1433,63 @@ void composite_layer(SDL_Renderer* ren, SDL_Texture* t, float alpha) {
     render_copy(ren, t, nullptr, nullptr);
 }
 
+// A dialog pushed over another, or popped off it: the one moving between
+// `under` and `top` keeps its alpha (dialog_fade.hpp hand_off).
+void hand_off_layers(DialogLayer& under, int under_id, DialogLayer& top, int top_id) {
+    const HandOff h = hand_off(under.fade, under_id, top.fade, top_id);
+    if (h.under_closing) std::swap(under.live, under.frozen);
+    if (h.top_closing) std::swap(top.live, top.frozen);
+}
+
 // `id` names the dialog open in this slot now (0 = none); `draw` paints it.
 // Order on screen: the backdrop (dodarkenbackground, 0x40d190), the dialog
-// that is closing, then the open one.
+// that is closing, then the open one. A dialog popped off the open one
+// (closing_above) goes last instead, over its own fading backdrop.
 // `px` is the target size for this frame; a layer of another size (the
 // output changed) is made again.
 template <typename Draw>
 void draw_dialog_layer(SDL_Renderer* ren, LayerSize px, DialogLayer& layer, int id, int dt_ms, Draw&& draw) {
     if (layer.fade.update(id, dt_ms)) std::swap(layer.live, layer.frozen);
     if (!layer.fade.visible()) return;
-    const Rgba8 dark = darken_color(layer.fade.backdrop());
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ren, dark.r, dark.g, dark.b, dark.a);
-    SDL_Rect all{0, 0, SCREEN_W, SCREEN_H};
-    render_fill(ren, &all);
-    if (layer.fade.closing()) composite_layer(ren, layer.frozen, layer.fade.closing_alpha());
-    if (layer.fade.open_id() == 0) return;
-    float lw = 0, lh = 0;
-    if (layer.live && SDL_GetTextureSize(layer.live, &lw, &lh) &&
-        (static_cast<int>(lw) != px.w || static_cast<int>(lh) != px.h)) {
-        SDL_DestroyTexture(layer.live);
-        layer.live = nullptr;
+    const auto darken = [&](float fade) {
+        const Rgba8 dark = darken_color(fade);
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ren, dark.r, dark.g, dark.b, dark.a);
+        SDL_Rect all{0, 0, SCREEN_W, SCREEN_H};
+        render_fill(ren, &all);
+    };
+    const bool above = layer.fade.closing_above();
+    const auto draw_closing = [&] {
+        if (!layer.fade.closing()) return;
+        if (above) darken(layer.fade.closing_alpha());
+        composite_layer(ren, layer.frozen, layer.fade.closing_alpha());
+    };
+    darken(layer.fade.backdrop());
+    if (!above) draw_closing();
+    if (layer.fade.open_id() != 0) {
+        float lw = 0, lh = 0;
+        if (layer.live && SDL_GetTextureSize(layer.live, &lw, &lh) &&
+            (static_cast<int>(lw) != px.w || static_cast<int>(lh) != px.h)) {
+            SDL_DestroyTexture(layer.live);
+            layer.live = nullptr;
+        }
+        if (!layer.live) layer.live = layer_texture(ren, px);
+        if (!layer.live || !SDL_SetRenderTarget(ren, layer.live)) {
+            draw();   // no render targets: draw straight to the screen, unfaded
+        } else {
+            // The dialog code draws in 800x600 canvas units; the target's own view
+            // scales them to its pixels (1 at 800x600).
+            SDL_SetRenderScale(ren, static_cast<float>(px.w) / SCREEN_W, static_cast<float>(px.h) / SCREEN_H);
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(ren, 0, 0, 0, 0);
+            SDL_RenderClear(ren);
+            draw();
+            SDL_SetRenderScale(ren, 1.0f, 1.0f);
+            SDL_SetRenderTarget(ren, nullptr);
+            composite_layer(ren, layer.live, layer.fade.open_alpha());
+        }
     }
-    if (!layer.live) layer.live = layer_texture(ren, px);
-    if (!layer.live || !SDL_SetRenderTarget(ren, layer.live)) {
-        draw();   // no render targets: draw straight to the screen, unfaded
-        return;
-    }
-    // The dialog code draws in 800x600 canvas units; the target's own view
-    // scales them to its pixels (1 at 800x600).
-    SDL_SetRenderScale(ren, static_cast<float>(px.w) / SCREEN_W, static_cast<float>(px.h) / SCREEN_H);
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
-    SDL_SetRenderDrawColor(ren, 0, 0, 0, 0);
-    SDL_RenderClear(ren);
-    draw();
-    SDL_SetRenderScale(ren, 1.0f, 1.0f);
-    SDL_SetRenderTarget(ren, nullptr);
-    composite_layer(ren, layer.live, layer.fade.open_alpha());
+    if (above) draw_closing();
 }
 
 int main(int argc, char** argv) {
@@ -2414,9 +2434,12 @@ int main(int argc, char** argv) {
         // "Exit Game?", SETTINGS or HOW TO PLAY), with its own backdrop:
         // each GF2 dialog darkens what is behind it (dodarkenbackground).
         const Dialog* game_under = game ? game->under_dialog() : nullptr;
-        draw_dialog_layer(ren, layer_px, game_under_layer, game_under ? static_cast<int>(game->under_kind()) : 0, dt,
+        const int game_under_id = game_under ? static_cast<int>(game->under_kind()) : 0;
+        const int game_top_id = game ? static_cast<int>(game->dialog_kind()) : 0;
+        hand_off_layers(game_under_layer, game_under_id, game_layer, game_top_id);
+        draw_dialog_layer(ren, layer_px, game_under_layer, game_under_id, dt,
                           [&] { draw_dialog(ren, assets, *game_under); });
-        draw_dialog_layer(ren, layer_px, game_layer, game ? static_cast<int>(game->dialog_kind()) : 0, dt, [&] {
+        draw_dialog_layer(ren, layer_px, game_layer, game_top_id, dt, [&] {
             if (game->settings_dialog()) {
                 draw_settings(ren, assets, *game->settings_dialog());
                 return;
@@ -2461,6 +2484,11 @@ int main(int argc, char** argv) {
         // Each player dialog still open under the top one, deepest first,
         // with its own backdrop (dodarkenbackground).
         const std::vector<Dialog>& profile_under = profile.under();
+        const int profile_top_id = static_cast<int>(profile.dialog().kind);
+        for (std::size_t i = 0; i < profile_under_layers.size(); ++i)
+            hand_off_layers(profile_under_layers[i],
+                            i < profile_under.size() ? static_cast<int>(profile_under[i].kind) : 0, profile_layer,
+                            profile_top_id);
         for (std::size_t i = 0; i < profile_under_layers.size(); ++i) {
             const Dialog* d = i < profile_under.size() ? &profile_under[i] : nullptr;
             draw_dialog_layer(ren, layer_px, profile_under_layers[i], d ? static_cast<int>(d->kind) : 0, dt,
@@ -2470,7 +2498,7 @@ int main(int argc, char** argv) {
                                               d->kind == DialogKind::NewPlayer ? profile.input_text() : std::string());
                               });
         }
-        draw_dialog_layer(ren, layer_px, profile_layer, static_cast<int>(profile.dialog().kind), dt, [&] {
+        draw_dialog_layer(ren, layer_px, profile_layer, profile_top_id, dt, [&] {
             draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
         });
         const int import_id = import_prompt ? 1 + static_cast<int>(import_prompt->state()) : 0;
