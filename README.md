@@ -214,6 +214,11 @@ is in [`ROADMAP.md`](ROADMAP.md).
 - **Code** (engine, UI, tools, scripts, docs): [MIT](LICENSE).
 - **Dictionaries** (`data/open-*.tree`): `open-full.tree` is public domain and `open-common.tree`
   is CC BY-SA 4.0. See [`data/LICENSE.md`](data/LICENSE.md) for attribution.
+- **Third-party code** keeps its own licence: Super-xBR (MIT, ported in `ui/include/tt2ui/upscale.hpp`;
+  [`third_party/super-xbr/LICENSE`](third_party/super-xbr/LICENSE)), tinyfiledialogs (zlib), SDL3 (zlib) and the
+  placeholder fonts (Apache 2.0, OFL). [`docs/design/asset-credits.md`](docs/design/asset-credits.md) lists them all.
+- **Packages** carry every notice in a `licenses/` folder (`share/licenses/tt2/` inside the AppImage), including
+  the MinGW runtime DLLs' in the Windows zip.
 
 ## Legal
 

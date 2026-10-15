@@ -47,6 +47,8 @@ ctest --test-dir build --output-on-failure    # unit tests
 | `tools/gen_placeholders.py` | Writes the open placeholder art into `data/placeholder/` (bitmap fonts from `third_party/fonts/`, dialog frame, buttons; palette sampled from the original), plus a copy drawn at twice the size in `data/placeholder/2x/` for GPU renderers. Run it with `/usr/bin/python3` (Pillow 9.0.1 reproduces the committed bytes); re-run and commit the output after changing it. |
 | `third_party/fonts/` | Luckiest Guy (Apache 2.0) and Arimo (OFL), unaltered; read only by the generator. |
 | `third_party/tinyfiledialogs/` | Vendored, unaltered (zlib): the native folder picker for the importer. Its own C target, outside `-Werror`. |
+| `third_party/super-xbr/` | `LICENSE` (Hyllian's MIT notice, verbatim) and `VERSION` (upstream commit, shader hashes) for the Super-xBR port in `ui/include/tt2ui/upscale.hpp`; a test keeps the header's copy of the notice identical. |
+| `packaging/linux/` | The desktop file, icon, and the AppImage runtime's licence (`packages.yml` installs it). Every package ships the third-party notices in `licenses/` (`TT2_LICENSE_INSTALL_DIR`). |
 | `data/` | Runtime dictionaries. The open-license `open-common.tree` + `open-full.tree` are committed; the original GameHouse `common.tree` + `full.tree` are gitignored. |
 | `data-src/` | Raw word lists for rebuilding `open-*.tree` (ENABLE2k, frequency lists). |
 | `docs/reverse-engineering/` | Evidence from the original game: binary fingerprint, gameplay notes, `.tree` format spec, reference Python decoder/encoder. |

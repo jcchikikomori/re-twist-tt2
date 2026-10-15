@@ -1,0 +1,10 @@
+Super-xBR (Hyllian), ported to C++, not vendored
+source: https://github.com/libretro/slang-shaders (crt/shaders/crt-super-xbr/)
+commit: 1950970d62fde8a8db14139731286e2a91d59440 (2024-12-25, last change to that folder)
+license: MIT (see LICENSE; the same notice heads all three passes)
+port: ui/include/tt2ui/upscale.hpp (what it changes is listed at the top of that file)
+
+sha256 of the shaders the port follows:
+adfde240cb300fc2ea263ebae6564f2747f367889dd2aadaf9ae811b2a7aec6b  super-xbr-pass0.slang
+10f7dceddc8d7b8fb32df9bb936e17e7dfcad236abd88f0d9f002faa984226d3  super-xbr-pass1.slang
+a48682084e391dc0309068a55e6cdf35717e899e7fa05d8028f3c02fa3595490  super-xbr-pass2.slang

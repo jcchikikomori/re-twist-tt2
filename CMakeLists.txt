@@ -21,9 +21,11 @@ option(TT2_FETCH_SDL3 "Download and build SDL3, SDL3_image and SDL3_mixer" OFF)
 if(WIN32)
     set(TT2_BIN_INSTALL_DIR ".")
     set(TT2_DATA_INSTALL_DIR "data")
+    set(TT2_LICENSE_INSTALL_DIR "licenses")
 else()
     set(TT2_BIN_INSTALL_DIR "bin")
     set(TT2_DATA_INSTALL_DIR "share/tt2/data")
+    set(TT2_LICENSE_INSTALL_DIR "share/licenses/tt2")
 endif()
 
 # ----------------------------------------------------------------------------
@@ -274,3 +276,20 @@ install(FILES data/open-common.tree data/open-full.tree data/LICENSE.md
 # The generated placeholder art (tools/gen_placeholders.py): open fonts and
 # drawn shapes, used for any file the player hasn't imported.
 install(DIRECTORY data/placeholder DESTINATION ${TT2_DATA_INSTALL_DIR})
+# The notices of everything compiled into the binaries (the fonts' and the
+# dictionaries' licences travel inside data/). MIT and BSD notices must ship
+# with binaries; the zlib ones only with source, but they come along too.
+# packages.yml adds the MinGW runtime DLLs' and the AppImage runtime's.
+install(FILES LICENSE DESTINATION ${TT2_LICENSE_INSTALL_DIR} RENAME re-twist-tt2.txt)
+if(TARGET tt2_app)
+    install(FILES third_party/super-xbr/LICENSE DESTINATION ${TT2_LICENSE_INSTALL_DIR} RENAME super-xbr.txt)
+    install(FILES third_party/tinyfiledialogs/LICENSE DESTINATION ${TT2_LICENSE_INSTALL_DIR}
+        RENAME tinyfiledialogs.txt)
+    if(TT2_FETCH_SDL3)
+        install(FILES ${sdl3_SOURCE_DIR}/LICENSE.txt DESTINATION ${TT2_LICENSE_INSTALL_DIR} RENAME SDL3.txt)
+        install(FILES ${sdl3_image_SOURCE_DIR}/LICENSE.txt DESTINATION ${TT2_LICENSE_INSTALL_DIR}
+            RENAME SDL3_image.txt)
+        install(FILES ${sdl3_mixer_SOURCE_DIR}/LICENSE.txt DESTINATION ${TT2_LICENSE_INSTALL_DIR}
+            RENAME SDL3_mixer.txt)
+    endif()
+endif()

@@ -50,6 +50,10 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=/usr -DTT2_BUILD_TESTS=OFF -DTT2_FETCH_SDL3=ON
           cmake --build build
           DESTDIR="$PWD/AppDir" cmake --install build
+          # The AppImage runtime (the stub in front of the squashfs) is MIT,
+          # with musl, libfuse, squashfuse, zstd and zlib linked in.
+          install -Dm644 packaging/linux/appimage-runtime-LICENSE.txt \
+            AppDir/usr/share/licenses/tt2/appimage-runtime.txt
 
       - name: Bundle with linuxdeploy
         env:
@@ -102,6 +106,9 @@ jobs:
           test -f AppDir/usr/share/tt2/data/original-assets.sha256
           test -f AppDir/usr/share/tt2/data/placeholder/fonts/font_settingstext.xml
           test -f AppDir/usr/share/tt2/data/placeholder/2x/fonts/font_settingstext.png   # 2x art (UX-8)
+          for f in re-twist-tt2 super-xbr tinyfiledialogs SDL3 SDL3_image SDL3_mixer appimage-runtime; do
+            test -f "AppDir/usr/share/licenses/tt2/$f.txt"
+          done
           app=$(ls "$PWD"/Re-Twist_TT2-*-x86_64.AppImage)
           "$app" --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/empty-assets" --player CI \
             --type '~' --exit-after 8000 > bundled.log
@@ -152,6 +159,11 @@ jobs:
             ldd "$exe" | awk '/\/ucrt64\// {print $3}'
           done | sort -u | xargs -r cp -t dist/
           ls dist
+          # Their notices: libwinpthread is MIT and BSD (binaries must carry
+          # them); libstdc++ and libgcc are GPL 3 with the GCC Runtime Library
+          # Exception, whose text MSYS2's gcc package ships.
+          cp /ucrt64/share/licenses/libwinpthread/COPYING dist/licenses/libwinpthread.txt
+          cp /ucrt64/share/licenses/gcc/COPYING.RUNTIME dist/licenses/gcc-runtime-exception.txt
 
       - name: Smoke run (headless)
         env:
@@ -181,6 +193,10 @@ jobs:
           test -f dist/data/original-assets.sha256
           test -f dist/data/placeholder/fonts/font_settingstext.xml
           test -f dist/data/placeholder/2x/fonts/font_settingstext.png   # 2x art (UX-8)
+          for f in re-twist-tt2 super-xbr tinyfiledialogs SDL3 SDL3_image SDL3_mixer libwinpthread \
+            gcc-runtime-exception; do
+            test -f "dist/licenses/$f.txt"
+          done
           ./dist/tt2.exe --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/empty-assets" --player CI \
             --type '~' --exit-after 8000 > bundled.log
           cat bundled.log

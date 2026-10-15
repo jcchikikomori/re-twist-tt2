@@ -2,6 +2,9 @@
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include "tt2ui/upscale.hpp"
@@ -29,6 +32,12 @@ void set(Img& px, int w, int x, int y, std::uint8_t r, std::uint8_t g, std::uint
 }
 const std::uint8_t* at(const Img& px, int w, int x, int y) {
     return &px[(static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)) * 4];
+}
+std::string slurp(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
 }
 }  // namespace
 
@@ -136,4 +145,23 @@ TEST(can_upscale_respects_the_gpu_and_the_size_cap) {
     ASSERT_TRUE(!can_upscale(5700, 864, 16384));                         // 4.9 Mpx: over the cap
     ASSERT_TRUE(!can_upscale(2000, 1001, 0));                            // 2,002,000 px
     ASSERT_TRUE(!can_upscale(0, 600, 16384));
+}
+
+// MIT asks for the notice in every copy: the port's header must keep
+// third_party/super-xbr/LICENSE (which the packages install) line for line.
+TEST(upscale_header_keeps_the_super_xbr_notice) {
+    const std::string root = std::string(TT2_SOURCE_DATA_DIR) + "/..";
+    const std::string license = slurp(root + "/third_party/super-xbr/LICENSE");
+    const std::string header = slurp(root + "/ui/include/tt2ui/upscale.hpp");
+    ASSERT_TRUE(license.find("Copyright (c) 2015 Hyllian") == 0);
+    ASSERT_TRUE(!header.empty());
+    std::istringstream lines(license);
+    int checked = 0;
+    for (std::string line; std::getline(lines, line);) {
+        if (line.empty()) continue;
+        ASSERT_TRUE(header.find("//   " + line + "\n") != std::string::npos);
+        ++checked;
+    }
+    ASSERT_TRUE(checked >= 15);   // a missing or truncated LICENSE fails, not passes
+    ASSERT_TRUE(header.find("//   Copyright (c) 2016 Hyllian") == std::string::npos);   // exact lines only
 }

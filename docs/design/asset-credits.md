@@ -9,7 +9,7 @@ page: [dictionary-sources.md](../dictionary-sources.md).
 | --- | --- | --- | --- | --- |
 | [tinyfiledialogs](https://sourceforge.net/projects/tinyfiledialogs/) by Guillaume Vareille | 3.21.5 | zlib | `third_party/tinyfiledialogs/` | The "choose your Text Twist 2 folder" dialog when importing the original assets |
 | [SDL3, SDL3_image, SDL3_mixer](https://www.libsdl.org/) | 3.4.18, 3.4.8, 3.2.4 | zlib | system or MSYS2 package, or built from the release tarball (`TT2_FETCH_SDL3`); not vendored | Window, input, rendering, images, audio |
-| [Super-xBR](https://github.com/libretro/slang-shaders/tree/master/crt/shaders/crt-super-xbr) by Hyllian | libretro slang-shaders, 2015 | MIT | ported to C++ in `ui/include/tt2ui/upscale.hpp` | The optional 2x texture upscaler (UPSCALER in IMPROVEMENTS) |
+| [Super-xBR](https://github.com/libretro/slang-shaders/tree/master/crt/shaders/crt-super-xbr) by Hyllian | libretro slang-shaders, 2015 | MIT | ported to C++ in `ui/include/tt2ui/upscale.hpp`; notice in `third_party/super-xbr/` | The optional 2x texture upscaler (UPSCALER in IMPROVEMENTS) |
 | [stb_image, stb_vorbis](https://github.com/nothings/stb) by Sean Barrett | as bundled in SDL3_image / SDL3_mixer | public domain or MIT | inside SDL3_image and SDL3_mixer | Decoding PNG / JPEG and Ogg Vorbis |
 
 - tinyfiledialogs is vendored **unaltered**. `third_party/tinyfiledialogs/VERSION` records the upstream commit and
@@ -17,6 +17,23 @@ page: [dictionary-sources.md](../dictionary-sources.md).
 - It is compiled as its own C target, outside the project's warning flags (`CMakeLists.txt`, `tt2_tinyfd`).
 - Super-xBR is a port, not a copy: the shader math rewritten for the CPU. The MIT notice is kept in full at the
   top of `upscale.hpp`. Art it upscales exists only in memory while the game runs; nothing is written to disk.
+  `third_party/super-xbr/LICENSE` holds the notice verbatim and `VERSION` the upstream commit and shader hashes.
+
+## What the Packages Carry
+
+Each package installs these notices into `licenses/` (the Windows zip) or `share/licenses/tt2/` (the AppImage):
+
+| File | Covers | License |
+| --- | --- | --- |
+| `re-twist-tt2.txt` | This project's code | MIT |
+| `super-xbr.txt` | The upscaler port | MIT |
+| `tinyfiledialogs.txt`, `SDL3.txt`, `SDL3_image.txt`, `SDL3_mixer.txt` | Code linked in statically | zlib |
+| `libwinpthread.txt`, `gcc-runtime-exception.txt` (zip only) | The MinGW runtime DLLs next to `tt2.exe` | MIT and BSD; GPL 3 with the GCC Runtime Library Exception |
+| `appimage-runtime.txt` (AppImage only) | The AppImage runtime stub | MIT, with the libraries it links listed inside |
+
+- stb_image and stb_vorbis are taken under their public-domain option, so they need no file.
+- The fonts' licences sit next to the fonts in `data/placeholder/`, and the dictionaries' in `data/LICENSE.md`.
+- `packages.yml` fails a build that is missing any of these files.
 
 ## Art, Fonts and Sounds
 
