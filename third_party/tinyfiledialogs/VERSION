@@ -1,0 +1,8 @@
+tinyfiledialogs 3.21.5, unaltered
+source: https://git.code.sf.net/p/tinyfiledialogs/code (official repository)
+commit: db67fa7e6f5d893551079c5dd0b1ddd1faeeb8b7 (2026-10-01)
+license: Zlib (see LICENSE)
+
+sha256:
+232b93497e64c209b9c694ea953a23cc7f4b3d6cdd8a805991a9627ae29bc958  tinyfiledialogs.c
+d6607958c48b4c8f6b62629642e41dfb38dc5f8dc3f9bca4876c95acd5eb532f  tinyfiledialogs.h

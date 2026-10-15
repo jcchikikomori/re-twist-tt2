@@ -125,8 +125,18 @@ if(TT2_BUILD_UI)
     endif()
     if(TT2_SDL_OK)
         message(STATUS "SDL2 found: building the tt2 UI binary")
-        add_executable(tt2_app ui/src/main.cpp)
-        target_link_libraries(tt2_app PRIVATE tt2_ui_logic tt2_platform ${TT2_SDL_LIBS})
+        # tinyfiledialogs (zlib, third_party/): the native folder picker for
+        # importing the original assets. Its own C target, so the project's
+        # warning flags (and -Werror) never apply to vendor code.
+        enable_language(C)
+        add_library(tt2_tinyfd STATIC third_party/tinyfiledialogs/tinyfiledialogs.c)
+        target_include_directories(tt2_tinyfd PUBLIC third_party/tinyfiledialogs)
+        if(WIN32)
+            target_link_libraries(tt2_tinyfd PRIVATE comdlg32 ole32 shell32)
+        endif()
+
+        add_executable(tt2_app ui/src/main.cpp ui/src/folder_picker.cpp)
+        target_link_libraries(tt2_app PRIVATE tt2_ui_logic tt2_platform tt2_tinyfd ${TT2_SDL_LIBS})
         set_target_properties(tt2_app PROPERTIES OUTPUT_NAME tt2)
         # Where `scripts/import-original.sh` puts the user's own assets.
         target_compile_definitions(tt2_app PRIVATE
@@ -183,6 +193,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_data_paths.cpp
         ui/tests/test_dialog_fade.cpp
         ui/tests/test_asset_import.cpp
+        ui/tests/test_folder_picker.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)
