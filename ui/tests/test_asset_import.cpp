@@ -254,3 +254,10 @@ TEST(import_stamp_round_trip_and_strict_parse) {
     ASSERT_TRUE(!parse_stamp("format=re-twist-tt2 asset import\nversion=1\nmanifest=" + s.manifest + "\nfiles=-3\n", back));
     ASSERT_TRUE(back == before);
 }
+
+TEST(import_names_for_the_log) {
+    ASSERT_EQ(std::string(to_string(ImportStatus::Imported)), std::string("imported"));
+    ASSERT_EQ(std::string(to_string(ImportStatus::NotImported)), std::string("not imported"));
+    ASSERT_EQ(std::string(to_string(ImportError::Kind::Mismatch)), std::string("files differ from the expected version"));
+    ASSERT_EQ(std::string(to_string(ImportError::Kind::None)), std::string("ok"));
+}

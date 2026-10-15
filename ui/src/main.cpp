@@ -47,6 +47,7 @@
 #include "tt2/profile_store.hpp"
 #include "tt2/word_tree.hpp"
 #include "tt2ui/bitmap_font.hpp"
+#include "tt2ui/asset_import.hpp"
 #include "tt2ui/data_paths.hpp"
 #include "tt2ui/dialog_fade.hpp"
 #include "tt2ui/game_scene.hpp"
@@ -229,16 +230,18 @@ constexpr int FRAME_SIDE_W = 37;      // top_left.png is 37x86, bottom_left.png 
 constexpr int FRAME_TOP_H = 86;
 constexpr int FRAME_BOTTOM_H = 53;
 
+// UTF-8 paths on every OS: std::fopen takes the ANSI code page on
+// Windows, so an asset folder under C:\Users\José looked empty.
 bool file_exists(const std::string& path) {
-    if (FILE* f = std::fopen(path.c_str(), "rb")) {
-        std::fclose(f);
+    if (SDL_RWops* f = SDL_RWFromFile(path.c_str(), "rb")) {
+        SDL_RWclose(f);
         return true;
     }
     return false;
 }
 
 bool read_text(const std::string& path, std::string& out) {
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
     if (!in) return false;
     std::ostringstream ss;
     ss << in.rdbuf();
@@ -417,6 +420,17 @@ public:
     Assets(SDL_Renderer* r, std::string dir) : renderer_(r), dir_(std::move(dir)) {}
     ~Assets() { release(); }
 
+    const std::string& dir() const { return dir_; }
+
+    // Switches folders at run time (after an import). Frees everything from
+    // the old folder first; textures come back lazily on the same renderer.
+    // Call it between frames, never from inside a draw callback.
+    void set_dir(std::string dir) {
+        release();
+        dir_ = std::move(dir);
+        current_stream_ = SoundId::Button;
+    }
+
     // Frees every texture, sound and song. main() calls it before
     // Mix_CloseAudio and SDL_DestroyRenderer: the renderer frees its own
     // textures, so destroying them afterwards (from ~Assets at the end of
@@ -442,7 +456,7 @@ public:
         Image img;
         auto f = kImageFiles.find(spec.image_id);
         if (f != kImageFiles.end()) {
-            const std::string path = dir_ + "/" + f->second;
+            const std::string path = in_dir(f->second);
             if (file_exists(path)) {
                 img.surface = IMG_Load(path.c_str());
                 if (img.surface) {
@@ -468,11 +482,11 @@ public:
         int scale = spec != kFontFiles.end() ? spec->second.placeholder_scale : 3;
         if (id.rfind("PLACEHOLDER_", 0) == 0) scale = std::max(1, std::atoi(id.c_str() + 12));
         std::string xml;
-        if (spec != kFontFiles.end() && read_text(dir_ + "/" + spec->second.xml, xml) &&
+        if (spec != kFontFiles.end() && read_text(in_dir(spec->second.xml), xml) &&
             BitmapFont::parse(xml, f.font)) {
             f.placeholder = false;
             for (const FontLayer& layer : f.font.layers) {
-                const std::string path = dir_ + "/fonts/" + layer.image;
+                const std::string path = in_dir("fonts/" + layer.image);
                 SDL_Surface* s = file_exists(path) ? IMG_Load(path.c_str()) : nullptr;
                 if (!s) std::fprintf(stderr, "warning: font layer %s missing\n", path.c_str());
                 f.layers.push_back(texture_of(s));
@@ -503,7 +517,7 @@ public:
             Mix_Chunk* c = nullptr;
             auto f = kSoundFiles.find(id);
             if (f != kSoundFiles.end()) {
-                const std::string path = dir_ + "/" + f->second;
+                const std::string path = in_dir(f->second);
                 if (file_exists(path)) c = Mix_LoadWAV(path.c_str());
             }
             auto v = kSoundVolumes.find(id);
@@ -550,13 +564,16 @@ private:
         Mix_Music* m = nullptr;
         auto f = kSoundFiles.find(id);
         if (f != kSoundFiles.end()) {
-            const std::string path = dir_ + "/" + f->second;
+            const std::string path = in_dir(f->second);
             if (file_exists(path)) m = Mix_LoadMUS(path.c_str());
         }
         return music_.emplace(id, m).first->second;
     }
 
     SDL_Renderer* renderer_;
+    // A file inside the asset folder; empty (never found) without a folder.
+    std::string in_dir(const std::string& rel) const { return dir_.empty() ? std::string() : dir_ + "/" + rel; }
+
     std::string dir_;
     bool audio_ = false;
     float sound_volume_ = 0.5f;
@@ -1071,8 +1088,12 @@ void draw_dialog_layer(SDL_Renderer* ren, DialogLayer& layer, int id, int dt_ms,
 }
 
 int main(int argc, char** argv) {
-    std::string assets_dir = TT2_IMPORTED_ASSETS_DIR;
-    if (const char* env = std::getenv("TT2_ASSETS")) assets_dir = env;
+    std::string assets_flag;      // --assets DIR: read the art from DIR, never ask
+    std::string assets_env;       // TT2_ASSETS, same as --assets
+    if (const char* env = std::getenv("TT2_ASSETS")) assets_env = env;
+    std::string asset_dir_flag;   // --asset-dir DIR: the per-user import folder (default SDL_GetPrefPath)
+    std::string import_from;      // --import DIR: import the player's own install, then exit
+    std::string manifest_path;    // --asset-manifest FILE: replaces data/original-assets.sha256
     std::string save_dir = tt2::default_save_dir().string();
     int speed = 1;
     long exit_after_ms = -1;
@@ -1090,7 +1111,10 @@ int main(int argc, char** argv) {
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     for (int i = 1; i < argc; ++i) {
-        if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_dir = argv[++i];
+        if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_flag = argv[++i];
+        else if (!std::strcmp(argv[i], "--asset-dir") && i + 1 < argc) asset_dir_flag = argv[++i];
+        else if (!std::strcmp(argv[i], "--import") && i + 1 < argc) import_from = argv[++i];
+        else if (!std::strcmp(argv[i], "--asset-manifest") && i + 1 < argc) manifest_path = argv[++i];
         else if (!std::strcmp(argv[i], "--save-dir") && i + 1 < argc) save_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--speed") && i + 1 < argc) speed = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--exit-after") && i + 1 < argc) exit_after_ms = std::atol(argv[++i]);
@@ -1103,11 +1127,94 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc) debug_seed = std::atol(argv[++i]);
         else if (!std::strcmp(argv[i], "--help")) {
             std::printf("usage: tt2 [--assets DIR] [--data-dir DIR] [--save-dir DIR] [--player NAME]\n"
-                        "           [--play untimed|timed] [--speed N] [--exit-after MS]\n");
+                        "           [--play untimed|timed] [--speed N] [--exit-after MS]\n"
+                        "           [--import DIR] [--asset-dir DIR] [--asset-manifest FILE]\n"
+                        "\n"
+                        "  --import DIR          copy the art, fonts and sounds from your own Text Twist 2\n"
+                        "                        install at DIR into the asset folder, then exit\n"
+                        "  --asset-dir DIR       the asset folder imports go to and load from\n"
+                        "                        (default: the per-user folder, e.g.\n"
+                        "                        ~/.local/share/re-twist-tt2/imported-assets)\n"
+                        "  --assets DIR          load the art from DIR as is (no import, no checks)\n"
+                        "  --asset-manifest FILE check imports against FILE instead of\n"
+                        "                        data/original-assets.sha256\n");
             return 0;
         }
     }
     if (speed < 1) speed = 1;
+
+    // The data folder (dictionaries, asset manifest). Packaged builds
+    // (AppImage, Windows zip) carry it next to the executable; a source
+    // build falls back to TT2_DATA_DIR.
+    if (!data_dir_given) {
+        std::string exe_dir;
+        if (char* base = SDL_GetBasePath()) {
+            exe_dir = base;
+            SDL_free(base);
+        }
+        data_dir = tt2ui::pick_data_dir(tt2ui::data_dir_candidates(exe_dir, data_dir), [](const std::string& d) {
+            std::error_code ec;
+            return std::filesystem::exists(std::filesystem::path(d) / "open-common.tree", ec) ||
+                   std::filesystem::exists(std::filesystem::path(d) / "common.tree", ec);
+        });
+    }
+
+    // The original art: the player's own install, imported into a per-user
+    // folder and checked against data/original-assets.sha256
+    // (docs/design/import-assets.md).
+    if (manifest_path.empty()) manifest_path = data_dir + "/original-assets.sha256";
+    tt2::AssetManifest manifest;
+    std::string manifest_text;
+    const bool manifest_ok = read_text(manifest_path, manifest_text) && tt2::AssetManifest::parse(manifest_text, manifest);
+    if (!manifest_ok) std::fprintf(stderr, "warning: no valid asset manifest at %s; importing is off\n", manifest_path.c_str());
+    // SDL_GetPrefPath creates its folder, so it only runs when the per-user
+    // folder is actually needed and --asset-dir didn't name one.
+    const auto pref_path = [] {
+        std::string out;
+        if (char* p = SDL_GetPrefPath(tt2ui::PREF_ORG, tt2ui::PREF_APP)) {
+            out = p;
+            SDL_free(p);
+        }
+        return out;
+    };
+    const bool needs_user_dir = !import_from.empty() || (assets_flag.empty() && assets_env.empty());
+    const std::string user_dir = needs_user_dir ? tt2ui::resolve_user_asset_dir(asset_dir_flag, pref_path) : std::string();
+
+    if (!import_from.empty()) {
+        if (!manifest_ok) return 1;
+        if (user_dir.empty()) {
+            std::fprintf(stderr, "import: no per-user folder (HOME/APPDATA unset); pass --asset-dir DIR\n");
+            return 1;
+        }
+        std::printf("import: %s -> %s\n", import_from.c_str(), user_dir.c_str());
+        tt2ui::AssetImportJob job(std::filesystem::u8path(import_from), std::filesystem::u8path(user_dir), manifest);
+        while (!job.finished()) job.step(4 << 20);
+        if (job.stage() == tt2ui::AssetImportJob::Stage::ReadyToCommit) job.commit();   // nothing is loaded yet
+        if (job.stage() != tt2ui::AssetImportJob::Stage::Done) {
+            const tt2ui::ImportError& err = job.error();
+            std::fprintf(stderr, "import failed: %s\n", tt2ui::to_string(err.kind));
+            for (const std::string& path : err.paths) std::fprintf(stderr, "  %s\n", path.c_str());
+            if (err.count > err.paths.size()) std::fprintf(stderr, "  ... and %zu more\n", err.count - err.paths.size());
+            return 1;
+        }
+        std::printf("import: ok, %zu files verified\n", manifest.entries.size());
+        return 0;
+    }
+
+    tt2ui::AssetDirInputs asset_inputs;
+    asset_inputs.flag = assets_flag;
+    asset_inputs.env = assets_env;
+    asset_inputs.user_dir = user_dir;
+    asset_inputs.user_dir_given = !asset_dir_flag.empty();
+    asset_inputs.can_import = manifest_ok;
+    if (!user_dir.empty() && manifest_ok)
+        asset_inputs.user_status = tt2ui::import_status(std::filesystem::u8path(user_dir), manifest);
+    {
+        std::error_code ec;
+        if (std::filesystem::is_directory(std::filesystem::u8path(TT2_IMPORTED_ASSETS_DIR), ec))
+            asset_inputs.developer_dir = TT2_IMPORTED_ASSETS_DIR;
+    }
+    const tt2ui::AssetDirChoice asset_choice = tt2ui::choose_assets_dir(asset_inputs);
 
     // Profiles: load before the window so a corrupt file is reported early.
     tt2::PlayerManager players;
@@ -1128,20 +1235,6 @@ int main(int argc, char** argv) {
                 players.count(), players.count() == 1 ? "" : "s");
 
     // Dictionaries: the trees must outlive every round (non-owning pointers).
-    // Packaged builds (AppImage, Windows zip) carry their dictionaries next
-    // to the executable; a source build falls back to TT2_DATA_DIR.
-    if (!data_dir_given) {
-        std::string exe_dir;
-        if (char* base = SDL_GetBasePath()) {
-            exe_dir = base;
-            SDL_free(base);
-        }
-        data_dir = tt2ui::pick_data_dir(tt2ui::data_dir_candidates(exe_dir, data_dir), [](const std::string& d) {
-            std::error_code ec;
-            return std::filesystem::exists(std::filesystem::path(d) / "open-common.tree", ec) ||
-                   std::filesystem::exists(std::filesystem::path(d) / "common.tree", ec);
-        });
-    }
     tt2::WordTree common_tree, full_tree;
     if (!load_tree(data_dir, "common.tree", "open-common.tree", common_tree) ||
         !load_tree(data_dir, "full.tree", "open-full.tree", full_tree)) {
@@ -1189,7 +1282,7 @@ int main(int argc, char** argv) {
     bool cursor_hot = false;
     bool cursor_busy = false;
 
-    Assets assets(ren, assets_dir);
+    Assets assets(ren, asset_choice.dir);
     const bool audio = Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) == 0;
     if (audio) Mix_Init(MIX_INIT_OGG);
     assets.set_audio(audio);
@@ -1209,8 +1302,12 @@ int main(int argc, char** argv) {
         if (!save_dir.empty() && !store.save(settings))
             std::fprintf(stderr, "warning: could not write %s\n", store.settings_path().string().c_str());
     };
-    std::printf("assets: %s (%s)\n", assets_dir.c_str(),
-                file_exists(assets_dir + "/images/loadscene/logo_anim.png") ? "imported" : "placeholders");
+    std::printf("assets: %s (%s, %s%s)\n", asset_choice.dir.empty() ? "(none)" : asset_choice.dir.c_str(),
+                tt2ui::to_string(asset_choice.source),
+                asset_choice.source == tt2ui::AssetSource::User ? tt2ui::to_string(asset_inputs.user_status)
+                : file_exists(asset_choice.dir + "/images/loadscene/logo_anim.png") ? "unverified"
+                                                                                    : "placeholders",
+                asset_choice.prompt ? ", import needed" : "");
 
     ProfileFlow::Services pservices;
     pservices.play_sound = [&](SoundId id) { assets.play_sound(id); };

@@ -65,8 +65,19 @@ jobs:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
         run: >
-          ./build/tt2 --save-dir "$RUNNER_TEMP/save" --player CI --seed 5
-          --play untimed --type 'ab|' --exit-after 9000
+          ./build/tt2 --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
+          --player CI --seed 5 --play untimed --type 'ab|' --exit-after 9000
+
+      # tt2 --import on a synthetic install (random bytes, decoy DRM names),
+      # then proof that no run touched the real per-user asset folder.
+      - name: Import smoke (synthetic install)
+        if: matrix.ui == 'ON'
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          scripts/ci-import-smoke.sh ./build/tt2 ./build/tt2-assets "$RUNNER_TEMP/import-smoke"
+          test ! -e "$HOME/.local/share/re-twist-tt2/imported-assets"
 
   windows:
     name: Windows (MSYS2 UCRT64)
@@ -104,5 +115,11 @@ jobs:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
         run: >
-          ./build/tt2.exe --save-dir "$RUNNER_TEMP/save" --player CI --seed 5
-          --play untimed --type 'ab|' --exit-after 9000
+          ./build/tt2.exe --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
+          --player CI --seed 5 --play untimed --type 'ab|' --exit-after 9000
+
+      - name: Import smoke (synthetic install)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: scripts/ci-import-smoke.sh ./build/tt2.exe ./build/tt2-assets.exe "$RUNNER_TEMP/import-smoke"

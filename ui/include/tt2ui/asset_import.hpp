@@ -168,6 +168,29 @@ struct ImportError {
     std::size_t count = 0;            // every problem file
 };
 
+inline const char* to_string(ImportError::Kind k) {
+    switch (k) {
+    case ImportError::Kind::None: return "ok";
+    case ImportError::Kind::NotAnInstall: return "not a Text Twist 2 install (no properties/resources.xml)";
+    case ImportError::Kind::EmptyManifest: return "the manifest lists no files";
+    case ImportError::Kind::Missing: return "files missing from the install";
+    case ImportError::Kind::Mismatch: return "files differ from the expected version";
+    case ImportError::Kind::WriteFailed: return "could not copy the files";
+    case ImportError::Kind::CommitFailed: return "could not replace the asset folder";
+    }
+    return "?";
+}
+
+inline const char* to_string(ImportStatus s) {
+    switch (s) {
+    case ImportStatus::NotImported: return "not imported";
+    case ImportStatus::Imported: return "imported";
+    case ImportStatus::Stale: return "stale";
+    case ImportStatus::Incomplete: return "incomplete";
+    }
+    return "?";
+}
+
 class AssetImportJob {
 public:
     enum class Stage { CheckSource, VerifySource, Copy, VerifyCopy, ReadyToCommit, Done, Failed };
