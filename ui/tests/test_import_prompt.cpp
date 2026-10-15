@@ -252,3 +252,33 @@ TEST(build_yes_no_default_width_is_the_original_layout) {
     ASSERT_TRUE(d.button("BUTTON_NO")->sprite.x == 210.0f);
     ASSERT_EQ(build_yes_no("x", "y", true, {}, 300).w, YESNO_MIN_W);   // never narrower
 }
+
+TEST(import_prompt_shows_a_choose_folder_dialog_while_picking) {
+    Fake fake;
+    ImportPromptFlow f(fake.services());
+    f.press("BUTTON_YES");
+    ASSERT_EQ(f.dialog().label("HEADER")->text, std::string("Choose your folder"));
+    ASSERT_TRUE(f.dialog().buttons.empty());   // the native dialog has the focus
+    f.key_return();                            // ignored while picking
+    ASSERT_TRUE(f.state() == ImportPromptFlow::State::Picking);
+}
+
+TEST(import_from_settings_starts_at_the_picker) {
+    Fake fake;
+    ImportPromptFlow f(fake.services(), false);
+    ASSERT_TRUE(f.state() == ImportPromptFlow::State::Picking);
+    ASSERT_EQ(fake.picks, 0);
+    run_until_result(f);
+    ASSERT_EQ(fake.picks, 1);
+    ASSERT_EQ(fake.imported, 1);
+    ASSERT_EQ(f.dialog().label("HEADER")->text, std::string("Import complete"));
+}
+
+TEST(import_from_settings_cancelled_pick_closes) {
+    Fake fake;
+    fake.pick = PickResult{PickResult::Kind::Cancelled, ""};
+    ImportPromptFlow f(fake.services(), false);
+    f.tick(16);
+    ASSERT_TRUE(f.state() == ImportPromptFlow::State::Closed);   // no launch warning to go back to
+    ASSERT_EQ(fake.starts, 0);
+}

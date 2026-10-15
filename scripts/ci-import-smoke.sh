@@ -85,4 +85,14 @@ grep -q 'assets: prompt closed' "$LOG" || { cat "$LOG"; fail "OK did not close t
 "$TT2" --asset-dir "$LIVE" --asset-manifest "$MANIFEST" --save-dir "$WORK/save" --exit-after 8000 > "$LOG"
 if grep -q 'prompt shown' "$LOG"; then cat "$LOG"; fail "asked again after the in-game import"; fi
 
+# 6. Re-import from the main menu's SETTINGS (deviation OP-7): NO at
+#    launch, '#' SETTINGS, '&' IMPORT (straight to the picker), '|' OK.
+#    --player skips the name dialog, which would hold the keys.
+AGAIN="$WORK/settings-assets"
+"$TT2" --asset-dir "$AGAIN" --asset-manifest "$MANIFEST" --save-dir "$WORK/save" --import-pick "$FAKE.good" \
+    --player CI --type '~#&|' --exit-after 11000 > "$LOG" 2>&1 || { cat "$LOG"; fail "the game exited $?"; }
+grep -q 'assets: re-import from settings' "$LOG" || { cat "$LOG"; fail "IMPORT in SETTINGS did nothing"; }
+grep -q 'assets: reloaded from' "$LOG" || { cat "$LOG"; fail "no live reload after the SETTINGS import"; }
+"$TT2_ASSETS" verify "$AGAIN" "$MANIFEST" || fail "the SETTINGS import doesn't verify"
+
 echo "import smoke: ok"

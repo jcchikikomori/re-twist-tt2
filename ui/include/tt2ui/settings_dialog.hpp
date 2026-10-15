@@ -6,6 +6,13 @@
 // update hook 0x40c3b0 (docs/reverse-engineering/help-and-settings.md §3).
 // The sliders apply live; OK keeps the new values, CANCEL puts the saved
 // volumes back. The host owns persistence and the window mode.
+//
+// Deliberate deviation (OP-7): the original DIALOG_SETTINGS has no asset
+// row. When the host passes an AssetRow (the main menu does; the in-game
+// settings don't), the port adds "ORIGINAL ASSETS" with its import status
+// and an IMPORT button, and grows the dialog by one 50 px row, because the
+// original game is required until the placeholder art is ready
+// (docs/design/import-assets.md, help-and-settings.md §3 "Port deviations").
 #pragma once
 
 #include <algorithm>
@@ -15,6 +22,7 @@
 #include <string>
 
 #include "tt2/settings.hpp"
+#include "tt2ui/asset_import.hpp"
 #include "tt2ui/credits_dialog.hpp"
 #include "tt2ui/game_dialogs.hpp"
 
@@ -26,10 +34,29 @@ inline constexpr const char* MUSIC = "MUSIC";                   // CTEXT_SETTING
 inline constexpr const char* SOUND = "SOUND";                   // CTEXT_SETTINGS_SOUND
 inline constexpr const char* FULLSCREEN = "FULLSCREEN";         // CTEXT_SETTINGS_FULLSCREEN
 inline constexpr const char* MAX_LENGTH = "MAXIMUM WORD LENGTH";
+// The port's asset row (deviation, OP-7).
+inline constexpr const char* ASSETS = "ORIGINAL ASSETS";
+inline constexpr const char* ASSETS_IMPORTED = "Imported";
+inline constexpr const char* ASSETS_NOT_IMPORTED = "Not imported";
+inline constexpr const char* ASSETS_NEEDS_UPDATE = "Needs updating";
 }  // namespace settings_strings
 
 constexpr int SETTINGS_W = 436;
 constexpr int SETTINGS_H = 440;
+// Deviation (OP-7): one more row for the asset import, 50 px, between the
+// word-length tab and the bottom buttons (which move from y 357 to 407).
+constexpr int SETTINGS_ASSET_ROW_H = 50;
+constexpr float SETTINGS_ASSET_ROW_Y = 357.0f;
+
+inline const char* asset_status_text(ImportStatus s) {
+    switch (s) {
+    case ImportStatus::Imported: return settings_strings::ASSETS_IMPORTED;
+    case ImportStatus::Stale: return settings_strings::ASSETS_NEEDS_UPDATE;
+    case ImportStatus::NotImported:
+    case ImportStatus::Incomplete: return settings_strings::ASSETS_NOT_IMPORTED;
+    }
+    return settings_strings::ASSETS_NOT_IMPORTED;
+}
 // Slider: SLIDER_BACK 284x19; the knob (SLIDER_BUTTON 33x140, 4 rows,
 // anchor centre) runs from minx 30 to maxx 276 at y 12 (0x468440).
 constexpr int SLIDER_BACK_W = 284;
@@ -84,7 +111,16 @@ struct SettingsHost {
 
 class SettingsDialog {
 public:
-    enum class Result { None, Ok, Cancel, Info };
+    // ImportAssets: IMPORT on the asset row. The dialog is done: the host
+    // keeps the values like OK, closes it and starts the import.
+    enum class Result { None, Ok, Cancel, Info, ImportAssets };
+
+    // The port's asset row (deviation, OP-7); without one the dialog is the
+    // original's.
+    struct AssetRow {
+        ImportStatus status = ImportStatus::NotImported;
+        bool can_import = true;   // false: no per-user folder or no manifest
+    };
 
     struct Services {
         std::function<void(SoundId)> play_sound;
@@ -94,9 +130,10 @@ public:
 
     // `saved` is the live settings, `max_word_length` the current player's
     // (6/7/8), `fullscreen_supported` mirrors [0x5fdea0]+0x3d.
-    SettingsDialog(const tt2::GameSettings& saved, int max_word_length, bool fullscreen_supported, Services services)
+    SettingsDialog(const tt2::GameSettings& saved, int max_word_length, bool fullscreen_supported, Services services,
+                   std::optional<AssetRow> asset_row = std::nullopt)
         : saved_(saved), values_(saved), max_len_(normal_length(max_word_length)), services_(std::move(services)) {
-        build(fullscreen_supported);
+        build(fullscreen_supported, asset_row);
     }
 
     const Dialog& dialog() const { return dialog_; }
@@ -182,6 +219,7 @@ public:
             credits_.emplace();   // 0x40c760: over the settings
             return Result::Info;
         }
+        if (name == "BUTTON_IMPORT") return Result::ImportAssets;   // deviation, OP-7
         return Result::None;
     }
 
@@ -224,10 +262,11 @@ public:
     static int normal_length(int len) { return len == 7 || len == 8 ? len : 6; }
 
 private:
-    void build(bool fullscreen_supported) {
+    void build(bool fullscreen_supported, const std::optional<AssetRow>& asset_row) {
         Dialog d;
         d.w = SETTINGS_W;
-        d.h = SETTINGS_H;
+        d.h = SETTINGS_H + (asset_row ? SETTINGS_ASSET_ROW_H : 0);
+        const float bottom_y = 357.0f + (asset_row ? SETTINGS_ASSET_ROW_H : 0);
         d.labels.push_back(TextLabel{"SETTING_HEADER", "FONT_DIALOG_HEADERS", settings_strings::HEADER, 226, 33,
                                      TextAlign::Center, Anchor::Center, 4});
         // Labels without anchorpoint: (x, y) is the top-left (INFERRED from the fit).
@@ -256,9 +295,20 @@ private:
         d.buttons.push_back(make_switch("SWITCH_LENGTH_6", 46, 298));
         d.buttons.push_back(make_switch("SWITCH_LENGTH_7", 170, 298));
         d.buttons.push_back(make_switch("SWITCH_LENGTH_8", 289, 298));
-        d.buttons.push_back(make_dialog_button("BUTTON_INFO", "BUTTON_INFO", 85, 357, Anchor::Top));   // CREDITS
-        d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", 278, 357, Anchor::TopRight));
-        d.buttons.push_back(make_dialog_button("BUTTON_CANCEL", "BUTTON_CANCEL", 294, 357, Anchor::TopLeft));
+        if (asset_row) {
+            // Deviation (OP-7): ORIGINAL ASSETS, its status, and IMPORT.
+            d.labels.push_back(TextLabel{"LABEL_ASSETS", "FONT_SETTINGSTEXT", settings_strings::ASSETS, 45,
+                                         SETTINGS_ASSET_ROW_Y, TextAlign::Left, Anchor::Top, -1});
+            d.labels.push_back(TextLabel{"LABEL_ASSETS_STATUS", "FONT_SETTINGSTEXT",
+                                         asset_status_text(asset_row->status), 45, SETTINGS_ASSET_ROW_Y + 24,
+                                         TextAlign::Left, Anchor::Top, -1});
+            d.buttons.push_back(make_dialog_button("BUTTON_IMPORT", "BUTTON_IMPORT", 391, SETTINGS_ASSET_ROW_Y,
+                                                   Anchor::TopRight));
+            d.buttons.back().enabled = asset_row->can_import;
+        }
+        d.buttons.push_back(make_dialog_button("BUTTON_INFO", "BUTTON_INFO", 85, bottom_y, Anchor::Top));   // CREDITS
+        d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", 278, bottom_y, Anchor::TopRight));
+        d.buttons.push_back(make_dialog_button("BUTTON_CANCEL", "BUTTON_CANCEL", 294, bottom_y, Anchor::TopLeft));
         dialog_ = std::move(d);
         sliders_[0] = SettingsSlider{"SLIDER_MUSICVOL", 123, 98, values_.music_volume};
         sliders_[1] = SettingsSlider{"SLIDER_FXVOL", 123, 149, values_.sound_volume};

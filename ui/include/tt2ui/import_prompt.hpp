@@ -12,6 +12,9 @@
 //      |               | unavailable -> Result(hint) --OK--> Closed
 //      +--NO----------------------------------------------------------> Closed
 //
+// From SETTINGS (IMPORT, OP-7) the player already chose to import: the flow
+// starts at Picking, and cancelling the picker closes it.
+//
 // `tt2 --import DIR` (main.cpp) is the headless equivalent of steps 2-3.
 // main.cpp supplies the services, routes input and draws the dialog.
 #pragma once
@@ -34,6 +37,8 @@ inline constexpr const char* PROMPT_BODY =
     "This game needs the art, fonts and sounds from your own copy of Text Twist 2. The replacement placeholder "
     "art isn't ready yet, so without them the game won't look or sound right. Import them from your Text Twist 2 "
     "folder now?";
+inline constexpr const char* PICK_HEADER = "Choose your folder";
+inline constexpr const char* PICK_BODY = "Pick your Text Twist 2 folder in the window that opened.";
 inline constexpr const char* PROGRESS_HEADER = "Importing";
 inline constexpr const char* DONE_HEADER = "Import complete";
 inline constexpr const char* DONE_BODY = "The original art, fonts and sounds are ready.";
@@ -98,7 +103,11 @@ class ImportPromptFlow {
 public:
     enum class State { Prompt, Picking, Running, Result, Closed };
 
-    explicit ImportPromptFlow(ImportPromptServices s) : s_(std::move(s)) { show_prompt(); }
+    // `ask_first`: show the launch warning; false starts at the picker.
+    explicit ImportPromptFlow(ImportPromptServices s, bool ask_first = true) : s_(std::move(s)), ask_first_(ask_first) {
+        if (ask_first_) show_prompt();
+        else show_picking();
+    }
 
     State state() const { return state_; }
     bool open() const { return state_ != State::Closed; }
@@ -111,7 +120,7 @@ public:
         if (!b || !b->enabled || !b->sprite.visible) return;
         sound(SoundId::Button);
         if (state_ == State::Prompt) {
-            if (name == "BUTTON_YES") state_ = State::Picking;   // the picker opens on the next tick
+            if (name == "BUTTON_YES") show_picking();   // the picker opens on the next tick
             else close();
         } else if (state_ == State::Result) {
             close();
@@ -142,6 +151,13 @@ private:
         dialog_ = build_yes_no(import_strings::PROMPT_HEADER, import_strings::PROMPT_BODY, false, s_.wrap,
                                IMPORT_DIALOG_W);
     }
+    // Shown while the native folder dialog is open; nothing to press.
+    void show_picking() {
+        state_ = State::Picking;
+        dialog_ = build_yes_no(import_strings::PICK_HEADER, import_strings::PICK_BODY, true, s_.wrap,
+                               IMPORT_DIALOG_W);
+        dialog_.buttons.clear();
+    }
     void show_result(const char* header, const std::string& text) {
         state_ = State::Result;
         dialog_ = build_yes_no(header, text, true, s_.wrap, IMPORT_DIALOG_W);
@@ -166,7 +182,10 @@ private:
     void pick() {
         const PickResult r = s_.pick_folder ? s_.pick_folder() : PickResult{};
         switch (r.kind) {
-        case PickResult::Kind::Cancelled: show_prompt(); break;
+        case PickResult::Kind::Cancelled:
+            if (ask_first_) show_prompt();
+            else close();
+            break;
         case PickResult::Kind::Unavailable:
             show_result(import_strings::NO_PICKER_HEADER, import_strings::NO_PICKER_BODY);
             break;
@@ -201,6 +220,7 @@ private:
     ImportJobView view() const { return s_.job_view ? s_.job_view() : ImportJobView{}; }
 
     ImportPromptServices s_;
+    bool ask_first_ = true;
     State state_ = State::Prompt;
     Dialog dialog_;
     bool succeeded_ = false;

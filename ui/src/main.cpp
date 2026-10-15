@@ -1113,7 +1113,8 @@ int main(int argc, char** argv) {
                                // '#' SETTINGS, '@' its INFO (credits), '6'..'8' max length,
                                // '!' fullscreen switch, '^' Alt+Enter,
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND;
-                               // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK
+                               // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
+                               // '&' the main menu SETTINGS' IMPORT (re-import, deviation OP-7)
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_flag = argv[++i];
@@ -1368,16 +1369,25 @@ int main(int argc, char** argv) {
     // The main menu's SETTINGS (0x42ef5f -> DIALOG_SETTINGS). OK stores the
     // current player's max word length and saves the players (0x40c620).
     std::optional<SettingsDialog> menu_settings;
+    // The missing-assets prompt (import_prompt.hpp), declared here because
+    // SETTINGS can start it too (IMPORT, deviation OP-7).
+    std::optional<tt2ui::ImportPromptFlow> import_prompt;
+    bool import_from_settings = false;   // closing it then doesn't re-enter the menu
+    const std::string import_dir = asset_inputs.user_dir;
     auto open_menu_settings = [&] {
+        // Deviation (OP-7): the main menu's SETTINGS gains the asset row.
+        const SettingsDialog::AssetRow row{asset_inputs.user_status, !import_dir.empty() && manifest_ok};
         menu_settings.emplace(settings, players.current() ? players.current()->max_word_length : 6,
                               settings_host.fullscreen_supported,
                               SettingsDialog::Services{[&](SoundId id) { assets.play_sound(id); },
                                                        settings_host.apply_sound_volume,
-                                                       settings_host.apply_music_volume});
+                                                       settings_host.apply_music_volume},
+                              row);
     };
+    std::function<void()> start_import_from_settings;   // set once the import services exist
     auto menu_settings_result = [&](SettingsDialog::Result r) {
         if (!menu_settings) return;
-        if (r == SettingsDialog::Result::Ok) {
+        if (r == SettingsDialog::Result::Ok || r == SettingsDialog::Result::ImportAssets) {
             if (players.current()) {
                 players.current()->max_word_length = menu_settings->max_word_length();
                 pservices.on_change();
@@ -1385,6 +1395,10 @@ int main(int argc, char** argv) {
             settings_host.commit(menu_settings->values());
         }
         if (r == SettingsDialog::Result::Ok || r == SettingsDialog::Result::Cancel) menu_settings.reset();
+        if (r == SettingsDialog::Result::ImportAssets) {   // kept like OK, then the picker
+            menu_settings.reset();
+            if (start_import_from_settings) start_import_from_settings();
+        }
     };
     // Alt+Enter (deviation, see is_fullscreen_shortcut): flip the window
     // mode, save settings.txt, and keep an open Settings dialog in step.
@@ -1419,10 +1433,8 @@ int main(int argc, char** argv) {
     // The missing-assets prompt (import_prompt.hpp): asked once per launch,
     // when the menu first shows and no verified import exists. It is modal;
     // the profile dialog and --play wait until it closes.
-    std::optional<tt2ui::ImportPromptFlow> import_prompt;
     std::optional<tt2ui::AssetImportJob> import_job;
     bool import_prompt_shown = false;
-    const std::string import_dir = asset_inputs.user_dir;
     tt2ui::ImportPromptServices import_services;
     import_services.pick_folder = [&] {
         if (!import_pick.empty()) return tt2ui::PickResult{tt2ui::PickResult::Kind::Picked, import_pick};
@@ -1458,12 +1470,18 @@ int main(int argc, char** argv) {
         return v;
     };
     import_services.on_imported = [&] {
+        asset_inputs.user_status = tt2ui::ImportStatus::Imported;   // SETTINGS shows it from now on
         assets.set_dir(import_dir);   // textures reload lazily on the live renderer
         assets.play_stream(SoundId::MusicMenu);
         std::printf("assets: reloaded from %s\n", import_dir.c_str());
     };
     import_services.play_sound = [&](SoundId id) { assets.play_sound(id); };
     import_services.wrap = wrap_message;
+    start_import_from_settings = [&] {
+        import_from_settings = true;
+        import_prompt.emplace(import_services, false);   // straight to the picker
+        std::printf("assets: re-import from settings\n");
+    };
 
     auto menu_dialog_press = [&](const std::string& name) {
         if (name.empty() || !menu_dialog_open) return;
@@ -1740,6 +1758,7 @@ int main(int argc, char** argv) {
                 else if (menu_settings && c == '|') menu_settings_result(menu_settings->press("BUTTON_OK"));
                 else if (menu_settings && c == '!') menu_settings->press("SWITCH_FULLSCREEN");
                 else if (menu_settings && c == '@') menu_settings->press("BUTTON_INFO");
+                else if (menu_settings && c == '&') menu_settings_result(menu_settings->press("BUTTON_IMPORT"));
                 else if (menu_settings && c >= '6' && c <= '8')
                     menu_settings->press(SettingsDialog::length_switch(c - '0'));
                 else if (menu_settings && c == '<') menu_settings->press("BUTTON_PREV");   // credits pages
@@ -1789,7 +1808,8 @@ int main(int argc, char** argv) {
                 import_prompt.reset();
                 import_job.reset();
                 std::printf("t=%ld ms: assets: prompt closed\n", simulated_ms);
-                menu_entered();
+                if (!import_from_settings) menu_entered();
+                import_from_settings = false;
             }
         }
         if (menu_dialog_open) dialog_tick(menu_dialog, dt);
@@ -1867,11 +1887,7 @@ int main(int argc, char** argv) {
         draw_dialog_layer(ren, profile_layer, static_cast<int>(profile.dialog().kind), dt, [&] {
             draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
         });
-        // Picking keeps the prompt on screen while the native dialog is open.
-        const int import_id = !import_prompt ? 0
-                              : import_prompt->state() == tt2ui::ImportPromptFlow::State::Picking
-                                  ? 1 + static_cast<int>(tt2ui::ImportPromptFlow::State::Prompt)
-                                  : 1 + static_cast<int>(import_prompt->state());
+        const int import_id = import_prompt ? 1 + static_cast<int>(import_prompt->state()) : 0;
         draw_dialog_layer(ren, import_layer, import_id, dt, [&] { draw_dialog(ren, assets, import_prompt->dialog()); });
         float black = flow.black_alpha();
         if (game_fade_out > 0) black = std::max(black, 1.0f - static_cast<float>(game_fade_out) / GAME_FADE_HALF_MS);

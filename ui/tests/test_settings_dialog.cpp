@@ -326,3 +326,59 @@ TEST(settings_sync_fullscreen_survives_cancel_and_ok) {
     d2.press("BUTTON_OK");
     ASSERT_TRUE(d2.values().fullscreen);                                   // OK keeps it
 }
+
+// ---- The port's asset row (deviation, OP-7) ----------------------------
+
+TEST(settings_without_an_asset_row_is_the_original_layout) {
+    Rig r;
+    const SettingsDialog d(saved(), 7, true, r.services());
+    ASSERT_EQ(d.dialog().h, 440);
+    ASSERT_TRUE(d.dialog().button("BUTTON_IMPORT") == nullptr);
+    ASSERT_TRUE(d.dialog().label("LABEL_ASSETS") == nullptr);
+    ASSERT_TRUE(d.dialog().button("BUTTON_OK")->sprite.y == 357.0f);
+}
+
+TEST(settings_asset_row_grows_the_dialog_by_one_row) {
+    Rig r;
+    const SettingsDialog d(saved(), 7, true, r.services(), SettingsDialog::AssetRow{ImportStatus::Imported, true});
+    const Dialog& g = d.dialog();
+    ASSERT_EQ(g.h, 490);
+    ASSERT_EQ(g.label("LABEL_ASSETS")->text, std::string("ORIGINAL ASSETS"));
+    ASSERT_TRUE(g.button("BUTTON_IMPORT")->sprite.y == 357.0f);
+    for (const char* b : {"BUTTON_INFO", "BUTTON_OK", "BUTTON_CANCEL"}) ASSERT_TRUE(g.button(b)->sprite.y == 407.0f);
+    ASSERT_TRUE(g.button("SWITCH_LENGTH_8")->sprite.y == 298.0f);   // everything above stays put
+}
+
+TEST(settings_asset_status_follows_the_import) {
+    Rig r;
+    const auto status = [&](ImportStatus s) {
+        const SettingsDialog d(saved(), 7, true, r.services(), SettingsDialog::AssetRow{s, true});
+        return d.dialog().label("LABEL_ASSETS_STATUS")->text;
+    };
+    ASSERT_EQ(status(ImportStatus::Imported), std::string("Imported"));
+    ASSERT_EQ(status(ImportStatus::NotImported), std::string("Not imported"));
+    ASSERT_EQ(status(ImportStatus::Incomplete), std::string("Not imported"));
+    ASSERT_EQ(status(ImportStatus::Stale), std::string("Needs updating"));
+}
+
+TEST(settings_import_button_asks_the_host_to_import) {
+    Rig r;
+    SettingsDialog d(saved(), 7, true, r.services(), SettingsDialog::AssetRow{ImportStatus::NotImported, true});
+    d.set_volume("SLIDER_FXVOL", 0.9f);
+    ASSERT_TRUE(d.press("BUTTON_IMPORT") == SettingsDialog::Result::ImportAssets);
+    ASSERT_TRUE(d.values().sound_volume == 0.9f);   // kept for the host, like OK
+    ASSERT_EQ(r.count(SoundId::Button), 1);
+}
+
+TEST(settings_import_button_disabled_without_a_folder) {
+    Rig r;
+    SettingsDialog d(saved(), 7, true, r.services(), SettingsDialog::AssetRow{ImportStatus::NotImported, false});
+    ASSERT_TRUE(!d.dialog().button("BUTTON_IMPORT")->enabled);
+    ASSERT_TRUE(d.press("BUTTON_IMPORT") == SettingsDialog::Result::None);
+    ASSERT_EQ(r.count(SoundId::Button), 0);
+    // The original buttons behave as before.
+    ASSERT_TRUE(d.press("BUTTON_INFO") == SettingsDialog::Result::Info);
+    d.press("BUTTON_CANCEL");   // closes the credits first
+    ASSERT_TRUE(d.press("BUTTON_OK") == SettingsDialog::Result::Ok);
+    ASSERT_TRUE(d.press("BUTTON_CANCEL") == SettingsDialog::Result::Cancel);
+}

@@ -167,6 +167,26 @@ with `objdump` on the same SHA-256 file, since Ghidra defines no function there)
 `ev_7921652f82cfa97b132442994717c96b3aac08bb27c04d86fcd1c3bcafe35475` (Settings OK),
 `ev_f84f3f119c006d479b543c7b7c3cd7cf47db99503d55f2c8eb29446277279d7e` (`GetKeyState` callers).
 
+### 3.5 Port deviations: the asset row (OP-7, 2026-10-15)
+
+The original `DIALOG_SETTINGS` has no asset row; the layout above stays the documented original. The port
+needs the player's own Text Twist 2 install for its art, fonts and sounds until the placeholder art is ready
+(`docs/design/import-assets.md`), so the **main menu's** SETTINGS gains one row. The in-game SETTINGS (from
+the pause menu) keeps the original layout.
+
+| Item | Original | Port, main menu only |
+| --- | --- | --- |
+| Dialog height | 440 | 490 (one 50 px row) |
+| `BUTTON_INFO` / `BUTTON_OK` / `BUTTON_CANCEL` y | 357 | 407 |
+| `LABEL_ASSETS` "ORIGINAL ASSETS" | none | (45, 357), `FONT_SETTINGSTEXT` |
+| `LABEL_ASSETS_STATUS` | none | (45, 381): "Imported", "Not imported" or "Needs updating" |
+| `BUTTON_IMPORT` | none | (391, 357), anchor top-right; disabled without a per-user folder or manifest |
+
+- IMPORT keeps the dialog's values like OK, closes it, and opens the folder picker straight away (no launch
+  warning). Cancelling the picker closes it.
+- The original game has no art for IMPORT, so it is drawn as a placeholder button with its name, even when
+  the original art is imported.
+
 ## 4. Dialog keys (bounded negative, REA batch B2)
 
 Dialogs take **no keyboard shortcuts**. The input listener of `DialogSettings`
