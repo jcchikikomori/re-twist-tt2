@@ -2093,7 +2093,8 @@ TEST(tutorial_body_is_centred_as_a_block_above_its_buttons) {
         ASSERT_TRUE(last + body.line_height / 2.0f <= d.button("BUTTON_OK")->sprite.y);
         ASSERT_TRUE(first - body.line_height / 2.0f >= 52.0f);              // under the header
     }
-    const TextLabel& four = *build_tutorial(0).label("BODY_TEXT");
+    const Dialog first_tutorial = build_tutorial(0);   // keep it alive: label() points into it
+    const TextLabel& four = *first_tutorial.label("BODY_TEXT");
     ASSERT_TRUE(first_line_y(four, 4, 32) == 107.0f);
 }
 
