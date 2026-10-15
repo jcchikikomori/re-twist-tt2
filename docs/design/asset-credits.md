@@ -9,11 +9,14 @@ page: [dictionary-sources.md](../dictionary-sources.md).
 | --- | --- | --- | --- | --- |
 | [tinyfiledialogs](https://sourceforge.net/projects/tinyfiledialogs/) by Guillaume Vareille | 3.21.5 | zlib | `third_party/tinyfiledialogs/` | The "choose your Text Twist 2 folder" dialog when importing the original assets |
 | [SDL3, SDL3_image, SDL3_mixer](https://www.libsdl.org/) | 3.4.18, 3.4.8, 3.2.4 | zlib | system or MSYS2 package, or built from the release tarball (`TT2_FETCH_SDL3`); not vendored | Window, input, rendering, images, audio |
+| [Super-xBR](https://github.com/libretro/slang-shaders/tree/master/crt/shaders/crt-super-xbr) by Hyllian | libretro slang-shaders, 2015 | MIT | ported to C++ in `ui/include/tt2ui/upscale.hpp` | The optional 2x texture upscaler (UPSCALER in IMPROVEMENTS) |
 | [stb_image, stb_vorbis](https://github.com/nothings/stb) by Sean Barrett | as bundled in SDL3_image / SDL3_mixer | public domain or MIT | inside SDL3_image and SDL3_mixer | Decoding PNG / JPEG and Ogg Vorbis |
 
 - tinyfiledialogs is vendored **unaltered**. `third_party/tinyfiledialogs/VERSION` records the upstream commit and
   the SHA-256 of each file; `LICENSE` holds its notice.
 - It is compiled as its own C target, outside the project's warning flags (`CMakeLists.txt`, `tt2_tinyfd`).
+- Super-xBR is a port, not a copy: the shader math rewritten for the CPU. The MIT notice is kept in full at the
+  top of `upscale.hpp`. Art it upscales exists only in memory while the game runs; nothing is written to disk.
 
 ## Art, Fonts and Sounds
 

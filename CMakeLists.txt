@@ -175,7 +175,10 @@ if(TT2_BUILD_UI)
 
         add_executable(tt2_app ui/src/main.cpp ui/src/audio.cpp ui/src/display.cpp ui/src/folder_picker.cpp
             ui/src/render_backend.cpp)
-        target_link_libraries(tt2_app PRIVATE tt2_ui_logic tt2_platform tt2_tinyfd ${TT2_SDL_LIBS})
+        # Threads: the optional texture upscaler runs on std::async workers.
+        find_package(Threads REQUIRED)
+        target_link_libraries(tt2_app PRIVATE tt2_ui_logic tt2_platform tt2_tinyfd ${TT2_SDL_LIBS}
+            Threads::Threads)
         set_target_properties(tt2_app PROPERTIES OUTPUT_NAME tt2)
         # The source tree's imported-assets/: a developer fallback, read when
         # no per-user import exists (scripts/import-original.sh used to copy there).
@@ -245,6 +248,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_display.cpp
         ui/tests/test_side_fill.cpp
         ui/tests/test_render_options.cpp
+        ui/tests/test_upscale.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)

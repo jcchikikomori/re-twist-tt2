@@ -30,7 +30,7 @@ TEST(improvements_text_round_trip_defaults) {
     const std::string text = serialize(Improvements{});
     ASSERT_EQ(text, std::string("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\nrenderer=auto\nvsync=1\nframe_limit=0\n"
                                   "resolution=800x600\nfullscreen_mode=borderless\nwidescreen_fill=1\n"
-                                  "filter=sharp\n"));
+                                  "filter=sharp\nupscaler=off\n"));
     Improvements back;
     back.window = WindowMode::Borderless;
     ASSERT_TRUE(parse(text, back));
@@ -60,9 +60,9 @@ TEST(improvements_text_accepts_crlf_and_comments) {
 }
 
 TEST(improvements_text_ignores_keys_from_newer_builds) {
-    // Unlike settings.txt: a 0.3.1 key must never stop 0.3.0 from loading.
+    // Unlike settings.txt: a key from a later build must never stop this one from loading.
     Improvements imp;
-    ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nupscaler=epx\nwindow=borderless\n", imp));
+    ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nhdr=on\nwindow=borderless\n", imp));
     ASSERT_TRUE(imp.window == WindowMode::Borderless);
 }
 
@@ -92,6 +92,9 @@ TEST(improvements_text_rejects_garbage) {
         "format=re-twist-tt2 improvements\nwidescreen_fill=\n",
         "format=re-twist-tt2 improvements\nfilter=bilinear\n",             // not a filter we offer
         "format=re-twist-tt2 improvements\nfilter=Smooth\n",
+        "format=re-twist-tt2 improvements\nupscaler=4x\n",                 // not an upscaler we offer
+        "format=re-twist-tt2 improvements\nupscaler=epx\n",
+        "format=re-twist-tt2 improvements\nupscaler=1\n",
         "format=re-twist-tt2 improvements\nno equals sign\n",
     };
     for (const char* text : bad) {
@@ -249,4 +252,18 @@ TEST(improvements_filter_round_trips_every_choice) {
     Improvements imp;
     ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nwidescreen_fill=0\n", imp));
     ASSERT_TRUE(imp.filter == TextureFilter::Sharp);                     // a P6 file: today's look
+}
+
+TEST(improvements_upscaler_round_trips_and_defaults_off) {
+    ASSERT_TRUE(!Improvements{}.upscaler);
+    for (bool on : {true, false}) {
+        Improvements imp;
+        imp.upscaler = on;
+        Improvements back;
+        ASSERT_TRUE(parse(serialize(imp), back));
+        ASSERT_TRUE(back.upscaler == on);
+    }
+    Improvements imp;
+    ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nfilter=smooth\n", imp));
+    ASSERT_TRUE(!imp.upscaler);                                           // a P8 file: off
 }

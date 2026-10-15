@@ -32,14 +32,17 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <map>
 #include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 #include "tt2/profile.hpp"
@@ -58,6 +61,7 @@
 #include "tt2ui/render_options.hpp"
 #include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/side_fill.hpp"
+#include "tt2ui/upscale.hpp"
 #include "tt2ui/profile_dialogs.hpp"
 #include "audio.hpp"
 #include "folder_picker.hpp"
@@ -526,19 +530,60 @@ public:
     // textures, so destroying them afterwards (from ~Assets at the end of
     // main) read freed memory and crashed the Windows Release build.
     void release() {
-        for (auto& [k, img] : images_) {
-            if (img.texture) SDL_DestroyTexture(img.texture);
-            if (img.surface) SDL_DestroySurface(img.surface);
-        }
-        for (auto& [k, f] : fonts_)
-            for (SDL_Texture* t : f.layers) if (t) SDL_DestroyTexture(t);
+        release_art();
         if (audio_) audio_->stop_all();   // the tracks let go of the files
         for (auto& [k, m] : music_) AudioOut::free_clip(m);
         for (auto& [k, c] : chunks_) AudioOut::free_clip(c);
-        images_.clear();
-        fonts_.clear();
         music_.clear();
         chunks_.clear();
+    }
+
+    // Deviation UX-9 (upscale.hpp): upscale the art 2x with Super-xBR as it
+    // loads. The work runs on worker threads; the 1x texture shows until
+    // poll_upscales() swaps the 2x one in, so a big image never stalls a
+    // frame. Turning it on or off reloads the art between frames.
+    void set_upscale(bool on, int max_texture_size) {
+        max_texture_ = max_texture_size;
+        if (on == upscale_) return;
+        upscale_ = on;
+        release_art();
+    }
+
+    // Once a frame, between frames: start queued upscales while workers
+    // are free, and swap finished ones in (textures are made on this thread).
+    void poll_upscales() {
+        const std::size_t workers = std::max(1u, std::min(4u, std::thread::hardware_concurrency() - 1));
+        std::size_t running = 0;
+        for (UpscaleJob& j : upscale_jobs_) {
+            if (j.started) {
+                ++running;
+                continue;
+            }
+            if (running >= workers) break;
+            j.result = std::async(std::launch::async, [px = std::move(j.pixels), w = j.w, h = j.h] {
+                return super_xbr2x(px.data(), w, h);
+            });
+            j.started = true;
+            ++running;
+        }
+        for (auto it = upscale_jobs_.begin(); it != upscale_jobs_.end();) {
+            if (!it->started || it->result.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+                ++it;
+                continue;
+            }
+            std::vector<std::uint8_t> big = it->result.get();
+            SDL_Surface* s = SDL_CreateSurfaceFrom(2 * it->w, 2 * it->h, SDL_PIXELFORMAT_RGBA32, big.data(), 8 * it->w);
+            SDL_Texture* t = texture_of(s, 2.0f);
+            if (s) SDL_DestroySurface(s);
+            if (it->layer < 0) swap_in_image(it->key, t);
+            else swap_in_font_layer(it->key, static_cast<std::size_t>(it->layer), t);
+            ++upscaled_;
+            it = upscale_jobs_.erase(it);
+        }
+        if (upscale_jobs_.empty() && upscaled_ + upscale_skipped_ != upscale_logged_) {
+            upscale_logged_ = upscaled_ + upscale_skipped_;
+            std::printf("upscaler: %d textures at 2x, %d left at 1x (too large)\n", upscaled_, upscale_skipped_);
+        }
     }
 
     Image& image(const SheetSpec& spec) {
@@ -563,7 +608,10 @@ public:
                 }
             }
         }
-        if (!img.surface) img.surface = make_placeholder(spec);
+        if (!img.surface) {
+            img.surface = make_placeholder(spec);
+            img.placeholder = true;
+        }
         if (hires && img.surface && (hires->w != 2 * img.surface->w || hires->h != 2 * img.surface->h)) {
             std::fprintf(stderr, "warning: 2x %s is not twice the 1x size; using 1x\n", f->second.c_str());
             SDL_DestroySurface(hires);
@@ -595,13 +643,24 @@ public:
                 font_dir = placeholder_dir_ + "/2x/fonts";
                 f.density = 2.0f;
             }
+            std::vector<SDL_Surface*> sources;
             for (const FontLayer& layer : f.font.layers) {
                 const std::string path = font_dir + "/" + layer.image;
                 SDL_Surface* s = file_exists(path) ? IMG_Load(path.c_str()) : nullptr;
                 if (!s) std::fprintf(stderr, "warning: font layer %s missing\n", path.c_str());
                 f.layers.push_back(texture_of(s, f.density));
-                if (s) SDL_DestroySurface(s);
+                sources.push_back(s);
             }
+            // A font swaps to 2x only with every layer at 2x, so each glyph's
+            // layers keep lining up.
+            bool all_fit = f.density == 1.0f && upscale_;
+            for (SDL_Surface* s : sources) all_fit = all_fit && s && can_upscale(s->w, s->h, max_texture_);
+            for (std::size_t li = 0; li < sources.size(); ++li) {
+                if (all_fit) queue_upscale(id, static_cast<int>(li), sources[li]);
+                if (sources[li]) SDL_DestroySurface(sources[li]);
+            }
+            if (all_fit) font_pending_[id].assign(sources.size(), nullptr);
+            else if (f.density == 1.0f && upscale_) ++upscale_skipped_;
         } else {
             f.font = make_placeholder_font(scale);
             SDL_Surface* s = make_placeholder_font_sheet(scale);
@@ -657,6 +716,11 @@ private:
             }
             if (hires) img.density = 2.0f;
             img.texture = texture_of(hires ? hires : img.surface, img.density);
+            // Art from a file at 1x (procedural placeholders excepted).
+            if (upscale_ && !img.placeholder && img.density == 1.0f && img.texture) {
+                if (can_upscale(img.surface->w, img.surface->h, max_texture_)) queue_upscale(key, -1, img.surface);
+                else ++upscale_skipped_;
+            }
         }
         if (hires) SDL_DestroySurface(hires);
         return images_.emplace(key, img).first->second;
@@ -673,6 +737,68 @@ private:
         else apply_filter(t);
         return t;
     }
+    // The textures and hit masks, but not the sounds. Upscales in flight are
+    // waited for (std::future) and dropped.
+    void release_art() {
+        upscale_jobs_.clear();
+        for (auto& [k, layers] : font_pending_)
+            for (SDL_Texture* t : layers) if (t) SDL_DestroyTexture(t);
+        font_pending_.clear();
+        for (auto& [k, img] : images_) {
+            if (img.texture) SDL_DestroyTexture(img.texture);
+            if (img.surface) SDL_DestroySurface(img.surface);
+        }
+        for (auto& [k, f] : fonts_)
+            for (SDL_Texture* t : f.layers) if (t) SDL_DestroyTexture(t);
+        images_.clear();
+        fonts_.clear();
+        upscaled_ = upscale_skipped_ = upscale_logged_ = 0;
+    }
+    // Copies `s` (RGBA32) for a worker; the job starts in poll_upscales().
+    void queue_upscale(const std::string& key, int layer, SDL_Surface* s) {
+        SDL_Surface* rgba = s->format == SDL_PIXELFORMAT_RGBA32 ? s : SDL_ConvertSurface(s, SDL_PIXELFORMAT_RGBA32);
+        if (!rgba) return;
+        UpscaleJob j;
+        j.key = key;
+        j.layer = layer;
+        j.w = rgba->w;
+        j.h = rgba->h;
+        j.pixels.resize(static_cast<std::size_t>(j.w) * static_cast<std::size_t>(j.h) * 4);
+        for (int y = 0; y < j.h; ++y)
+            std::memcpy(&j.pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(j.w) * 4],
+                        static_cast<const std::uint8_t*>(rgba->pixels) + static_cast<std::size_t>(y) * rgba->pitch,
+                        static_cast<std::size_t>(j.w) * 4);
+        if (rgba != s) SDL_DestroySurface(rgba);
+        upscale_jobs_.push_back(std::move(j));
+    }
+    void swap_in_image(const std::string& key, SDL_Texture* t) {
+        auto it = images_.find(key);
+        if (it == images_.end() || !t) {
+            if (t) SDL_DestroyTexture(t);
+            return;
+        }
+        if (it->second.texture) SDL_DestroyTexture(it->second.texture);
+        it->second.texture = t;
+        it->second.density = 2.0f;
+    }
+    void swap_in_font_layer(const std::string& key, std::size_t layer, SDL_Texture* t) {
+        auto pending = font_pending_.find(key);
+        auto font = fonts_.find(key);
+        if (pending == font_pending_.end() || font == fonts_.end() || layer >= pending->second.size()) {
+            if (t) SDL_DestroyTexture(t);
+            return;
+        }
+        pending->second[layer] = t;
+        for (SDL_Texture* p : pending->second)
+            if (!p) return;   // more layers to come
+        for (std::size_t li = 0; li < font->second.layers.size(); ++li) {
+            if (font->second.layers[li]) SDL_DestroyTexture(font->second.layers[li]);
+            font->second.layers[li] = pending->second[li];
+        }
+        font->second.density = 2.0f;
+        font_pending_.erase(pending);
+    }
+
     // data/placeholder/2x/<rel> when 2x art is on and the asset folder
     // lacks <rel>; empty otherwise.
     std::string placeholder_2x(const std::string& rel) const {
@@ -721,6 +847,19 @@ private:
     std::map<std::string, Font> fonts_;
     tt2::TextureFilter filter_ = tt2::TextureFilter::Sharp;
     bool hires_art_ = false;
+    struct UpscaleJob {
+        std::string key;                    // images_ or fonts_ key
+        int layer = -1;                     // -1: an image; else a font layer
+        int w = 0, h = 0;                   // the 1x size
+        std::vector<std::uint8_t> pixels;   // RGBA32, handed to the worker
+        std::future<std::vector<std::uint8_t>> result;
+        bool started = false;
+    };
+    bool upscale_ = false;
+    int max_texture_ = 0;
+    std::deque<UpscaleJob> upscale_jobs_;
+    std::map<std::string, std::vector<SDL_Texture*>> font_pending_;   // finished layers of a font
+    int upscaled_ = 0, upscale_skipped_ = 0, upscale_logged_ = 0;
     std::map<SoundId, MIX_Audio*> music_;
     std::map<SoundId, MIX_Audio*> chunks_;
     SoundId current_stream_ = SoundId::Button;
@@ -1352,7 +1491,7 @@ int main(int argc, char** argv) {
                                // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages,
                                // '#' SETTINGS, '@' its INFO (credits), '6'..'8' max length,
                                // '=' the main menu's IMPROVEMENTS (then '<' / '>' its display mode,
-                               //     '(' / ')' its resolution, '[' / ']' its texture filter),
+                               //     '(' / ')' its resolution, '[' / ']' its texture filter, '*' its upscaler),
                                // '!' fullscreen switch, '^' Alt+Enter,
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND;
                                // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
@@ -1605,8 +1744,10 @@ int main(int argc, char** argv) {
     auto apply_render_options = [&](const tt2::Improvements& imp) {
         render_opts = effective(imp, render_caps);
         render_opts.filter = assets.set_filter(render_opts.filter);
-        std::printf("render: filter %s%s, dialog layers %s\n", tt2::to_string(render_opts.filter),
-                    render_opts.filter != imp.filter ? " (forced)" : "", render_opts.hires_layers ? "hi-res" : "800x600");
+        assets.set_upscale(render_opts.upscaler, render_caps.max_texture_size);
+        std::printf("render: filter %s%s, dialog layers %s, upscaler %s\n", tt2::to_string(render_opts.filter),
+                    render_opts.filter != imp.filter ? " (forced)" : "", render_opts.hires_layers ? "hi-res" : "800x600",
+                    render_opts.upscaler ? "super-xbr" : (imp.upscaler ? "off (forced)" : "off"));
     };
     apply_render_options(improvements);
     assets.set_placeholder_dir(data_dir + "/placeholder");
@@ -1730,7 +1871,7 @@ int main(int argc, char** argv) {
     auto commit_improvements = [&](const tt2::Improvements& imp) {
         if (imp.window != improvements.window || imp.resolution != improvements.resolution) apply_window(imp);
         if (imp.vsync != improvements.vsync) apply_vsync(imp.vsync);
-        if (imp.filter != improvements.filter) apply_render_options(imp);
+        if (imp.filter != improvements.filter || imp.upscaler != improvements.upscaler) apply_render_options(imp);
         improvements = imp;
         std::printf("improvements: window %s, resolution %s, vsync %s, frame limit %d\n",
                     tt2::to_string(improvements.window), tt2::to_string(improvements.resolution).c_str(),
@@ -2124,7 +2265,7 @@ int main(int argc, char** argv) {
         // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL;
         // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter;
         // '=' IMPROVEMENTS, then '<' / '>' its display mode, '(' / ')' its resolution, '[' / ']' its filter,
-        // '|' OK, '~' CANCEL.
+        // '*' its upscaler, '|' OK, '~' CANCEL.
         if (!game && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
             flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
@@ -2138,6 +2279,7 @@ int main(int argc, char** argv) {
                     menu_improvements->press(c == '(' ? "BUTTON_RESOLUTION_PREV" : "BUTTON_RESOLUTION_NEXT");
                 else if (menu_improvements && (c == '[' || c == ']'))
                     menu_improvements->press(c == '[' ? "BUTTON_FILTER_PREV" : "BUTTON_FILTER_NEXT");
+                else if (menu_improvements && c == '*') menu_improvements->press("BUTTON_UPSCALER_NEXT");
                 else if (menu_improvements && c == '|') menu_improvements_result(menu_improvements->press("BUTTON_OK"));
                 else if (menu_improvements && c == '~')
                     menu_improvements_result(menu_improvements->press("BUTTON_CANCEL"));
@@ -2225,6 +2367,7 @@ int main(int argc, char** argv) {
         }
         if (exit_after_ms >= 0 && simulated_ms >= exit_after_ms) running = false;
 
+        assets.poll_upscales();   // UX-9: swap finished 2x textures in
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
         if (improvements.widescreen_fill) side_fill.draw(ren);   // UX-6; top / bottom bars stay black

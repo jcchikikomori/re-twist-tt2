@@ -456,9 +456,33 @@ TEST(improvements_filter_row_is_greyed_out_on_software) {
     ASSERT_TRUE(d.values().filter == tt2::TextureFilter::Smooth);      // kept, not overwritten
 }
 
-TEST(improvements_dialog_fits_with_seven_rows) {
+TEST(improvements_dialog_fits_with_eight_rows) {
     Rig r;
     const ImprovementsDialog d(windowed(), r.services(), on(Backend::OpenGL));
-    ASSERT_EQ(d.rows().size(), std::size_t{7});
+    ASSERT_EQ(d.rows().size(), std::size_t{8});
     ASSERT_TRUE(d.dialog().h <= SCREEN_H);
+}
+
+// ---- UPSCALER (P9, deviation UX-9) -----------------------------------------
+
+TEST(improvements_upscaler_row_toggles_on_a_gpu) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), on(Backend::Vulkan));
+    ASSERT_EQ(value(d, "UPSCALER"), std::string("Off"));
+    d.press("BUTTON_UPSCALER_NEXT");
+    ASSERT_TRUE(d.values().upscaler);
+    ASSERT_EQ(value(d, "UPSCALER"), std::string("Super-xBR"));
+    d.press("BUTTON_CANCEL");
+    ASSERT_TRUE(!d.values().upscaler);
+}
+
+TEST(improvements_upscaler_row_is_greyed_out_on_software) {
+    Rig r;
+    tt2::Improvements saved;
+    saved.upscaler = true;
+    ImprovementsDialog d(saved, r.services(), on(Backend::Software));
+    ASSERT_TRUE(!d.row("UPSCALER")->enabled);
+    ASSERT_EQ(value(d, "UPSCALER"), std::string("Off"));                // what software does
+    d.press("BUTTON_UPSCALER_NEXT");
+    ASSERT_TRUE(d.values().upscaler);                                    // the saved choice is kept
 }

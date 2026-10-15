@@ -53,6 +53,8 @@ inline constexpr const char* SHARP = "Sharp";
 inline constexpr const char* SMOOTH = "Smooth";
 inline constexpr const char* PIXEL_ART = "Pixel art";
 inline constexpr const char* NO_SOFTWARE = "Not available with the software renderer";
+inline constexpr const char* UPSCALER = "UPSCALER";
+inline constexpr const char* SUPER_XBR = "Super-xBR";
 }  // namespace improvements_strings
 
 // Layout, dialog-local. Rows start under the header; OK / CANCEL sit 83 px
@@ -182,6 +184,8 @@ private:
         rows_.push_back(Row{"FILTER", improvements_strings::FILTER,
                             {improvements_strings::SHARP, improvements_strings::SMOOTH, improvements_strings::PIXEL_ART},
                             0, true, {}, {}, {}});
+        rows_.push_back(Row{"UPSCALER", improvements_strings::UPSCALER,
+                            {improvements_strings::OFF, improvements_strings::SUPER_XBR}, 0, true, {}, {}, {}});
         rows_.push_back(Row{"RENDERER", improvements_strings::RENDERER,
                             {improvements_strings::AUTO, backend_title(Backend::Vulkan), backend_title(Backend::OpenGL),
                              backend_title(Backend::Software)},
@@ -263,6 +267,11 @@ private:
             }
             if (r.id == "VSYNC") r.index = values_.vsync ? 0 : 1;
             if (r.id == "WIDESCREEN_FILL") r.index = values_.widescreen_fill ? 0 : 1;
+            if (r.id == "UPSCALER") {
+                r.enabled = context_.active != Backend::Software;   // off there (render_options.hpp)
+                r.reason = r.enabled ? "" : improvements_strings::NO_SOFTWARE;
+                r.index = r.enabled && values_.upscaler ? 1 : 0;
+            }
             if (r.id == "FILTER") {
                 // Software always draws Sharp (render_options.hpp): show that,
                 // greyed out; the saved choice waits for a GPU launch.
@@ -317,6 +326,7 @@ private:
         if (r.id == "VSYNC") values_.vsync = r.index == 0;
         if (r.id == "WIDESCREEN_FILL") values_.widescreen_fill = r.index == 0;
         if (r.id == "FILTER") values_.filter = kFilterOrder[r.index];
+        if (r.id == "UPSCALER") values_.upscaler = r.index == 1;
         if (r.id == "FRAME_LIMIT") values_.frame_limit = tt2::FRAME_LIMITS[r.index];
     }
 

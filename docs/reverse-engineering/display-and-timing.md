@@ -146,6 +146,30 @@ the monitor does the scaling, because the game switches the display to 800x600 (
 - **Sprite sheets under Smooth:** linear sampling can pull in a neighbouring frame at a frame's edge; checked on
   the 4-frame arrow buttons at 1600x900, where none shows.
 
+### How the port upscales the art (UX-9)
+
+`ui/include/tt2ui/upscale.hpp` is a CPU port of Hyllian's **Super-xBR** (MIT; the 3-pass libretro shader), an
+edge-directed 2x upscaler: each new pixel is a weighted blend along the stronger diagonal, clamped to its
+neighbours' range so edges get no halo (_anti-ringing_).
+
+- **Off by default.** UPSCALER in IMPROVEMENTS (`upscaler=off|super-xbr` in `improvements.txt`) turns it on;
+  the software renderer ignores it and greys the row out, like TEXTURE FILTER.
+- **What gets upscaled:** every image and font layer loaded from a file at 1x, so the imported art and any
+  placeholder file without a `2x/` copy. Procedural placeholders and the 2x placeholder art are left alone. A
+  font switches only when all its layers are done, so a glyph's layers keep lining up.
+- **Background workers:** the art loads at 1x as before, then `std::async` workers (up to 4, one core left
+  free) upscale it and each finished texture swaps in at a density of 2, the P8 path: source rectangles doubled,
+  hit masks still 1x, sampled linearly. An 800x600 image takes about 150 ms on one core, so the menu sharpens a
+  moment after it appears instead of the launch waiting.
+- **Limits:** an image over 2,000,000 pixels, or one whose 2x size passes the GPU's largest texture, stays at
+  1x (`logo_anim.png`, 5700x864, and `ANIMATED_CIRCLES.png`, 6000x600, in the original set). The log says
+  `upscaler: N textures at 2x, M left at 1x (too large)`. Memory goes up by the 2x copies: about 120 MB more
+  for the imported set (262 MB to 385 MB resident in one run).
+- **Alpha:** the filter works on premultiplied colour, and its edge test reads luma plus alpha, so transparent
+  edges blend without dark fringes and an alpha-only edge is still an edge.
+- **Why not EPX:** a spike on the imported art had EPX (Scale2x) change 2 % of the output pixels, which looks
+  almost like nearest doubling on painted, antialiased art. Super-xBR smooths those gradients instead.
+
 ### How the port keeps time (UX-7)
 
 `ui/include/tt2ui/frame_clock.hpp` replaces the 16 ms `Sleep` cap:
@@ -179,4 +203,4 @@ borderless fullscreen, vsync, `dt` clamped to 100 ms).
 | UX-6 | Side bars beside the 4:3 game filled with a generated gradient, faint rings and a gold edge in the placeholder palette (`widescreen_fill=` in `improvements.txt`, on by default; off: black); top and bottom bars stay black | No widescreen (1) | 0.3.0 (P6) |
 | UX-7 | No 60 fps cap by default; vsync (on by default) and a frame limit (60, 120, 144, 165 or 240) in `improvements.txt`; a nanosecond clock whose whole-ms steps keep the leftover fraction; the 100 ms clamp is kept | 60 fps cap with `Sleep`; vsync always on (4) | 0.3.0 (P4) |
 | UX-8 | Sharp (nearest, the default), Smooth (linear) or Pixel art filtering (`filter=` in `improvements.txt`); dialog layers drawn at the 4:3 rectangle's pixel size; placeholder art from `data/placeholder/2x/`; all off on the software renderer | No scaling (1) | 0.3.0 (P7, P8) |
-| UX-9 | Optional texture upscaler | None | |
+| UX-9 | Optional Super-xBR 2x upscale of the 1x file art on background threads (`upscaler=` in `improvements.txt`, off by default; images over 2 Mpx stay 1x); off on the software renderer | None (1) | 0.3.0 (P9) |

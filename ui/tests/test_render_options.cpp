@@ -21,6 +21,7 @@ TEST(software_forces_sharp_and_800x600_layers) {
         ASSERT_TRUE(o.filter == TextureFilter::Sharp);
         ASSERT_TRUE(!o.hires_layers);
         ASSERT_TRUE(!o.hires_art);   // the 1x placeholder files
+        ASSERT_TRUE(!o.upscaler);
     }
 }
 
@@ -65,4 +66,14 @@ TEST(layer_size_never_shrinks_or_exceeds_the_gpu) {
     ASSERT_TRUE(layer_size(640, 480, true, 16384) == (LayerSize{800, 600}));      // below 1x
     ASSERT_TRUE(layer_size(0, 0, true, 16384) == (LayerSize{800, 600}));
     ASSERT_TRUE(layer_size(3840, 2160, true, 2048) == (LayerSize{800, 600}));     // 2880x2160 > 2048
+}
+
+TEST(upscaler_follows_the_file_on_a_gpu_only) {
+    tt2::Improvements imp;
+    imp.upscaler = true;
+    ASSERT_TRUE(effective(imp, RenderCaps::of(Backend::Vulkan, 16384)).upscaler);
+    ASSERT_TRUE(!effective(imp, RenderCaps::of(Backend::Software, 0)).upscaler);
+    ASSERT_TRUE(imp.upscaler);                                           // the file keeps it
+    imp.upscaler = false;
+    ASSERT_TRUE(!effective(imp, RenderCaps::of(Backend::OpenGL, 16384)).upscaler);
 }

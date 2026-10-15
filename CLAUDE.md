@@ -217,7 +217,7 @@ the address-level walkthrough of the gameplay code is in
   `game_dialogs.hpp` for its pause menu, confirmations and round-end
   dialogs, `help_dialog.hpp` for HOW TO PLAY, `settings_dialog.hpp`
   for SETTINGS, `improvements_dialog.hpp` for the port's IMPROVEMENTS
-  dialog, `render_backend.hpp` for the renderer order (Vulkan, OpenGL,
+  dialog, `upscale.hpp` for the optional Super-xBR 2x texture upscaler (MIT, ported), `render_backend.hpp` for the renderer order (Vulkan, OpenGL,
   software; never Direct3D; `--renderer NAME` forces one for a run),
   `frame_clock.hpp` for frame timing (whole-ms steps from a nanosecond
   clock, the optional frame limit), `display.hpp` for window sizes and

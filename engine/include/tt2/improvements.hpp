@@ -165,6 +165,8 @@ struct Improvements {
     WindowMode fullscreen_mode = WindowMode::Borderless;
     bool widescreen_fill = true;   // draw the side bars beside the 4:3 game (UX-6); off: black
     TextureFilter filter = TextureFilter::Sharp;
+    // Upscale the art 2x with Super-xBR when it loads (UX-9); off by default.
+    bool upscaler = false;
 
     // Picks a window mode and remembers a fullscreen one for Alt+Enter.
     void set_window(WindowMode m) {
@@ -191,7 +193,7 @@ struct Improvements {
         return a.window == b.window && a.renderer == b.renderer && a.vsync == b.vsync &&
                a.frame_limit == b.frame_limit && a.resolution == b.resolution &&
                a.fullscreen_mode == b.fullscreen_mode && a.widescreen_fill == b.widescreen_fill &&
-               a.filter == b.filter;
+               a.filter == b.filter && a.upscaler == b.upscaler;
     }
     friend bool operator!=(const Improvements& a, const Improvements& b) { return !(a == b); }
 };
@@ -206,7 +208,8 @@ inline std::string serialize(const Improvements& imp) {
        << "resolution=" << to_string(imp.resolution) << '\n'
        << "fullscreen_mode=" << to_string(imp.fullscreen_mode) << '\n'
        << "widescreen_fill=" << (imp.widescreen_fill ? 1 : 0) << '\n'
-       << "filter=" << to_string(imp.filter) << '\n';
+       << "filter=" << to_string(imp.filter) << '\n'
+       << "upscaler=" << (imp.upscaler ? "super-xbr" : "off") << '\n';
     return os.str();
 }
 
@@ -261,6 +264,9 @@ inline bool parse(std::string_view text, Improvements& out) {
             imp.widescreen_fill = val == "1";
         } else if (key == "filter") {
             if (!parse_texture_filter(val, imp.filter)) return false;
+        } else if (key == "upscaler") {
+            if (val != "off" && val != "super-xbr") return false;
+            imp.upscaler = val == "super-xbr";
         }
         // Any other key belongs to a newer build: skip it.
     }
