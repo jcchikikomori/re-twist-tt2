@@ -11,8 +11,9 @@
 
 - The original game uses DirectX 7/8 (based on the system requirements)
 - I want this game to use Vulkan graphics pipeline
+- OpenGL is also supported, as the fallback when Vulkan is unavailable
 - DirectX is currently being ruled out (for now) because it uses the proprietary graphics technology made by Microsoft Corporation.
-- Default graphics pipeline will be the software-based if Vulkan is unavailable, and it will disable graphic enhancements, to ensure performance is solid
+- Default graphics pipeline will be the software-based if neither Vulkan nor OpenGL is available, and it will disable graphic enhancements, to ensure performance is solid
 
 ## Quality-of-life Improvements
 
