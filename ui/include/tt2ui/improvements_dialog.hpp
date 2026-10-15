@@ -13,6 +13,7 @@
 #pragma once
 
 #include <functional>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,13 @@ inline constexpr const char* RENDERER = "RENDERER";
 inline constexpr const char* AUTO = "Auto";
 inline constexpr const char* USING = "Using ";
 inline constexpr const char* AFTER_RESTART = ", applies after a restart";
+inline constexpr const char* VSYNC = "VSYNC";
+inline constexpr const char* ON = "On";
+inline constexpr const char* OFF = "Off";
+inline constexpr const char* FRAME_LIMIT = "FRAME LIMIT";
+inline constexpr const char* UNLIMITED = "Unlimited";
+inline constexpr const char* FPS = " fps";
+inline constexpr const char* NO_VSYNC = "Not available with this renderer";
 }  // namespace improvements_strings
 
 // Layout, dialog-local. Rows start under the header; OK / CANCEL sit 83 px
@@ -150,6 +158,13 @@ private:
                             {improvements_strings::AUTO, backend_title(Backend::Vulkan), backend_title(Backend::OpenGL),
                              backend_title(Backend::Software)},
                             0, true, {}, {}});
+        rows_.push_back(Row{"VSYNC", improvements_strings::VSYNC,
+                            {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}, {}});
+        std::vector<std::string> limits;
+        for (int fps : tt2::FRAME_LIMITS)
+            limits.push_back(fps == 0 ? std::string(improvements_strings::UNLIMITED)
+                                      : std::to_string(fps) + improvements_strings::FPS);
+        rows_.push_back(Row{"FRAME_LIMIT", improvements_strings::FRAME_LIMIT, std::move(limits), 0, true, {}, {}});
         Dialog d;
         d.w = IMPROVEMENTS_W;
         d.h = improvements_dialog_height(static_cast<int>(rows_.size()));
@@ -195,12 +210,18 @@ private:
                 r.note = std::string(improvements_strings::USING) + backend_title(context_.active) +
                          (values_.renderer != context_.launched ? improvements_strings::AFTER_RESTART : "");
             }
+            if (r.id == "VSYNC") r.index = values_.vsync ? 0 : 1;
+            if (r.id == "FRAME_LIMIT")
+                for (std::size_t i = 0; i < std::size(tt2::FRAME_LIMITS); ++i)
+                    if (tt2::FRAME_LIMITS[i] == values_.frame_limit) r.index = static_cast<int>(i);
         }
     }
     // One row's index -> values_.
     void store(const Row& r) {
         if (r.id == "WINDOW") values_.window = r.index == 1 ? tt2::WindowMode::Borderless : tt2::WindowMode::Windowed;
         if (r.id == "RENDERER") values_.renderer = kRendererOrder[r.index];
+        if (r.id == "VSYNC") values_.vsync = r.index == 0;
+        if (r.id == "FRAME_LIMIT") values_.frame_limit = tt2::FRAME_LIMITS[r.index];
     }
 
     void refresh() {

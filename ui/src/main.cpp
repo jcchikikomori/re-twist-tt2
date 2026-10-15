@@ -50,6 +50,7 @@
 #include "tt2ui/asset_import.hpp"
 #include "tt2ui/data_paths.hpp"
 #include "tt2ui/dialog_fade.hpp"
+#include "tt2ui/frame_clock.hpp"
 #include "tt2ui/game_scene.hpp"
 #include "tt2ui/help_dialog.hpp"
 #include "tt2ui/import_prompt.hpp"
@@ -1401,7 +1402,15 @@ int main(int argc, char** argv) {
         return 1;
     }
     const RenderCaps render_caps = pick.caps;
-    if (!SDL_SetRenderVSync(ren, 1)) std::fprintf(stderr, "warning: no vsync: %s\n", SDL_GetError());
+    // The original presents with vsync on; IMPROVEMENTS can turn it off
+    // (deviation UX-7). A renderer that refuses keeps the row disabled.
+    bool vsync_ok = true;
+    auto apply_vsync = [&](bool on) {
+        if (SDL_SetRenderVSync(ren, on ? 1 : 0) || !on) return;
+        std::fprintf(stderr, "warning: no vsync: %s\n", SDL_GetError());
+        vsync_ok = false;
+    };
+    apply_vsync(improvements.vsync);
     SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H, SDL_LOGICAL_PRESENTATION_LETTERBOX);
     std::printf("renderer: %s; enhancements %s, max texture %d\n", pick.log.c_str(),
                 render_caps.enhancements ? "on" : "off", render_caps.max_texture_size);
@@ -1540,8 +1549,10 @@ int main(int argc, char** argv) {
     auto commit_improvements = [&](const tt2::Improvements& imp) {
         if (imp.window != improvements.window)
             SDL_SetWindowFullscreen(win, imp.window != tt2::WindowMode::Windowed);
+        if (imp.vsync != improvements.vsync) apply_vsync(imp.vsync);
         improvements = imp;
-        std::printf("improvements: window %s\n", tt2::to_string(improvements.window));
+        std::printf("improvements: window %s, vsync %s, frame limit %d\n", tt2::to_string(improvements.window),
+                    improvements.vsync ? "on" : "off", improvements.frame_limit);
         if (!save_dir.empty() && !store.save(improvements))
             std::fprintf(stderr, "warning: could not write %s\n", store.improvements_path().string().c_str());
         settings_host.commit(settings);   // settings.txt's fullscreen follows (UX-4)
@@ -1660,10 +1671,12 @@ int main(int argc, char** argv) {
         else if (name == "BUTTON_PLAY") request_game(true);
         else if (name == "BUTTON_HOWTOPLAY") menu_help.emplace();
         else if (name == "BUTTON_SETTINGS") open_menu_settings();
-        else if (name == "BUTTON_IMPROVEMENTS")
+        else if (name == "BUTTON_IMPROVEMENTS") {
             menu_improvements.emplace(improvements,
                                       ImprovementsDialog::Services{[&](SoundId id) { assets.play_sound(id); }},
                                       ImprovementsDialog::Context{render_caps.backend, launch_renderer});
+            if (!vsync_ok) menu_improvements->set_row_enabled("VSYNC", false, improvements_strings::NO_VSYNC);
+        }
         else std::printf("menu: %s (not implemented yet)\n", name.c_str());
     };
     WelcomeFlow flow(services, seed_ticks() + 1);
@@ -1715,7 +1728,11 @@ int main(int argc, char** argv) {
         return pixel_alpha(img, b.sprite, px, py) > b.hit_threshold;
     };
 
-    Uint64 last = SDL_GetTicks();
+    // Frame timing (frame_clock.hpp, deviation UX-7): whole-ms steps that add
+    // up to the real time at any refresh rate, and the optional frame limit.
+    FrameClock frame_clock;
+    frame_clock.advance(SDL_GetTicksNS());
+    FramePacer frame_pacer;
     int dump_accum_ms = 0;
     int dump_index = 0;
     bool text_input_on = false;
@@ -1877,10 +1894,8 @@ int main(int argc, char** argv) {
             cursor_hot = hot;
             SDL_SetCursor(busy ? cursor_wait : (hot ? cursor_hand : cursor_arrow));
         }
-        const Uint64 now = SDL_GetTicks();
-        int dt = (fixed_dt > 0 ? fixed_dt : static_cast<int>(now - last)) * speed;
-        last = now;
-        if (dt > 100) dt = 100;
+        const int real_dt = frame_clock.advance(SDL_GetTicksNS(), speed);
+        const int dt = fixed_dt > 0 ? std::min(fixed_dt * speed, FRAME_DT_MAX_MS) : real_dt;
         if (game_fade_out > 0) {
             game_fade_out -= dt;
             if (game_fade_out <= 0) {
@@ -2108,6 +2123,8 @@ int main(int argc, char** argv) {
             }
         }
         SDL_RenderPresent(ren);
+        if (const std::uint64_t wait = frame_pacer.wait_ns(SDL_GetTicksNS(), frame_budget_ns(improvements.frame_limit)))
+            SDL_DelayPrecise(wait);
     }
 
     SDL_SetCursor(SDL_GetDefaultCursor());

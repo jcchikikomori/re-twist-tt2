@@ -68,9 +68,22 @@ inline bool parse_renderer_pref(std::string_view s, RendererPref& out) {
     return false;
 }
 
+// The frame limits IMPROVEMENTS offers (deviation UX-7); 0 = no limit. The
+// original caps itself at about 62.5 fps (a 16 ms Sleep); the port runs at
+// the display's refresh rate unless one of these is picked.
+inline constexpr int FRAME_LIMITS[] = {0, 60, 120, 144, 165, 240};
+
+inline bool valid_frame_limit(int fps) {
+    for (int f : FRAME_LIMITS)
+        if (f == fps) return true;
+    return false;
+}
+
 struct Improvements {
     WindowMode window = WindowMode::Windowed;   // GameSettings' default: windowed first run
     RendererPref renderer = RendererPref::Auto;
+    bool vsync = true;     // the original presents with vsync on (D3DPRESENT_INTERVAL_ONE)
+    int frame_limit = 0;   // one of FRAME_LIMITS
 
     // A 0.2.x settings.txt only knows fullscreen on / off; its fullscreen
     // was SDL's desktop-sized borderless window.
@@ -84,7 +97,8 @@ struct Improvements {
     bool legacy_fullscreen() const { return window != WindowMode::Windowed; }
 
     friend bool operator==(const Improvements& a, const Improvements& b) {
-        return a.window == b.window && a.renderer == b.renderer;
+        return a.window == b.window && a.renderer == b.renderer && a.vsync == b.vsync &&
+               a.frame_limit == b.frame_limit;
     }
     friend bool operator!=(const Improvements& a, const Improvements& b) { return !(a == b); }
 };
@@ -93,7 +107,9 @@ inline std::string serialize(const Improvements& imp) {
     std::ostringstream os;
     os << "format=re-twist-tt2 improvements\nversion=1\n"
        << "window=" << to_string(imp.window) << '\n'
-       << "renderer=" << to_string(imp.renderer) << '\n';
+       << "renderer=" << to_string(imp.renderer) << '\n'
+       << "vsync=" << (imp.vsync ? 1 : 0) << '\n'
+       << "frame_limit=" << imp.frame_limit << '\n';
     return os.str();
 }
 
@@ -124,6 +140,19 @@ inline bool parse(std::string_view text, Improvements& out) {
             if (!parse_window_mode(val, imp.window)) return false;
         } else if (key == "renderer") {
             if (!parse_renderer_pref(val, imp.renderer)) return false;
+        } else if (key == "vsync") {
+            if (val != "0" && val != "1") return false;
+            imp.vsync = val == "1";
+        } else if (key == "frame_limit") {
+            // Digits only, at most three: FRAME_LIMITS tops out at 240.
+            if (val.empty() || val.size() > 3) return false;
+            int fps = 0;
+            for (char c : val) {
+                if (c < '0' || c > '9') return false;
+                fps = fps * 10 + (c - '0');
+            }
+            if (!valid_frame_limit(fps)) return false;
+            imp.frame_limit = fps;
         }
         // Any other key belongs to a newer build: skip it.
     }

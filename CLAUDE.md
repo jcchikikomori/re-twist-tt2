@@ -218,7 +218,9 @@ the address-level walkthrough of the gameplay code is in
   dialogs, `help_dialog.hpp` for HOW TO PLAY, `settings_dialog.hpp`
   for SETTINGS, `improvements_dialog.hpp` for the port's IMPROVEMENTS
   dialog, `render_backend.hpp` for the renderer order (Vulkan, OpenGL,
-  software; never Direct3D; `--renderer NAME` forces one for a run), `credits_dialog.hpp` for CREDITS, `asset_import.hpp` /
+  software; never Direct3D; `--renderer NAME` forces one for a run),
+  `frame_clock.hpp` for frame timing (whole-ms steps from a nanosecond
+  clock, the optional frame limit), `credits_dialog.hpp` for CREDITS, `asset_import.hpp` /
   `import_prompt.hpp` / `folder_picker.hpp` for importing the original
   assets, `dialog_fade.hpp` for the
   dialog backdrop and show / hide fades),

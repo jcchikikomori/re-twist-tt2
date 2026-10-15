@@ -202,3 +202,63 @@ TEST(improvements_renderer_cancel_restores_the_saved_choice) {
     ASSERT_TRUE(d.values().renderer == tt2::RendererPref::OpenGL);
     ASSERT_EQ(value(d, "RENDERER"), std::string("OpenGL"));
 }
+
+// ---- VSYNC and FRAME LIMIT (P4, deviation UX-7) --------------------------
+
+TEST(improvements_vsync_row_starts_on_and_toggles) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services());
+    ASSERT_EQ(d.dialog().label("LABEL_VSYNC")->text, std::string("VSYNC"));
+    ASSERT_EQ(value(d, "VSYNC"), std::string("On"));                    // the original presents with vsync
+    d.press("BUTTON_VSYNC_NEXT");
+    ASSERT_TRUE(!d.values().vsync);
+    ASSERT_EQ(value(d, "VSYNC"), std::string("Off"));
+    d.press("BUTTON_VSYNC_PREV");
+    ASSERT_TRUE(d.values().vsync);
+}
+
+TEST(improvements_frame_limit_row_cycles_the_offered_limits) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services());
+    ASSERT_EQ(d.dialog().label("LABEL_FRAME_LIMIT")->text, std::string("FRAME LIMIT"));
+    ASSERT_EQ(value(d, "FRAME_LIMIT"), std::string("Unlimited"));
+    const char* expected[] = {"60 fps", "120 fps", "144 fps", "165 fps", "240 fps", "Unlimited"};
+    const int fps[] = {60, 120, 144, 165, 240, 0};
+    for (int i = 0; i < 6; ++i) {
+        d.press("BUTTON_FRAME_LIMIT_NEXT");
+        ASSERT_EQ(value(d, "FRAME_LIMIT"), std::string(expected[i]));
+        ASSERT_EQ(d.values().frame_limit, fps[i]);
+    }
+    d.press("BUTTON_FRAME_LIMIT_PREV");                                  // wraps backwards
+    ASSERT_EQ(d.values().frame_limit, 240);
+}
+
+TEST(improvements_frame_limit_starts_from_the_saved_value_and_cancels) {
+    Rig r;
+    tt2::Improvements saved;
+    saved.vsync = false;
+    saved.frame_limit = 144;
+    ImprovementsDialog d(saved, r.services());
+    ASSERT_EQ(value(d, "VSYNC"), std::string("Off"));
+    ASSERT_EQ(value(d, "FRAME_LIMIT"), std::string("144 fps"));
+    d.press("BUTTON_FRAME_LIMIT_NEXT");
+    d.press("BUTTON_VSYNC_NEXT");
+    ASSERT_EQ(d.values().frame_limit, 165);
+    ASSERT_TRUE(d.values().vsync);
+    d.press("BUTTON_CANCEL");
+    ASSERT_EQ(d.values().frame_limit, 144);
+    ASSERT_TRUE(!d.values().vsync);
+}
+
+TEST(improvements_vsync_row_can_be_disabled) {
+    // A renderer that refuses vsync: the host disables the row.
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services());
+    d.set_row_enabled("VSYNC", false, improvements_strings::NO_VSYNC);
+    d.press("BUTTON_VSYNC_NEXT");
+    ASSERT_TRUE(d.values().vsync);                                       // unchanged
+    ASSERT_TRUE(d.dialog().label("REASON_VSYNC")->visible);
+    ASSERT_EQ(d.values().frame_limit, 0);                                // the limit row still works
+    d.press("BUTTON_FRAME_LIMIT_NEXT");
+    ASSERT_EQ(d.values().frame_limit, 60);
+}

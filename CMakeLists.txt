@@ -240,6 +240,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_audio_mix.cpp
         ui/tests/test_improvements_dialog.cpp
         ui/tests/test_render_backend.cpp
+        ui/tests/test_frame_clock.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)

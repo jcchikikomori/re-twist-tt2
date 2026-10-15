@@ -86,6 +86,26 @@ the monitor does the scaling, because the game switches the display to 800x600 (
   so the rules do not depend on the refresh rate. What `frame_by_frame="true"` (vtable `+0x44`) does is
   UNKNOWN.
 
+### How the port keeps time (UX-7)
+
+`ui/include/tt2ui/frame_clock.hpp` replaces the 16 ms `Sleep` cap:
+
+- **`FrameClock`** reads `SDL_GetTicksNS()`. Each frame adds the elapsed nanoseconds (times `--speed`) to a
+  carry and hands out whole milliseconds, because every model steps in `int` ms. The fraction stays in the
+  carry, so at 240 Hz (4.1667 ms a frame) the steps run 4, 4, 4, 4, 4, 5 and add up to the real time.
+  Flooring each frame's own duration would lose 0.1667 ms a frame, 4% of the game clock. (The 0.2.x loop
+  subtracted whole-ms timestamps, which also adds up; the class keeps that property under unit tests.)
+- **The 100 ms clamp stays**, and the time it cuts is dropped, as in `0x4924c0`. `--fixed-dt` bypasses the
+  clock as before (the step is still clamped to 100 ms).
+- **`FramePacer`** sleeps with `SDL_DelayPrecise` until the next frame start when a frame limit is set.
+  Frames aim at fixed slots, so the average rate holds; a frame more than a slot late starts a new schedule.
+- **Vsync** stays on by default, like `PresentationInterval` `ONE`. A renderer that refuses it disables the
+  VSYNC row in IMPROVEMENTS.
+- **Audit:** every model steps by the `dt` it is given. One behaviour is per frame: a `ModifierQueue`
+  (`modifier.hpp`) that finishes an item exactly on a frame boundary starts the next one on the next frame,
+  like the original. A boundary costs one frame, 16 ms at 62.5 fps and about 4 ms at 240 Hz, so chained
+  animations such as the splash cards finish a few frames sooner on fast displays. That is accepted.
+
 ## Port deviations
 
 Planned in [`docs/design/improve-ui-ux.md`](../design/improve-ui-ux.md). Each row is filled in by the phase
@@ -97,6 +117,6 @@ borderless fullscreen, vsync, `dt` clamped to 100 ms).
 | UX-1 | Renders with Vulkan, then OpenGL, then software, through SDL3; `renderer=` in `improvements.txt` or `--renderer` picks the first to try; never Direct3D | Direct3D 9 only (2) | 0.3.0 (P1 SDL3, P3 order) |
 | UX-5 | Window sizes up to 1080p; borderless and native fullscreen | 800x600 only; exclusive 800x600 mode (1, 3) | |
 | UX-6 | Side bars beside the 4:3 game filled in the original palette | No widescreen (1) | |
-| UX-7 | No 60 fps cap by default; vsync or a chosen limit; nanosecond clock | 60 fps cap with `Sleep` (4) | |
+| UX-7 | No 60 fps cap by default; vsync (on by default) and a frame limit (60, 120, 144, 165 or 240) in `improvements.txt`; a nanosecond clock whose whole-ms steps keep the leftover fraction; the 100 ms clamp is kept | 60 fps cap with `Sleep`; vsync always on (4) | 0.3.0 (P4) |
 | UX-8 | Smooth or pixel-art filtering, 2x placeholder art, full-resolution dialog layers | No scaling (1) | |
 | UX-9 | Optional texture upscaler | None | |

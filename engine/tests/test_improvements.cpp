@@ -28,7 +28,7 @@ TEST(improvements_default_to_a_window) {
 
 TEST(improvements_text_round_trip_defaults) {
     const std::string text = serialize(Improvements{});
-    ASSERT_EQ(text, std::string("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\nrenderer=auto\n"));
+    ASSERT_EQ(text, std::string("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\nrenderer=auto\nvsync=1\nframe_limit=0\n"));
     Improvements back;
     back.window = WindowMode::Borderless;
     ASSERT_TRUE(parse(text, back));
@@ -74,6 +74,12 @@ TEST(improvements_text_rejects_garbage) {
         "format=re-twist-tt2 improvements\nwindow=\n",
         "format=re-twist-tt2 improvements\nrenderer=metal\n",               // not a backend we offer
         "format=re-twist-tt2 improvements\nrenderer=direct3d11\n",          // excluded (Q12)
+        "format=re-twist-tt2 improvements\nvsync=2\n",
+        "format=re-twist-tt2 improvements\nvsync=on\n",
+        "format=re-twist-tt2 improvements\nframe_limit=59\n",                // not an offered limit
+        "format=re-twist-tt2 improvements\nframe_limit=-60\n",
+        "format=re-twist-tt2 improvements\nframe_limit=0060\n",              // too long
+        "format=re-twist-tt2 improvements\nframe_limit=\n",
         "format=re-twist-tt2 improvements\nno equals sign\n",
     };
     for (const char* text : bad) {
@@ -143,4 +149,26 @@ TEST(improvements_renderer_round_trips_every_choice) {
     Improvements imp;
     ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\n", imp));
     ASSERT_TRUE(imp.renderer == RendererPref::Auto);                    // a P2 file: the default
+}
+
+TEST(improvements_vsync_and_frame_limit_round_trip) {
+    for (int fps : FRAME_LIMITS) {
+        for (bool vsync : {true, false}) {
+            Improvements imp;
+            imp.vsync = vsync;
+            imp.frame_limit = fps;
+            Improvements back;
+            ASSERT_TRUE(parse(serialize(imp), back));
+            ASSERT_TRUE(back == imp);
+        }
+    }
+    Improvements imp;
+    ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nrenderer=vulkan\n", imp));
+    ASSERT_TRUE(imp.vsync);                                              // a P3 file: the defaults
+    ASSERT_EQ(imp.frame_limit, 0);
+}
+
+TEST(improvements_frame_limits_are_the_offered_ones) {
+    for (int fps : {0, 60, 120, 144, 165, 240}) ASSERT_TRUE(valid_frame_limit(fps));
+    for (int fps : {-1, 30, 59, 61, 75, 300}) ASSERT_TRUE(!valid_frame_limit(fps));
 }
