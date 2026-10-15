@@ -97,7 +97,10 @@ if(TT2_BUILD_UI)
         # built as static libraries. SDL still loads X11, Wayland, Vulkan,
         # OpenGL and the audio servers at run time, so none of them is
         # linked in. Images use the built-in stb decoders, audio decodes WAV
-        # and Ogg Vorbis (stb_vorbis); every other codec stays off.
+        # and Ogg Vorbis (stb_vorbis); every other codec stays off. No codec
+        # may be loaded at run time: SDL_image would otherwise pick up a
+        # system libpng and dlopen it, a file no package carries (the first
+        # SDL3 Windows zip lost its JPEG decoder that way).
         enable_language(C)
         include(FetchContent)
         set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -109,6 +112,8 @@ if(TT2_BUILD_UI)
         set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
         set(SDLIMAGE_VENDORED OFF CACHE BOOL "" FORCE)
         set(SDLIMAGE_BACKEND_STB ON CACHE BOOL "" FORCE)
+        set(SDLIMAGE_PNG_LIBPNG OFF CACHE BOOL "" FORCE)
+        set(SDLIMAGE_DEPS_SHARED OFF CACHE BOOL "" FORCE)
         set(SDLIMAGE_SAMPLES OFF CACHE BOOL "" FORCE)
         set(SDLIMAGE_TESTS OFF CACHE BOOL "" FORCE)
         set(SDLIMAGE_INSTALL OFF CACHE BOOL "" FORCE)
@@ -116,6 +121,7 @@ if(TT2_BUILD_UI)
             set(SDLIMAGE_${fmt} OFF CACHE BOOL "" FORCE)
         endforeach()
         set(SDLMIXER_VENDORED OFF CACHE BOOL "" FORCE)
+        set(SDLMIXER_DEPS_SHARED OFF CACHE BOOL "" FORCE)
         set(SDLMIXER_TESTS OFF CACHE BOOL "" FORCE)
         set(SDLMIXER_EXAMPLES OFF CACHE BOOL "" FORCE)
         set(SDLMIXER_INSTALL OFF CACHE BOOL "" FORCE)

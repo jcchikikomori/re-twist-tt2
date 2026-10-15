@@ -4,7 +4,8 @@
 #   UndefinedBehaviorSanitizer run of the tests (the engine stores
 #   non-owning pointers, see CLAUDE.md "Engine ownership").
 # - Windows: MSYS2 UCRT64 (MinGW-w64 GCC), the same toolchain the
-#   Windows package uses.
+#   Windows package uses; SDL3 is built from the pinned releases there
+#   too (TT2_FETCH_SDL3), so every decoder is compiled in.
 # Each job also smoke-runs the game headless when the UI was built.
 name: CI
 
@@ -76,6 +77,19 @@ jobs:
           ./build/tt2 --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
           --player CI --seed 5 --play untimed --type '~ab|' --exit-after 9000
 
+      # Decode real files with the game's own loaders: a package that lost
+      # a decoder (the first SDL3 Windows zip showed a black splash) fails
+      # here, since the synthetic import never decodes anything.
+      - name: Media decoders
+        if: matrix.ui == 'ON'
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          ./build/tt2 --probe-media ui/tests/media/probe.jpg --probe-media ui/tests/media/probe.png \
+            --probe-media ui/tests/media/probe.ogg
+          if ./build/tt2 --probe-media ui/tests/media/broken.png; then exit 1; fi   # a corrupt file must fail
+
       # tt2 --import on a synthetic install (random bytes, decoy DRM names),
       # then proof that no run touched the real per-user asset folder.
       - name: Import smoke (synthetic install)
@@ -105,12 +119,11 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-sdl3
-            mingw-w64-ucrt-x86_64-sdl3-image
-            mingw-w64-ucrt-x86_64-sdl3-mixer
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DTT2_WARN_AS_ERROR=ON
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DTT2_WARN_AS_ERROR=ON
+          -DTT2_FETCH_SDL3=ON
 
       - name: Build
         run: cmake --build build
@@ -125,6 +138,18 @@ jobs:
         run: >
           ./build/tt2.exe --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
           --player CI --seed 5 --play untimed --type '~ab|' --exit-after 9000
+
+      # Decode real files with the game's own loaders: a package that lost
+      # a decoder (the first SDL3 Windows zip showed a black splash) fails
+      # here, since the synthetic import never decodes anything.
+      - name: Media decoders
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          ./build/tt2.exe --probe-media ui/tests/media/probe.jpg --probe-media ui/tests/media/probe.png \
+            --probe-media ui/tests/media/probe.ogg
+          if ./build/tt2.exe --probe-media ui/tests/media/broken.png; then exit 1; fi   # a corrupt file must fail
 
       - name: Import smoke (synthetic install)
         env:

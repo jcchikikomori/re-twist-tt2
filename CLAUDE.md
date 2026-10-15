@@ -19,8 +19,9 @@ the engine.
   (`ui/`) needs SDL3, SDL3_image and SDL3_mixer; it is skipped
   automatically when they are missing (`TT2_BUILD_UI=OFF` to disable).
   `-DTT2_FETCH_SDL3=ON` downloads and statically builds the pinned
-  releases instead (CI and the AppImage use it; Windows uses the MSYS2
-  `sdl3` packages).
+  releases instead, with every image and audio decoder compiled in (CI,
+  the AppImage and the Windows zip all use it). Check a build's decoders
+  with `tt2 --probe-media ui/tests/media/probe.jpg` (also `.png`, `.ogg`).
 - **No container required.** The project compiles on the host directly;
   `podman` / `docker` is optional for reproducing the same toolchain.
 

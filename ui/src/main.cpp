@@ -22,6 +22,7 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
+#include <SDL3_mixer/SDL_mixer.h>
 
 #include <algorithm>
 #include <cctype>
@@ -1043,6 +1044,34 @@ void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
     }
 }
 
+// --probe-media FILE: decode FILE with the game's own loaders (images through
+// SDL_image, .ogg / .wav through SDL_mixer, without an audio device) and
+// return false when that fails. CI runs it on ui/tests/media/ against each
+// package: the first SDL3 Windows zip showed a black splash because its
+// SDL_image loaded libjpeg at run time and the zip didn't carry it.
+bool probe_media(const std::string& path) {
+    const std::string ext = path.size() >= 4 ? path.substr(path.size() - 4) : std::string();
+    if (ext == ".ogg" || ext == ".wav") {
+        const SDL_AudioSpec spec{SDL_AUDIO_S16, 2, 44100};
+        MIX_Mixer* mixer = MIX_Init() ? MIX_CreateMixer(&spec) : nullptr;
+        MIX_Audio* clip = mixer ? MIX_LoadAudio(mixer, path.c_str(), true) : nullptr;
+        const bool ok = clip != nullptr;
+        if (!ok) std::fprintf(stderr, "probe: %s: %s\n", path.c_str(), SDL_GetError());
+        MIX_DestroyAudio(clip);
+        if (mixer) MIX_DestroyMixer(mixer);
+        MIX_Quit();
+        return ok;
+    }
+    SDL_Surface* s = IMG_Load(path.c_str());
+    if (!s) {
+        std::fprintf(stderr, "probe: %s: %s\n", path.c_str(), SDL_GetError());
+        return false;
+    }
+    std::printf("probe: %s: %dx%d\n", path.c_str(), s->w, s->h);
+    SDL_DestroySurface(s);
+    return true;
+}
+
 // Prefer the user's own common.tree / full.tree (symlinks to the original
 // install, gitignored); fall back to the open-license dictionaries.
 bool load_tree(const std::string& dir, const char* original, const char* open, tt2::WordTree& out) {
@@ -1162,6 +1191,7 @@ int main(int argc, char** argv) {
                                // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
                                // '&' the main menu SETTINGS' IMPORT (re-import, deviation OP-7)
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
+    std::vector<std::string> probe_files;   // --probe-media FILE (repeatable): decode, report, exit
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_flag = argv[++i];
         else if (!std::strcmp(argv[i], "--asset-dir") && i + 1 < argc) asset_dir_flag = argv[++i];
@@ -1179,6 +1209,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--play") && i + 1 < argc) auto_play = argv[++i];
         else if (!std::strcmp(argv[i], "--type") && i + 1 < argc) auto_type = argv[++i];
         else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc) debug_seed = std::atol(argv[++i]);
+        else if (!std::strcmp(argv[i], "--probe-media") && i + 1 < argc) probe_files.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--help")) {
             std::printf("usage: tt2 [--assets DIR] [--data-dir DIR] [--save-dir DIR] [--player NAME]\n"
                         "           [--play untimed|timed] [--speed N] [--exit-after MS]\n"
@@ -1194,6 +1225,12 @@ int main(int argc, char** argv) {
                         "                        data/original-assets.sha256\n");
             return 0;
         }
+    }
+    if (!probe_files.empty()) {
+        bool all_ok = true;
+        for (const std::string& f : probe_files) all_ok = probe_media(f) && all_ok;
+        std::printf("probe: %s\n", all_ok ? "ok" : "failed");
+        return all_ok ? 0 : 1;
     }
     if (speed < 1) speed = 1;
     if (fixed_dt < 0) fixed_dt = 0;

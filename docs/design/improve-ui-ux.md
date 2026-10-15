@@ -71,9 +71,13 @@
 
 | Component | Version | License | Source |
 | --- | --- | --- | --- |
-| SDL3 | 3.4.18 | zlib | Linux: built from the `release-3.4.18` tag; Windows: MSYS2 `mingw-w64-ucrt-x86_64-sdl3` |
-| SDL3_image | 3.4.8 | zlib | Linux: `release-3.4.8`; Windows: `mingw-w64-ucrt-x86_64-sdl3-image` |
-| SDL3_mixer | 3.2.4 | zlib | Linux: `release-3.2.4`; Windows: `mingw-w64-ucrt-x86_64-sdl3-mixer` |
+| SDL3 | 3.4.18 | zlib | Built from the `release-3.4.18` tarball on Linux and Windows (`TT2_FETCH_SDL3`) |
+| SDL3_image | 3.4.8 | zlib | `release-3.4.8`, stb decoders only (PNG, JPEG, BMP) |
+| SDL3_mixer | 3.2.4 | zlib | `release-3.2.4`, stb_vorbis and WAV only |
+
+Windows used MSYS2's `sdl3` packages at first; their SDL3_image loads libjpeg at run time, the zip didn't carry it,
+and the splash came out black. Since then Windows builds the same tarballs as Linux, and CI decodes
+`ui/tests/media/` with each package (`tt2 --probe-media`).
 | Vulkan loader | the player's system | Apache 2.0 | Loaded by SDL at run time; never bundled |
 
 ### Port deviations

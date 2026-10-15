@@ -77,6 +77,20 @@ jobs:
           ./Re-Twist_TT2-*-x86_64.AppImage --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
           --player CI --seed 5 --play untimed --type '~ab|' --exit-after 9000
 
+      # Decode real files with the game's own loaders: a package that lost
+      # a decoder (the first SDL3 Windows zip showed a black splash) fails
+      # here, since the synthetic import never decodes anything.
+      - name: Media decoders
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          app=$(ls "$PWD"/Re-Twist_TT2-*-x86_64.AppImage)
+          "$app" --probe-media ui/tests/media/probe.jpg --probe-media ui/tests/media/probe.png \
+            --probe-media ui/tests/media/probe.ogg
+          if "$app" --probe-media ui/tests/media/broken.png; then exit 1; fi   # a corrupt file must fail
+
       # The packaged game must find its bundled manifest (or it could never
       # verify an import) and run the whole import on a synthetic install.
       - name: Asset import smoke (AppImage)
@@ -120,22 +134,19 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-sdl3
-            mingw-w64-ucrt-x86_64-sdl3-image
-            mingw-w64-ucrt-x86_64-sdl3-mixer
 
       - name: Build and install into dist/
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$PWD/dist" -DTT2_BUILD_TESTS=OFF
+            -DCMAKE_INSTALL_PREFIX="$PWD/dist" -DTT2_BUILD_TESTS=OFF -DTT2_FETCH_SDL3=ON
           cmake --build build
           cmake --install build
           cp LICENSE dist/
 
       - name: Copy the runtime DLLs next to tt2.exe
         run: |
-          # Every DLL the game links that comes from the MSYS2 prefix
-          # (SDL3, SDL3_image, SDL3_mixer, their codecs, the GCC runtime).
+          # Every DLL the game links that comes from the MSYS2 prefix (the GCC
+          # runtime; SDL3 and its decoders are linked in statically).
           for exe in dist/tt2.exe dist/tt2_engine.exe; do
             ldd "$exe" | awk '/\/ucrt64\// {print $3}'
           done | sort -u | xargs -r cp -t dist/
@@ -148,6 +159,18 @@ jobs:
         run: >
           ./dist/tt2.exe --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
           --player CI --seed 5 --play untimed --type '~ab|' --exit-after 9000
+
+      # Decode real files with the game's own loaders: a package that lost
+      # a decoder (the first SDL3 Windows zip showed a black splash) fails
+      # here, since the synthetic import never decodes anything.
+      - name: Media decoders
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          ./dist/tt2.exe --probe-media ui/tests/media/probe.jpg --probe-media ui/tests/media/probe.png \
+            --probe-media ui/tests/media/probe.ogg
+          if ./dist/tt2.exe --probe-media ui/tests/media/broken.png; then exit 1; fi   # a corrupt file must fail
 
       - name: Asset import smoke (zip)
         env:
