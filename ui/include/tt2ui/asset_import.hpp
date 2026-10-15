@@ -33,6 +33,7 @@
 
 #include "tt2/asset_manifest.hpp"
 #include "tt2/sha256.hpp"
+#include "tt2/utf8_path.hpp"
 
 namespace tt2ui {
 
@@ -149,7 +150,7 @@ inline ImportStatus import_status(const std::filesystem::path& assets_dir, const
     if (stamp.manifest != manifest_digest(m) || stamp.files != m.entries.size()) return ImportStatus::Stale;
     std::error_code ec;
     for (const auto& e : m.entries)
-        if (!fs::is_regular_file(assets_dir / fs::u8path(e.path), ec)) return ImportStatus::Incomplete;
+        if (!fs::is_regular_file(assets_dir / tt2::utf8_path(e.path), ec)) return ImportStatus::Incomplete;
     return ImportStatus::Imported;
 }
 
@@ -241,14 +242,14 @@ public:
         const bool had_dir = fs::exists(dir_, ec);
         if (had_dir) {
             fs::rename(dir_, old, ec);
-            if (ec) return fail(ImportError::Kind::CommitFailed, dir_.u8string());
+            if (ec) return fail(ImportError::Kind::CommitFailed, tt2::utf8_string(dir_));
         } else {
             fs::create_directories(dir_.parent_path(), ec);
         }
         fs::rename(staging, dir_, ec);
         if (ec) {
             if (had_dir) fs::rename(old, dir_, ec);   // put the previous import back
-            return fail(ImportError::Kind::CommitFailed, dir_.u8string());
+            return fail(ImportError::Kind::CommitFailed, tt2::utf8_string(dir_));
         }
         fs::remove_all(old, ec);
         stage_ = Stage::Done;
@@ -285,7 +286,7 @@ private:
             return;
         }
         for (const auto& e : manifest_.entries) {
-            const auto size = fs::file_size(source_ / fs::u8path(e.path), ec);
+            const auto size = fs::file_size(source_ / tt2::utf8_path(e.path), ec);
             if (!ec) total_bytes_ += static_cast<std::size_t>(size);
         }
         index_ = 0;
@@ -309,7 +310,7 @@ private:
         const auto& e = manifest_.entries[index_];
         if (!in_.is_open()) {
             std::error_code ec;
-            const fs::path p = root / fs::u8path(e.path);
+            const fs::path p = root / tt2::utf8_path(e.path);
             if (fs::is_regular_file(p, ec)) in_.open(p, std::ios::binary);
             if (!in_.is_open()) {
                 note(e.path);   // missing or unreadable
@@ -354,9 +355,9 @@ private:
         }
         const auto& e = manifest_.entries[index_];
         if (!in_.is_open()) {
-            const fs::path to = staging / fs::u8path(e.path);
+            const fs::path to = staging / tt2::utf8_path(e.path);
             fs::create_directories(to.parent_path(), ec);
-            in_.open(source_ / fs::u8path(e.path), std::ios::binary);
+            in_.open(source_ / tt2::utf8_path(e.path), std::ios::binary);
             out_.open(to, std::ios::binary | std::ios::trunc);
             if (!in_ || !out_) fail(ImportError::Kind::WriteFailed, e.path);
             return 0;

@@ -162,6 +162,7 @@ if(TT2_BUILD_TESTS)
         engine/tests/test_settings.cpp
         engine/tests/test_sha256.cpp
         engine/tests/test_asset_manifest.cpp
+        engine/tests/test_utf8_path.cpp
     )
     target_link_libraries(tt2_tests PRIVATE tt2_engine tt2_platform)
     # The committed data/ files the tests check (original-assets.sha256).

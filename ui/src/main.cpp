@@ -45,6 +45,7 @@
 
 #include "tt2/profile.hpp"
 #include "tt2/profile_store.hpp"
+#include "tt2/utf8_path.hpp"
 #include "tt2/word_tree.hpp"
 #include "tt2ui/bitmap_font.hpp"
 #include "tt2ui/asset_import.hpp"
@@ -241,7 +242,7 @@ bool file_exists(const std::string& path) {
 }
 
 bool read_text(const std::string& path, std::string& out) {
-    std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+    std::ifstream in(tt2::utf8_path(path), std::ios::binary);
     if (!in) return false;
     std::ostringstream ss;
     ss << in.rdbuf();
@@ -1187,7 +1188,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::printf("import: %s -> %s\n", import_from.c_str(), user_dir.c_str());
-        tt2ui::AssetImportJob job(std::filesystem::u8path(import_from), std::filesystem::u8path(user_dir), manifest);
+        tt2ui::AssetImportJob job(tt2::utf8_path(import_from), tt2::utf8_path(user_dir), manifest);
         while (!job.finished()) job.step(4 << 20);
         if (job.stage() == tt2ui::AssetImportJob::Stage::ReadyToCommit) job.commit();   // nothing is loaded yet
         if (job.stage() != tt2ui::AssetImportJob::Stage::Done) {
@@ -1208,10 +1209,10 @@ int main(int argc, char** argv) {
     asset_inputs.user_dir_given = !asset_dir_flag.empty();
     asset_inputs.can_import = manifest_ok;
     if (!user_dir.empty() && manifest_ok)
-        asset_inputs.user_status = tt2ui::import_status(std::filesystem::u8path(user_dir), manifest);
+        asset_inputs.user_status = tt2ui::import_status(tt2::utf8_path(user_dir), manifest);
     {
         std::error_code ec;
-        if (std::filesystem::is_directory(std::filesystem::u8path(TT2_IMPORTED_ASSETS_DIR), ec))
+        if (std::filesystem::is_directory(tt2::utf8_path(TT2_IMPORTED_ASSETS_DIR), ec))
             asset_inputs.developer_dir = TT2_IMPORTED_ASSETS_DIR;
     }
     const tt2ui::AssetDirChoice asset_choice = tt2ui::choose_assets_dir(asset_inputs);

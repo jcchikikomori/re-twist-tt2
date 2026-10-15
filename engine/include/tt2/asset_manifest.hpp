@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "tt2/sha256.hpp"
+#include "tt2/utf8_path.hpp"
 
 namespace tt2 {
 
@@ -207,7 +208,7 @@ inline InstallScan scan_install(const std::filesystem::path& install, const Hash
         fs::recursive_directory_iterator it(install / root, fs::directory_options::skip_permission_denied, ec), end;
         for (; !ec && it != end; it.increment(ec)) {
             if (it->is_symlink(ec) || !it->is_regular_file(ec)) continue;
-            const std::string rel = it->path().lexically_relative(install).generic_u8string();
+            const std::string rel = utf8_string(it->path().lexically_relative(install));
             if (!is_safe_relative(rel) || !under_import_root(rel) || is_excluded(rel)) continue;
             paths.push_back(rel);
         }
@@ -219,7 +220,7 @@ inline InstallScan scan_install(const std::filesystem::path& install, const Hash
     }
     std::sort(paths.begin(), paths.end());
     for (const std::string& rel : paths) {
-        const std::optional<Sha256::Digest> d = hash(install / fs::u8path(rel));
+        const std::optional<Sha256::Digest> d = hash(install / utf8_path(rel));
         if (!d) {
             scan.status = InstallScan::Status::Unreadable;
             scan.detail = rel;
@@ -242,7 +243,7 @@ inline std::vector<FileProblem> verify_files(const std::filesystem::path& dir, c
                                              const HashFile& hash = sha256_file) {
     std::vector<FileProblem> problems;
     for (const AssetManifest::Entry& e : m.entries) {
-        const std::optional<Sha256::Digest> d = hash(dir / std::filesystem::u8path(e.path));
+        const std::optional<Sha256::Digest> d = hash(dir / utf8_path(e.path));
         if (!d) problems.push_back({FileProblem::Kind::Missing, e.path});
         else if (*d != e.sha256) problems.push_back({FileProblem::Kind::Mismatch, e.path});
     }

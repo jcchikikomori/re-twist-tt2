@@ -19,6 +19,7 @@
 #include <string>
 
 #include "tt2/asset_manifest.hpp"
+#include "tt2/utf8_path.hpp"
 
 namespace {
 
@@ -32,7 +33,7 @@ namespace {
 
 int cmd_manifest(int argc, char** argv) {
     if (argc != 1) usage();
-    const tt2::InstallScan scan = tt2::scan_install(std::filesystem::u8path(argv[0]));
+    const tt2::InstallScan scan = tt2::scan_install(tt2::utf8_path(argv[0]));
     switch (scan.status) {
     case tt2::InstallScan::Status::NotAnInstall:
         std::fprintf(stderr, "%s does not look like a Text Twist 2 install (no %s)\n", argv[0], tt2::INSTALL_PROBE);
@@ -50,7 +51,7 @@ int cmd_manifest(int argc, char** argv) {
 
 int cmd_verify(int argc, char** argv) {
     if (argc != 2) usage();
-    std::ifstream in(std::filesystem::u8path(argv[1]), std::ios::binary);
+    std::ifstream in(tt2::utf8_path(argv[1]), std::ios::binary);
     if (!in) {
         std::fprintf(stderr, "cannot open %s\n", argv[1]);
         return 2;
@@ -62,7 +63,7 @@ int cmd_verify(int argc, char** argv) {
         std::fprintf(stderr, "%s is not a valid manifest\n", argv[1]);
         return 2;
     }
-    const auto problems = tt2::verify_files(std::filesystem::u8path(argv[0]), m);
+    const auto problems = tt2::verify_files(tt2::utf8_path(argv[0]), m);
     for (const tt2::FileProblem& p : problems)
         std::printf("%s %s\n", p.kind == tt2::FileProblem::Kind::Missing ? "MISSING" : "MISMATCH", p.path.c_str());
     if (!problems.empty()) return 1;
