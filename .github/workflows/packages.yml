@@ -1,5 +1,6 @@
 # Release builds: a Linux AppImage and a Windows zip (tt2.exe + DLLs +
-# data/). Runs on pushes to main, on version tags (v*), and by hand.
+# data/). Runs on pushes to main, on version tags (v*), and by hand; a v*
+# tag also publishes both as a GitHub Release.
 # The packages carry only the open-license dictionaries and the
 # procedural placeholder art; GameHouse assets are never part of a build.
 name: Packages
@@ -67,6 +68,24 @@ jobs:
           ./Re-Twist_TT2-*-x86_64.AppImage --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
           --player CI --seed 5 --play untimed --type '~ab|' --exit-after 9000
 
+      # The packaged game must find its bundled manifest (or it could never
+      # verify an import) and run the whole import on a synthetic install.
+      - name: Asset import smoke (AppImage)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          test -f AppDir/usr/share/tt2/data/original-assets.sha256
+          app=$(ls "$PWD"/Re-Twist_TT2-*-x86_64.AppImage)
+          "$app" --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/empty-assets" --player CI \
+            --type '~' --exit-after 8000 > bundled.log
+          cat bundled.log
+          grep -q 'import needed' bundled.log            # the bundled manifest loaded
+          if grep -q 'no valid asset manifest' bundled.log; then exit 1; fi   # (! cmd never fails under bash -e)
+          scripts/ci-import-smoke.sh "$app" ./build/tt2-assets "$RUNNER_TEMP/import-smoke"
+          test ! -e "$HOME/.local/share/re-twist-tt2/imported-assets"
+
       - uses: actions/upload-artifact@v6
         with:
           name: re-twist-tt2-linux-x86_64-appimage
@@ -120,8 +139,45 @@ jobs:
           ./dist/tt2.exe --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
           --player CI --seed 5 --play untimed --type '~ab|' --exit-after 9000
 
+      - name: Asset import smoke (zip)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          test -f dist/data/original-assets.sha256
+          ./dist/tt2.exe --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/empty-assets" --player CI \
+            --type '~' --exit-after 8000 > bundled.log
+          cat bundled.log
+          grep -q 'import needed' bundled.log            # the bundled manifest loaded
+          if grep -q 'no valid asset manifest' bundled.log; then exit 1; fi   # (! cmd never fails under bash -e)
+          scripts/ci-import-smoke.sh ./dist/tt2.exe ./build/tt2-assets.exe "$RUNNER_TEMP/import-smoke"
+
       - uses: actions/upload-artifact@v6
         with:
           name: re-twist-tt2-windows-x86_64
           path: dist/
           if-no-files-found: error
+
+  # A version tag (v*) publishes both packages as a GitHub Release. Only
+  # this job may write to the repository; the tag itself is pushed by hand.
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [appimage, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd artifacts/re-twist-tt2-windows-x86_64 &&
+            zip -r "$GITHUB_WORKSPACE/re-twist-tt2-$GITHUB_REF_NAME-windows-x86_64.zip" .)
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes \
+            artifacts/re-twist-tt2-linux-x86_64-appimage/*.AppImage \
+            "re-twist-tt2-$GITHUB_REF_NAME-windows-x86_64.zip"
