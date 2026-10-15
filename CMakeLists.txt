@@ -157,6 +157,7 @@ if(TT2_BUILD_TESTS)
         engine/tests/test_saved_game.cpp
         engine/tests/test_settings.cpp
         engine/tests/test_sha256.cpp
+        engine/tests/test_asset_manifest.cpp
     )
     target_link_libraries(tt2_tests PRIVATE tt2_engine tt2_platform)
 
