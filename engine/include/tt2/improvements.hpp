@@ -167,6 +167,9 @@ struct Improvements {
     TextureFilter filter = TextureFilter::Sharp;
     // Upscale the art 2x with Super-xBR when it loads (UX-9); off by default.
     bool upscaler = false;
+    // Ask "Continue the game?" when a save exists (game-scene.md 7). Off is
+    // the original: the save resumes without asking.
+    bool resume_prompt = true;
 
     // Picks a window mode and remembers a fullscreen one for Alt+Enter.
     void set_window(WindowMode m) {
@@ -193,7 +196,8 @@ struct Improvements {
         return a.window == b.window && a.renderer == b.renderer && a.vsync == b.vsync &&
                a.frame_limit == b.frame_limit && a.resolution == b.resolution &&
                a.fullscreen_mode == b.fullscreen_mode && a.widescreen_fill == b.widescreen_fill &&
-               a.filter == b.filter && a.upscaler == b.upscaler;
+               a.filter == b.filter && a.upscaler == b.upscaler &&
+               a.resume_prompt == b.resume_prompt;
     }
     friend bool operator!=(const Improvements& a, const Improvements& b) { return !(a == b); }
 };
@@ -209,7 +213,8 @@ inline std::string serialize(const Improvements& imp) {
        << "fullscreen_mode=" << to_string(imp.fullscreen_mode) << '\n'
        << "widescreen_fill=" << (imp.widescreen_fill ? 1 : 0) << '\n'
        << "filter=" << to_string(imp.filter) << '\n'
-       << "upscaler=" << (imp.upscaler ? "super-xbr" : "off") << '\n';
+       << "upscaler=" << (imp.upscaler ? "super-xbr" : "off") << '\n'
+       << "resume_prompt=" << (imp.resume_prompt ? 1 : 0) << '\n';
     return os.str();
 }
 
@@ -267,6 +272,9 @@ inline bool parse(std::string_view text, Improvements& out) {
         } else if (key == "upscaler") {
             if (val != "off" && val != "super-xbr") return false;
             imp.upscaler = val == "super-xbr";
+        } else if (key == "resume_prompt") {
+            if (val != "0" && val != "1") return false;
+            imp.resume_prompt = val == "1";
         }
         // Any other key belongs to a newer build: skip it.
     }

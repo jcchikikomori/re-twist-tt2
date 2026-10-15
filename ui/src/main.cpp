@@ -1934,12 +1934,25 @@ int main(int argc, char** argv) {
     // "Continue the game?" (CTEXT_START_SAVEGAME, 0x42dc80) on the menu. Port
     // improvement: the original never shows it in play (a save just resumes,
     // and starting again means passing until GIVE UP); see game-scene.md 7.
+    // IMPROVEMENTS -> ASK TO RESUME Off brings that back.
     Dialog menu_dialog;
     bool menu_dialog_open = false;
     bool menu_dialog_timed = false;
+    // Loads the current player's save for the next begin_game().
+    auto load_resume = [&](bool timed) {
+        const std::string player = players.current() ? players.current()->name : std::string();
+        auto g = std::make_unique<tt2::SavedGame>();
+        if (store.load_saved_game(player, mode_name(timed), *g)) pending_resume = std::move(g);
+        else std::fprintf(stderr, "warning: saved game for %s is unreadable; starting again\n", player.c_str());
+    };
     auto request_game = [&](bool timed) {
         if (!players.current()) { profile.open_player_select(); return; }
         if (!save_dir.empty() && store.has_saved_game(players.current()->name, mode_name(timed))) {
+            if (!improvements.resume_prompt) {   // the original: resume without asking
+                load_resume(timed);
+                begin_game(timed);
+                return;
+            }
             menu_dialog =
                 build_yes_no(game_strings::SAVEGAME_HEADER, game_strings::SAVEGAME_BODY, false, wrap_message);
             menu_dialog_open = true;
@@ -2014,9 +2027,7 @@ int main(int argc, char** argv) {
         const std::string player = players.current() ? players.current()->name : std::string();
         const char* mode = mode_name(menu_dialog_timed);
         if (name == "BUTTON_YES") {
-            auto g = std::make_unique<tt2::SavedGame>();
-            if (store.load_saved_game(player, mode, *g)) pending_resume = std::move(g);
-            else std::fprintf(stderr, "warning: saved game for %s is unreadable; starting again\n", player.c_str());
+            load_resume(menu_dialog_timed);
         } else if (name == "BUTTON_NO") {
             store.remove_saved_game(player, mode);   // "Select 'No' to start again."
         } else {

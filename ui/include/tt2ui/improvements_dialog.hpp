@@ -1,5 +1,6 @@
 // IMPROVEMENTS, headless: the port's own display options
-// (docs/design/improve-ui-ux.md). Nothing here exists in the original
+// (docs/design/improve-ui-ux.md), plus ASK TO RESUME (the "Continue the
+// game?" prompt; Off is the original's silent resume). Nothing here exists in the original
 // game; the dialog is deviation UX-2, its file improvements.txt UX-4.
 //
 // It reuses the DIALOG_SETTINGS building blocks (Dialog, MenuButton,
@@ -53,13 +54,14 @@ inline constexpr const char* SMOOTH = "Smooth";
 inline constexpr const char* PIXEL_ART = "Pixel art";
 inline constexpr const char* UPSCALER = "UPSCALER";
 inline constexpr const char* SUPER_XBR = "Super-xBR";
+inline constexpr const char* RESUME_PROMPT = "ASK TO RESUME";
 }  // namespace improvements_strings
 
 // Layout, dialog-local. Rows start under the header; OK / CANCEL sit 83 px
 // above the bottom edge like SETTINGS (y 357 of 440).
 constexpr int IMPROVEMENTS_W = 520;
 constexpr float IMPROVEMENTS_ROWS_TOP = 96.0f;
-constexpr int IMPROVEMENTS_ROW_H = 46;
+constexpr int IMPROVEMENTS_ROW_H = 42;   // 9 rows fit in 600 px (578)
 constexpr int IMPROVEMENTS_FOOTER_H = 104;   // the gap, the buttons and the frame's bottom edge
 constexpr int IMPROVEMENTS_ARROW = 36;       // button_arrow_*.png: 36x36 frames, 4 rows
 constexpr float IMPROVEMENTS_LABEL_X = 45.0f;
@@ -216,6 +218,8 @@ private:
             limits.push_back(fps == 0 ? std::string(improvements_strings::UNLIMITED)
                                       : std::to_string(fps) + improvements_strings::FPS);
         rows_.push_back(Row{"FRAME_LIMIT", improvements_strings::FRAME_LIMIT, std::move(limits), 0, true, {}});
+        rows_.push_back(Row{"RESUME_PROMPT", improvements_strings::RESUME_PROMPT,
+                            {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}});
         Dialog d;
         d.w = IMPROVEMENTS_W;
         d.h = improvements_dialog_height(static_cast<int>(rows_.size()));
@@ -282,6 +286,7 @@ private:
             }
             if (r.id == "VSYNC") r.index = values_.vsync ? 0 : 1;
             if (r.id == "WIDESCREEN_FILL") r.index = values_.widescreen_fill ? 0 : 1;
+            if (r.id == "RESUME_PROMPT") r.index = values_.resume_prompt ? 0 : 1;
             if (r.id == "UPSCALER") {
                 r.enabled = context_.active != Backend::Software;   // off there (render_options.hpp)
                 r.index = r.enabled && values_.upscaler ? 1 : 0;
@@ -334,6 +339,7 @@ private:
         if (r.id == "RENDERER") values_.renderer = kRendererOrder[r.index];
         if (r.id == "VSYNC") values_.vsync = r.index == 0;
         if (r.id == "WIDESCREEN_FILL") values_.widescreen_fill = r.index == 0;
+        if (r.id == "RESUME_PROMPT") values_.resume_prompt = r.index == 0;
         if (r.id == "FILTER") values_.filter = kFilterOrder[r.index];
         if (r.id == "UPSCALER") values_.upscaler = r.index == 1;
         if (r.id == "FRAME_LIMIT") values_.frame_limit = tt2::FRAME_LIMITS[r.index];

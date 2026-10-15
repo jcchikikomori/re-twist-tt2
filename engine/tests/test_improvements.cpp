@@ -30,7 +30,7 @@ TEST(improvements_text_round_trip_defaults) {
     const std::string text = serialize(Improvements{});
     ASSERT_EQ(text, std::string("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\nrenderer=auto\nvsync=1\nframe_limit=0\n"
                                   "resolution=800x600\nfullscreen_mode=borderless\nwidescreen_fill=1\n"
-                                  "filter=sharp\nupscaler=off\n"));
+                                  "filter=sharp\nupscaler=off\nresume_prompt=1\n"));
     Improvements back;
     back.window = WindowMode::Borderless;
     ASSERT_TRUE(parse(text, back));
@@ -266,4 +266,32 @@ TEST(improvements_upscaler_round_trips_and_defaults_off) {
     Improvements imp;
     ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nfilter=smooth\n", imp));
     ASSERT_TRUE(!imp.upscaler);                                           // a P8 file: off
+}
+
+TEST(improvements_resume_prompt_round_trips_and_defaults_on) {
+    ASSERT_TRUE(Improvements{}.resume_prompt);                           // the port asks by default
+    for (bool on : {true, false}) {
+        Improvements imp;
+        imp.resume_prompt = on;
+        Improvements back;
+        back.resume_prompt = !on;
+        ASSERT_TRUE(parse(serialize(imp), back));
+        ASSERT_TRUE(back.resume_prompt == on);
+    }
+    Improvements old;
+    old.resume_prompt = false;
+    ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nupscaler=off\n", old));
+    ASSERT_TRUE(!old.resume_prompt);                                     // a missing key keeps its value
+    Improvements a, b;
+    b.resume_prompt = false;
+    ASSERT_TRUE(a != b);                                                 // part of equality
+}
+
+TEST(improvements_resume_prompt_rejects_other_values) {
+    for (const char* v : {"yes", "", "2", "on"}) {
+        Improvements imp;
+        imp.resume_prompt = false;
+        ASSERT_TRUE(!parse(std::string("format=re-twist-tt2 improvements\nresume_prompt=") + v + "\n", imp));
+        ASSERT_TRUE(!imp.resume_prompt);                                 // untouched
+    }
 }

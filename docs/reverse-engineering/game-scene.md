@@ -530,7 +530,9 @@ All are `autocenter` and `dodarkenbackground="true"`.
   profile check `0x42d9b0` at `0x59121c`. Play-testing the original (2026-10-15), the prompt
   never appears: a save simply resumes, and the only way to start again is to pass and GIVE UP.
   **Port improvement (2026-10-15):** the port asks with this dialog whenever a save exists;
-  NO deletes the save and starts a new game.
+  NO deletes the save and starts a new game. IMPROVEMENTS -> ASK TO RESUME (`resume_prompt`
+  in `improvements.txt`, on by default) turns it off, which resumes the save without asking,
+  as the original does.
 - **Port deviation:** removing a player deletes their saves (`savegames/<player>/`), and
   adding a player deletes any left under that name, so a new player never inherits a
   removed one's game (`ProfileStore::remove_saved_games`, `ProfileFlow::Services::forget_player`).

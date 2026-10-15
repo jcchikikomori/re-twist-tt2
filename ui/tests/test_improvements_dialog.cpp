@@ -127,8 +127,9 @@ TEST(improvements_dialog_sync_window_survives_cancel) {
 
 TEST(improvements_dialog_fits_the_screen_with_every_planned_row) {
     // Later phases add rows (resolution, renderer, frame rate, ...): at
-    // least 8 of them must fit inside 800x600.
-    ASSERT_TRUE(improvements_dialog_height(8) <= SCREEN_H);
+    // least 9 of them must fit inside 800x600; a 10th would not.
+    ASSERT_TRUE(improvements_dialog_height(9) <= SCREEN_H);
+    ASSERT_EQ(improvements_dialog_height(9), 578);                      // 96 + 9 * 42 + 104
     Rig r;
     const ImprovementsDialog d(windowed(), r.services());
     ASSERT_TRUE(d.dialog().w <= SCREEN_W && d.dialog().h <= SCREEN_H);
@@ -544,10 +545,10 @@ TEST(improvements_filter_row_is_greyed_out_on_software) {
     ASSERT_TRUE(d.values().filter == tt2::TextureFilter::Smooth);      // kept, not overwritten
 }
 
-TEST(improvements_dialog_fits_with_eight_rows) {
+TEST(improvements_dialog_fits_with_nine_rows) {
     Rig r;
     const ImprovementsDialog d(windowed(), r.services(), on(Backend::OpenGL));
-    ASSERT_EQ(d.rows().size(), std::size_t{8});
+    ASSERT_EQ(d.rows().size(), std::size_t{9});
     ASSERT_TRUE(d.dialog().h <= SCREEN_H);
 }
 
@@ -573,4 +574,34 @@ TEST(improvements_upscaler_row_is_greyed_out_on_software) {
     ASSERT_EQ(value(d, "UPSCALER"), std::string("Off"));                // what software does
     d.press("BUTTON_UPSCALER_NEXT");
     ASSERT_TRUE(d.values().upscaler);                                    // the saved choice is kept
+}
+
+// ---- ASK TO RESUME ("Continue the game?", game-scene.md 7) ------------------
+
+TEST(improvements_resume_prompt_row_toggles_and_cancel_restores) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), on(Backend::OpenGL));
+    ASSERT_EQ(d.dialog().label("LABEL_RESUME_PROMPT")->text, std::string("ASK TO RESUME"));
+    ASSERT_EQ(value(d, "RESUME_PROMPT"), std::string("On"));
+    d.press("BUTTON_RESUME_PROMPT_NEXT");
+    ASSERT_EQ(value(d, "RESUME_PROMPT"), std::string("Off"));
+    ASSERT_TRUE(!d.values().resume_prompt);
+    d.press("BUTTON_RESUME_PROMPT_PREV");                                 // wraps back
+    ASSERT_TRUE(d.values().resume_prompt);
+    d.press("BUTTON_RESUME_PROMPT_NEXT");
+    ASSERT_TRUE(d.press("BUTTON_CANCEL") == ImprovementsDialog::Result::Cancel);
+    ASSERT_TRUE(d.values().resume_prompt);                               // CANCEL: the saved value
+}
+
+TEST(improvements_resume_prompt_row_works_on_software_and_never_needs_a_restart) {
+    Rig r;
+    tt2::Improvements saved = windowed();
+    saved.resume_prompt = false;
+    ImprovementsDialog d(saved, r.services());                            // software: FILTER greys out, this does not
+    ASSERT_EQ(value(d, "RESUME_PROMPT"), std::string("Off"));
+    ASSERT_TRUE(d.row("RESUME_PROMPT")->enabled);
+    d.press("BUTTON_RESUME_PROMPT_NEXT");
+    ASSERT_TRUE(d.press("BUTTON_OK") == ImprovementsDialog::Result::Ok);  // no "Restart needed"
+    ASSERT_TRUE(d.notice() == nullptr);
+    ASSERT_TRUE(d.values().resume_prompt);
 }
