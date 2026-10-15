@@ -96,7 +96,7 @@ the monitor does the scaling, because the game switches the display to 800x600 (
 - **Borderless** is SDL3's fullscreen with no display mode: the desktop size, whatever the resolution says.
 - **Native** switches the display mode like the original (section 3), keeping the desktop's refresh rate when
   the size has a mode at that rate. When the switch fails the window goes Borderless, the log says why and
-  IMPROVEMENTS shows "Native unavailable, using Borderless". Wayland compositors (WSLg, gamescope) only emulate
+  IMPROVEMENTS shows the mode as "Native (failed)". Wayland compositors (WSLg, gamescope) only emulate
   the switch: the output stays desktop-sized and the compositor scales.
 - **The canvas stays 800x600.** SDL's letterbox presentation scales it into the output; `fit_4x3` repeats
   SDL 3.4's arithmetic (width floored, the rectangle centred, half pixels kept), and the log compares the two
@@ -134,7 +134,7 @@ the monitor does the scaling, because the game switches the display to 800x600 (
   800x600 the target and scale are unchanged, so 800x600 frames match earlier builds. Below 1x, or past the
   GPU's largest texture, the target stays 800x600.
 - **Software renderer:** Sharp and 800x600 layers, whatever the file says. The file keeps the choice for the
-  next GPU launch, and IMPROVEMENTS greys the row out with "Not available with the software renderer".
+  next GPU launch, and IMPROVEMENTS greys the row out (no reason line: every row stays one line).
 - **2x placeholder art (P8):** `tools/gen_placeholders.py` draws the fonts, dialog frame, buttons, IMPROVEMENTS
   badge and arrows a second time at twice the geometry into `data/placeholder/2x/` (every PNG exactly twice the
   1x size; `background.png` has none). Fonts keep the 1x XML: each 2x glyph comes from a font twice the size at

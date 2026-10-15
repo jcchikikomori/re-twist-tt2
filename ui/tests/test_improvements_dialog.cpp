@@ -33,7 +33,8 @@ TEST(improvements_dialog_has_the_display_mode_row) {
     ASSERT_EQ(g.button("BUTTON_WINDOW_NEXT")->sprite.sheet.image_id, std::string("BUTTON_ARROW_RIGHT"));
     ASSERT_EQ(g.button("BUTTON_WINDOW_NEXT")->sprite.sheet.frame_h, IMPROVEMENTS_ARROW);
     ASSERT_TRUE(g.button("BUTTON_OK") != nullptr && g.button("BUTTON_CANCEL") != nullptr);
-    ASSERT_TRUE(!g.label("REASON_WINDOW")->visible);
+    ASSERT_TRUE(g.label("REASON_WINDOW") == nullptr);                  // rows are one line
+    ASSERT_TRUE(g.label("NOTE_WINDOW") == nullptr);
 }
 
 TEST(improvements_dialog_starts_from_the_saved_values) {
@@ -78,16 +79,14 @@ TEST(improvements_dialog_cancel_restores_the_saved_value) {
 TEST(improvements_dialog_disabled_row_ignores_its_arrows) {
     Rig r;
     ImprovementsDialog d(windowed(), r.services());
-    d.set_row_enabled("WINDOW", false, "Not with this renderer");
+    d.set_row_enabled("WINDOW", false);
     ASSERT_TRUE(!d.dialog().button("BUTTON_WINDOW_NEXT")->enabled);
     ASSERT_TRUE(d.press("BUTTON_WINDOW_NEXT") == ImprovementsDialog::Result::None);
     ASSERT_TRUE(d.values().window == tt2::WindowMode::Windowed);
+    ASSERT_EQ(value(d, "WINDOW"), std::string("Windowed"));              // still shown, greyed out
     ASSERT_TRUE(r.sounds.empty());
-    const TextLabel* why = d.dialog().label("REASON_WINDOW");
-    ASSERT_TRUE(why->visible);
-    ASSERT_EQ(why->text, std::string("Not with this renderer"));
     d.set_row_enabled("WINDOW", true);
-    ASSERT_TRUE(!d.dialog().label("REASON_WINDOW")->visible);
+    ASSERT_TRUE(d.dialog().button("BUTTON_WINDOW_NEXT")->enabled);
     d.press("BUTTON_WINDOW_NEXT");
     ASSERT_TRUE(d.values().window == tt2::WindowMode::Borderless);
 }
@@ -174,13 +173,11 @@ TEST(improvements_renderer_auto_names_the_renderer_in_use) {
     }
 }
 
-TEST(improvements_renderer_row_is_one_line) {
-    // No note under the row, whatever is picked or running.
+TEST(improvements_renderer_values_stay_single_line) {
     Rig r;
     ImprovementsDialog d(windowed(), r.services(), running(Backend::Software, tt2::RendererPref::Software));
     for (int i = 0; i < 4; ++i) {
-        ASSERT_TRUE(!d.dialog().label("NOTE_RENDERER")->visible);
-        ASSERT_TRUE(!d.dialog().label("REASON_RENDERER")->visible);
+        ASSERT_TRUE(value(d, "RENDERER").find('\n') == std::string::npos);
         d.press("BUTTON_RENDERER_NEXT");
     }
 }
@@ -323,10 +320,11 @@ TEST(improvements_vsync_row_can_be_disabled) {
     // A renderer that refuses vsync: the host disables the row.
     Rig r;
     ImprovementsDialog d(windowed(), r.services());
-    d.set_row_enabled("VSYNC", false, improvements_strings::NO_VSYNC);
+    d.set_row_enabled("VSYNC", false);
     d.press("BUTTON_VSYNC_NEXT");
     ASSERT_TRUE(d.values().vsync);                                       // unchanged
-    ASSERT_TRUE(d.dialog().label("REASON_VSYNC")->visible);
+    ASSERT_TRUE(!d.row("VSYNC")->enabled);
+    ASSERT_TRUE(!d.dialog().button("BUTTON_VSYNC_NEXT")->enabled);
     ASSERT_EQ(d.values().frame_limit, 0);                                // the limit row still works
     d.press("BUTTON_FRAME_LIMIT_NEXT");
     ASSERT_EQ(d.values().frame_limit, 60);
@@ -394,8 +392,6 @@ TEST(improvements_resolution_row_greys_out_in_borderless) {
     d.press("BUTTON_WINDOW_NEXT");                                         // Borderless
     ASSERT_EQ(value(d, "RESOLUTION"), std::string("1920x1080"));           // the desktop size (Q5)
     ASSERT_TRUE(!d.row("RESOLUTION")->enabled);
-    ASSERT_TRUE(!d.dialog().label("REASON_RESOLUTION")->visible);          // one line: no remark
-    ASSERT_TRUE(!d.dialog().label("NOTE_RESOLUTION")->visible);
     ASSERT_TRUE(!d.dialog().button("BUTTON_RESOLUTION_NEXT")->enabled);
     d.press("BUTTON_RESOLUTION_NEXT");                                     // does nothing
     ASSERT_TRUE(d.values().resolution == (Resolution{1280, 720}));         // kept for a later window
@@ -422,7 +418,7 @@ TEST(improvements_resolution_row_on_a_tiny_display_keeps_800x600) {
     ImprovementsDialog d(windowed(), r.services(), c);
     ASSERT_EQ(value(d, "RESOLUTION"), std::string("800x600"));
     ASSERT_TRUE(!d.row("RESOLUTION")->enabled);
-    ASSERT_EQ(d.dialog().label("REASON_RESOLUTION")->text, std::string("No larger size fits this display"));
+    ASSERT_TRUE(!d.dialog().button("BUTTON_RESOLUTION_NEXT")->enabled);
 }
 
 TEST(improvements_switching_to_native_picks_a_native_size) {
@@ -443,15 +439,36 @@ TEST(improvements_switching_to_native_picks_a_native_size) {
     ASSERT_TRUE(d.values().resolution == (Resolution{1600, 900}));
 }
 
-TEST(improvements_native_failure_is_noted) {
+TEST(improvements_native_failure_shows_in_the_value) {
+    // The run fell back to Borderless: the saved choice stays Native, and
+    // its value says it failed, like "Auto (OpenGL)" says what Auto runs.
     Rig r;
     tt2::Improvements saved;
     saved.set_window(tt2::WindowMode::Native);
     const ImprovementsDialog d(saved, r.services(), on_1080p(true));
-    ASSERT_TRUE(d.dialog().label("NOTE_WINDOW")->visible);
-    ASSERT_EQ(d.dialog().label("NOTE_WINDOW")->text, std::string("Native unavailable, using Borderless"));
+    ASSERT_EQ(value(d, "WINDOW"), std::string("Native (failed)"));
+    ASSERT_TRUE(d.values().window == tt2::WindowMode::Native);
     const ImprovementsDialog fine(saved, r.services(), on_1080p(false));
-    ASSERT_TRUE(!fine.dialog().label("NOTE_WINDOW")->visible);
+    ASSERT_EQ(value(fine, "WINDOW"), std::string("Native"));
+}
+
+TEST(improvements_rows_are_one_line_even_when_greyed_out) {
+    // The worst case: software renderer, Native failed, vsync refused, and
+    // a display too small for any offered size. Every row is its label
+    // and its value; nothing sits under it.
+    Rig r;
+    tt2::Improvements saved;
+    saved.set_window(tt2::WindowMode::Native);
+    ImprovementsDialog::Context c;
+    c.active = Backend::Software;
+    c.native_failed = true;
+    c.display.desktop = {640, 480};
+    ImprovementsDialog d(saved, r.services(), c);
+    d.set_row_enabled("VSYNC", false);
+    ASSERT_TRUE(!d.row("FILTER")->enabled && !d.row("UPSCALER")->enabled && !d.row("RESOLUTION")->enabled);
+    ASSERT_EQ(d.dialog().labels.size(), 1 + 2 * d.rows().size());       // the header, then label + value
+    for (const TextLabel& l : d.dialog().labels)
+        ASSERT_TRUE(l.text.find('\n') == std::string::npos);
 }
 
 TEST(improvements_sync_window_remembers_the_fullscreen_mode) {
@@ -522,7 +539,7 @@ TEST(improvements_filter_row_is_greyed_out_on_software) {
     ImprovementsDialog d(saved, r.services(), on(Backend::Software));
     ASSERT_TRUE(!d.row("FILTER")->enabled);
     ASSERT_EQ(value(d, "FILTER"), std::string("Sharp"));                 // what software draws
-    ASSERT_EQ(d.dialog().label("REASON_FILTER")->text, std::string("Not available with the software renderer"));
+    ASSERT_TRUE(!d.dialog().button("BUTTON_FILTER_NEXT")->enabled);
     d.press("BUTTON_FILTER_NEXT");
     ASSERT_TRUE(d.values().filter == tt2::TextureFilter::Smooth);      // kept, not overwritten
 }

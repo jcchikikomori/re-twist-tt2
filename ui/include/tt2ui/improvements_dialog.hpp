@@ -6,14 +6,13 @@
 // TextLabel), so the renderer draws it like any other dialog. Each row is
 // a cycle control: a label, the value text, and left / right arrows that
 // step through the choices (wrapping round, past any the display can't
-// offer). A row can be disabled, with
-// a reason line under it, and any row can carry a note line. Every value
-// fits on one line: RENDERER's Auto names the renderer in use in its own
-// value ("Auto (OpenGL)"), and Borderless greys out RESOLUTION without a
-// reason. A renderer change applies on the next launch, so OK first shows
-// a one-button "Restart needed" notice over the dialog. OK keeps the edited values and CANCEL restores
-// the saved ones, the same contract as SETTINGS; the host owns saving and
-// applying them.
+// offer). Every row is one line: a row this run can't offer is greyed out
+// with no reason under it, and what actually runs goes in the value, in
+// parentheses ("Auto (OpenGL)", "Native (failed)"). A renderer change
+// applies on the next launch, so OK first shows a one-button "Restart
+// needed" notice over the dialog. OK keeps the edited values and CANCEL
+// restores the saved ones, the same contract as SETTINGS; the host owns
+// saving and applying them.
 #pragma once
 
 #include <functional>
@@ -35,10 +34,8 @@ inline constexpr const char* WINDOW = "DISPLAY MODE";
 inline constexpr const char* WINDOWED = "Windowed";
 inline constexpr const char* BORDERLESS = "Borderless";
 inline constexpr const char* NATIVE = "Native";
-inline constexpr const char* NATIVE_FAILED = "Native unavailable, using Borderless";
+inline constexpr const char* FAILED = " (failed)";
 inline constexpr const char* RESOLUTION = "RESOLUTION";
-inline constexpr const char* NO_LARGER_SIZE = "No larger size fits this display";
-inline constexpr const char* NO_NATIVE_SIZE = "No display mode of an offered size";
 inline constexpr const char* RENDERER = "RENDERER";
 inline constexpr const char* AUTO = "Auto";
 inline constexpr const char* RESTART_HEADER = "Restart needed";
@@ -49,13 +46,11 @@ inline constexpr const char* OFF = "Off";
 inline constexpr const char* FRAME_LIMIT = "FRAME LIMIT";
 inline constexpr const char* UNLIMITED = "Unlimited";
 inline constexpr const char* FPS = " fps";
-inline constexpr const char* NO_VSYNC = "Not available with this renderer";
 inline constexpr const char* WIDESCREEN_FILL = "WIDESCREEN FILL";
 inline constexpr const char* FILTER = "TEXTURE FILTER";
 inline constexpr const char* SHARP = "Sharp";
 inline constexpr const char* SMOOTH = "Smooth";
 inline constexpr const char* PIXEL_ART = "Pixel art";
-inline constexpr const char* NO_SOFTWARE = "Not available with the software renderer";
 inline constexpr const char* UPSCALER = "UPSCALER";
 inline constexpr const char* SUPER_XBR = "Super-xBR";
 }  // namespace improvements_strings
@@ -94,15 +89,13 @@ public:
     };
 
     // One cycle row. `id` names its buttons and labels: LABEL_<id>,
-    // VALUE_<id>, REASON_<id>, NOTE_<id>, BUTTON_<id>_PREV, BUTTON_<id>_NEXT.
+    // VALUE_<id>, BUTTON_<id>_PREV, BUTTON_<id>_NEXT.
     struct Row {
         std::string id;
         std::string title;
         std::vector<std::string> choices;
         int index = 0;
-        bool enabled = true;
-        std::string reason;   // shown while disabled
-        std::string note;     // shown while enabled
+        bool enabled = true;      // false: greyed out, the arrows do nothing
         std::vector<bool> skip;   // choices the arrows step over (same length as choices, or empty)
     };
 
@@ -174,14 +167,11 @@ public:
         return Result::None;
     }
 
-    // A row the current renderer or display can't offer (later phases):
-    // its arrows stop working and `reason` shows under it.
-    void set_row_enabled(const std::string& id, bool enabled, const std::string& reason = {}) {
+    // A row the current renderer or display can't offer: greyed out, its
+    // arrows stop working.
+    void set_row_enabled(const std::string& id, bool enabled) {
         for (auto& r : rows_)
-            if (r.id == id) {
-                r.enabled = enabled;
-                r.reason = reason;
-            }
+            if (r.id == id) r.enabled = enabled;
         refresh();
     }
 
@@ -206,26 +196,26 @@ private:
         rows_.push_back(Row{"WINDOW", improvements_strings::WINDOW,
                             {improvements_strings::WINDOWED, improvements_strings::BORDERLESS,
                              improvements_strings::NATIVE},
-                            0, true, {}, {}, {}});
-        rows_.push_back(Row{"RESOLUTION", improvements_strings::RESOLUTION, {}, 0, true, {}, {}, {}});
+                            0, true, {}});
+        rows_.push_back(Row{"RESOLUTION", improvements_strings::RESOLUTION, {}, 0, true, {}});
         rows_.push_back(Row{"WIDESCREEN_FILL", improvements_strings::WIDESCREEN_FILL,
-                            {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}, {}, {}});
+                            {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}});
         rows_.push_back(Row{"FILTER", improvements_strings::FILTER,
                             {improvements_strings::SHARP, improvements_strings::SMOOTH, improvements_strings::PIXEL_ART},
-                            0, true, {}, {}, {}});
+                            0, true, {}});
         rows_.push_back(Row{"UPSCALER", improvements_strings::UPSCALER,
-                            {improvements_strings::OFF, improvements_strings::SUPER_XBR}, 0, true, {}, {}, {}});
+                            {improvements_strings::OFF, improvements_strings::SUPER_XBR}, 0, true, {}});
         rows_.push_back(Row{"RENDERER", improvements_strings::RENDERER,
                             {improvements_strings::AUTO, backend_title(Backend::Vulkan), backend_title(Backend::OpenGL),
                              backend_title(Backend::Software)},
-                            0, true, {}, {}, {}});
+                            0, true, {}});
         rows_.push_back(Row{"VSYNC", improvements_strings::VSYNC,
-                            {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}, {}, {}});
+                            {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}});
         std::vector<std::string> limits;
         for (int fps : tt2::FRAME_LIMITS)
             limits.push_back(fps == 0 ? std::string(improvements_strings::UNLIMITED)
                                       : std::to_string(fps) + improvements_strings::FPS);
-        rows_.push_back(Row{"FRAME_LIMIT", improvements_strings::FRAME_LIMIT, std::move(limits), 0, true, {}, {}, {}});
+        rows_.push_back(Row{"FRAME_LIMIT", improvements_strings::FRAME_LIMIT, std::move(limits), 0, true, {}});
         Dialog d;
         d.w = IMPROVEMENTS_W;
         d.h = improvements_dialog_height(static_cast<int>(rows_.size()));
@@ -238,10 +228,6 @@ private:
                                          TextAlign::Left, Anchor::Center, -1});
             d.labels.push_back(TextLabel{"VALUE_" + r.id, "FONT_SETTINGSTEXT", {}, IMPROVEMENTS_VALUE_X, cy,
                                          TextAlign::Center, Anchor::Center, -1});
-            d.labels.push_back(TextLabel{"REASON_" + r.id, "FONT_SETTINGSTEXT", r.reason, IMPROVEMENTS_LABEL_X,
-                                         cy + 22.0f, TextAlign::Left, Anchor::Center, -1});
-            d.labels.push_back(TextLabel{"NOTE_" + r.id, "FONT_SETTINGSTEXT", r.note, IMPROVEMENTS_LABEL_X,
-                                         cy + 22.0f, TextAlign::Left, Anchor::Center, -1});
             d.buttons.push_back(arrow("BUTTON_" + r.id + "_PREV", "BUTTON_ARROW_LEFT", IMPROVEMENTS_PREV_X, cy));
             d.buttons.push_back(arrow("BUTTON_" + r.id + "_NEXT", "BUTTON_ARROW_RIGHT", IMPROVEMENTS_NEXT_X, cy));
         }
@@ -274,7 +260,7 @@ private:
         return none;
     }
 
-    // values_ -> row indices and notes.
+    // values_ -> row indices and value texts.
     void load_rows() {
         for (auto& r : rows_) {
             if (r.id == "WINDOW") {
@@ -283,9 +269,9 @@ private:
                 // Native needs an exact display mode of an offered size (the
                 // original's fullscreen needs an exact 800x600 mode, §3).
                 r.skip = {false, false, context_.display.native.empty()};
-                r.note = values_.window == tt2::WindowMode::Native && context_.native_failed
-                             ? improvements_strings::NATIVE_FAILED
-                             : "";
+                // This run asked for Native and fell back to Borderless.
+                r.choices[2] = std::string(improvements_strings::NATIVE) +
+                               (context_.native_failed ? improvements_strings::FAILED : "");
             }
             if (r.id == "RESOLUTION") load_resolution_row(r);
             if (r.id == "RENDERER") {
@@ -298,14 +284,12 @@ private:
             if (r.id == "WIDESCREEN_FILL") r.index = values_.widescreen_fill ? 0 : 1;
             if (r.id == "UPSCALER") {
                 r.enabled = context_.active != Backend::Software;   // off there (render_options.hpp)
-                r.reason = r.enabled ? "" : improvements_strings::NO_SOFTWARE;
                 r.index = r.enabled && values_.upscaler ? 1 : 0;
             }
             if (r.id == "FILTER") {
                 // Software always draws Sharp (render_options.hpp): show that,
                 // greyed out; the saved choice waits for a GPU launch.
                 r.enabled = context_.active != Backend::Software;
-                r.reason = r.enabled ? "" : improvements_strings::NO_SOFTWARE;
                 r.index = 0;
                 for (int i = 0; i < 3 && r.enabled; ++i)
                     if (kFilterOrder[i] == values_.filter) r.index = i;
@@ -315,9 +299,8 @@ private:
                     if (tt2::FRAME_LIMITS[i] == values_.frame_limit) r.index = static_cast<int>(i);
         }
     }
-    // Borderless shows the desktop size, greyed out with no reason (the
-    // mode says why, Q5); a mode with no size to offer keeps the current
-    // one, greyed out.
+    // Borderless shows the desktop size, greyed out (Q5); a mode with no
+    // size to offer keeps the current one, greyed out.
     void load_resolution_row(Row& r) {
         const std::vector<tt2::Resolution>& sizes = sizes_for(values_.window);
         r.choices.clear();
@@ -326,9 +309,6 @@ private:
             const bool borderless = values_.window == tt2::WindowMode::Borderless;
             r.choices.push_back(tt2::to_string(borderless ? context_.display.desktop : values_.resolution));
             r.enabled = false;
-            r.reason = borderless ? ""
-                       : values_.window == tt2::WindowMode::Windowed ? improvements_strings::NO_LARGER_SIZE
-                                                                     : improvements_strings::NO_NATIVE_SIZE;
             return;
         }
         // What will apply: the saved size, or the closest one this display offers.
@@ -338,7 +318,6 @@ private:
             if (sizes[i] == shown) r.index = static_cast<int>(i);
         }
         r.enabled = true;
-        r.reason.clear();
     }
 
     // One row's index -> values_.
@@ -365,14 +344,6 @@ private:
         for (const auto& r : rows_) {
             if (TextLabel* v = dialog_.label("VALUE_" + r.id))
                 v->text = r.choices.empty() ? std::string() : r.choices[static_cast<std::size_t>(r.index)];
-            if (TextLabel* why = dialog_.label("REASON_" + r.id)) {
-                why->text = r.reason;
-                why->visible = !r.enabled && !r.reason.empty();
-            }
-            if (TextLabel* note = dialog_.label("NOTE_" + r.id)) {
-                note->text = r.note;
-                note->visible = r.enabled && !r.note.empty();
-            }
             for (const char* side : {"_PREV", "_NEXT"})
                 if (MenuButton* b = dialog_.button("BUTTON_" + r.id + side)) b->enabled = r.enabled;
         }

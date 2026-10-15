@@ -2002,7 +2002,7 @@ int main(int argc, char** argv) {
                                       ImprovementsDialog::Services{[&](SoundId id) { assets.play_sound(id); }},
                                       ImprovementsDialog::Context{render_caps.backend, launch_renderer,
                                                                   query_display(win), native_failed});
-            if (!vsync_ok) menu_improvements->set_row_enabled("VSYNC", false, improvements_strings::NO_VSYNC);
+            if (!vsync_ok) menu_improvements->set_row_enabled("VSYNC", false);
         }
         else std::printf("menu: %s (not implemented yet)\n", name.c_str());
     };
