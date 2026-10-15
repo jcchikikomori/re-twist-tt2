@@ -10,12 +10,7 @@ a file swap; the engine does not change.
 It builds with CMake on Linux, macOS and Windows. There is no web layer, no JavaScript, no
 Capacitor.
 
-![Boot sequence: GameHouse splash, loading screen, main menu](docs/media/boot-sequence.gif)
-
-The splash, loading screen and main menu are rebuilt 1:1 from the decompiled original (timings in
-`docs/reverse-engineering/welcome-flow.md`), recorded with `tt2 --dump-frames` at 4x speed. The art
-in the GIF comes from a legitimately owned copy imported with `tt2 --import`; the repository itself
-ships only procedural placeholders.
+<img width="1282" height="752" alt="image" src="https://github.com/user-attachments/assets/759e3d30-e1ad-444e-b532-36081cb60f0e" />
 
 ## Tech stack
 
