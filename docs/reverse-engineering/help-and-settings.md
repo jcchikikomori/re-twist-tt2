@@ -188,6 +188,29 @@ the pause menu) keeps the original layout.
 - The original game has no art for IMPORT, so it is drawn as a placeholder button with its name, even when
   the original art is imported.
 
+### 3.6 Port deviations: display options (UX-3, UX-4, 2026-10-15)
+
+The port moves the window mode out of `DIALOG_SETTINGS` into its own IMPROVEMENTS dialog
+([`docs/design/improve-ui-ux.md`](../design/improve-ui-ux.md)), opened from the main menu (UX-2,
+[`welcome-flow.md`](welcome-flow.md)).
+
+- **UX-3:** both SETTINGS dialogs (main menu and pause menu) hide `SWITCH_FULLSCREEN` and drop
+  `LABEL_FULLSCREEN`. The switch stays in the model, invisible and disabled, so the other controls keep the
+  positions in §3.2; Alt+Enter (§3.4) still updates the value SETTINGS writes back on OK.
+- **UX-4:** the display options live in `improvements.txt` next to `settings.txt`:
+
+  ```text
+  format=re-twist-tt2 improvements
+  version=1
+  window=windowed
+  ```
+
+  `window` is `windowed` or `borderless`. Unlike `settings.txt`, an unknown key is skipped, so a file from a
+  newer build still loads; a known key with a bad value rejects the file. A build that finds no
+  `improvements.txt` derives it from `settings.txt` (`fullscreen=1` is borderless). Every change also writes
+  `settings.txt`'s `fullscreen` (on for any mode but windowed), so a 0.2.x build opened later starts in the
+  same kind of window; the `settings.txt` format is unchanged.
+
 ## 4. Dialog keys (bounded negative, REA batch B2)
 
 Dialogs take **no keyboard shortcuts**. The input listener of `DialogSettings`

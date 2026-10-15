@@ -39,7 +39,7 @@ ctest --test-dir build --output-on-failure    # unit tests
 
 | Path | Owner / purpose |
 | --- | --- |
-| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp`, `round_crossword.hpp`, `profile.hpp` (players, progression, high scores; spec in `docs/reverse-engineering/profiles.md`), `profile_store.hpp` (plain-text save files), `settings.hpp` (volumes and window mode, `settings.txt`), `saved_game.hpp` (the resumable Classic game), `sha256.hpp`, `asset_manifest.hpp` (which original files the importer copies, and their hashes), `utf8_path.hpp` (UTF-8 paths under C++17 and C++20). |
+| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp`, `round_crossword.hpp`, `profile.hpp` (players, progression, high scores; spec in `docs/reverse-engineering/profiles.md`), `profile_store.hpp` (plain-text save files), `settings.hpp` (volumes and window mode, `settings.txt`), `improvements.hpp` (the port's display options, `improvements.txt`; unknown keys are skipped), `saved_game.hpp` (the resumable Classic game), `sha256.hpp`, `asset_manifest.hpp` (which original files the importer copies, and their hashes), `utf8_path.hpp` (UTF-8 paths under C++17 and C++20). |
 | `engine/tests/` | Unit tests, one file per header plus `test_main.cpp` (the in-tree test harness). |
 | `src/main.cpp` | The driver / smoke test for the engine. |
 | `tools/tree_cli.cpp` | Dictionary tool: `decode`, `encode`, `merge`, `diff`, `verify`. Replaces the old `tools/tree-cli.ts`. |
@@ -216,7 +216,8 @@ the address-level walkthrough of the gameplay code is in
   dialogs, `game_scene.hpp` for the Classic Untimed / Timed scene,
   `game_dialogs.hpp` for its pause menu, confirmations and round-end
   dialogs, `help_dialog.hpp` for HOW TO PLAY, `settings_dialog.hpp`
-  for SETTINGS, `credits_dialog.hpp` for CREDITS, `asset_import.hpp` /
+  for SETTINGS, `improvements_dialog.hpp` for the port's IMPROVEMENTS
+  dialog, `credits_dialog.hpp` for CREDITS, `asset_import.hpp` /
   `import_prompt.hpp` / `folder_picker.hpp` for importing the original
   assets, `dialog_fade.hpp` for the
   dialog backdrop and show / hide fades),

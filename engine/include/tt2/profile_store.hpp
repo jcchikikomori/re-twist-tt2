@@ -13,6 +13,7 @@
 
 #include "tt2/profile.hpp"
 #include "tt2/saved_game.hpp"
+#include "tt2/improvements.hpp"
 #include "tt2/settings.hpp"
 
 namespace tt2 {
@@ -63,6 +64,7 @@ public:
     static constexpr const char* PROFILES_FILE = "profiles.txt";
     static constexpr const char* HIGHSCORES_FILE = "highscores.txt";
     static constexpr const char* SETTINGS_FILE = "settings.txt";
+    static constexpr const char* IMPROVEMENTS_FILE = "improvements.txt";
 
     explicit ProfileStore(std::filesystem::path dir) : dir_(std::move(dir)) {}
 
@@ -70,6 +72,7 @@ public:
     std::filesystem::path profiles_path() const { return dir_ / PROFILES_FILE; }
     std::filesystem::path highscores_path() const { return dir_ / HIGHSCORES_FILE; }
     std::filesystem::path settings_path() const { return dir_ / SETTINGS_FILE; }
+    std::filesystem::path improvements_path() const { return dir_ / IMPROVEMENTS_FILE; }
 
     // A missing file is not an error: the manager is left empty and
     // `true` is returned. A present but malformed file returns false and
@@ -97,6 +100,21 @@ public:
         return parse(text, s);
     }
     bool save(const GameSettings& s) const { return write_file(settings_path(), serialize(s)); }
+
+    // improvements.txt: the port's display options (improvements.hpp).
+    // Same contract as settings.txt. A build that finds none derives it
+    // from settings.txt (Improvements::from_legacy), so has_improvements()
+    // tells the two cases apart.
+    bool has_improvements() const {
+        std::error_code ec;
+        return std::filesystem::is_regular_file(improvements_path(), ec);
+    }
+    bool load(Improvements& imp) const {
+        std::string text;
+        if (!read_file(improvements_path(), text)) return true;
+        return parse(text, imp);
+    }
+    bool save(const Improvements& imp) const { return write_file(improvements_path(), serialize(imp)); }
 
     // ---- saved games (saved_game.hpp) ---------------------------------
     // The original keeps one file per player and mode under a

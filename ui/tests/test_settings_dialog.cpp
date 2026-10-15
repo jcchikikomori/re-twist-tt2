@@ -62,7 +62,7 @@ TEST(settings_switches_show_the_current_values) {
     tt2::GameSettings s = saved();
     s.fullscreen = true;
     const SettingsDialog d(s, 8, true, r.services());
-    ASSERT_EQ(frame(d, "SWITCH_FULLSCREEN"), SWITCH_ON_ROW_OFFSET);
+    ASSERT_TRUE(d.values().fullscreen);                                  // kept, though hidden (UX-3)
     ASSERT_EQ(frame(d, "SWITCH_LENGTH_8"), SWITCH_ON_ROW_OFFSET);
     ASSERT_EQ(frame(d, "SWITCH_LENGTH_6"), 0);
     ASSERT_EQ(frame(d, "SWITCH_LENGTH_7"), 0);
@@ -88,24 +88,31 @@ TEST(settings_length_radio_group_keeps_one_on) {
     ASSERT_EQ(r.count(SoundId::CheckboxOn), 1);
 }
 
-TEST(settings_fullscreen_switch_toggles_with_sounds) {
+TEST(settings_fullscreen_switch_is_hidden_ux3) {
+    // Deviation UX-3: the window mode moved to IMPROVEMENTS. The switch stays
+    // in the model (hidden, disabled) and its label is gone.
     Rig r;
     SettingsDialog d(saved(), 6, true, r.services());
-    d.press("SWITCH_FULLSCREEN");
-    ASSERT_TRUE(d.values().fullscreen);
-    ASSERT_EQ(r.count(SoundId::CheckboxOn), 1);
-    d.press("SWITCH_FULLSCREEN");
-    ASSERT_TRUE(!d.values().fullscreen);
-    ASSERT_EQ(r.count(SoundId::CheckboxOff), 1);
+    const MenuButton* sw = d.dialog().button("SWITCH_FULLSCREEN");
+    ASSERT_TRUE(sw != nullptr);
+    ASSERT_TRUE(!sw->sprite.visible);
+    ASSERT_TRUE(!sw->enabled);
+    ASSERT_TRUE(d.dialog().label("LABEL_FULLSCREEN") == nullptr);
+    ASSERT_TRUE(d.press("SWITCH_FULLSCREEN") == SettingsDialog::Result::None);
+    ASSERT_TRUE(!d.values().fullscreen);                                 // unchanged
+    ASSERT_TRUE(r.sounds.empty());
 }
 
-TEST(settings_fullscreen_switch_disabled_when_unsupported) {
+TEST(settings_fullscreen_switch_cannot_be_clicked) {
     Rig r;
-    SettingsDialog d(saved(), 6, false, r.services());
-    ASSERT_TRUE(!d.dialog().button("SWITCH_FULLSCREEN")->enabled);
-    d.press("SWITCH_FULLSCREEN");
+    SettingsDialog d(saved(), 6, true, r.services());
+    const MenuButton* sw = d.dialog().button("SWITCH_FULLSCREEN");
+    const float x = sx(d, sw->sprite.left() + 12), y = sy(d, sw->sprite.top() + 12);
+    d.mouse_move(x, y);
+    d.mouse_down(x, y);
+    ASSERT_TRUE(d.mouse_up(x, y) == SettingsDialog::Result::None);
     ASSERT_TRUE(!d.values().fullscreen);
-    ASSERT_TRUE(r.sounds.empty());
+    ASSERT_TRUE(!d.pointer_hot());                                       // no hand cursor over it
 }
 
 TEST(settings_slider_drag_applies_live_and_clamps) {
@@ -317,7 +324,7 @@ TEST(settings_sync_fullscreen_survives_cancel_and_ok) {
     Rig r;
     SettingsDialog d(saved(), 6, true, r.services());
     d.sync_fullscreen(true);                                               // Alt+Enter while open
-    ASSERT_EQ(frame(d, "SWITCH_FULLSCREEN"), SWITCH_ON_ROW_OFFSET);
+    ASSERT_TRUE(d.values().fullscreen);
     ASSERT_TRUE(r.sounds.empty());                                         // silent
     d.press("BUTTON_CANCEL");
     ASSERT_TRUE(d.values().fullscreen);                                    // not reverted

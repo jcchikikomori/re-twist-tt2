@@ -320,7 +320,11 @@ public:
         add("BUTTON_PLAY_WOD", "IMAGE_BUTTON_WOTD", 157, 596, 85, 378, 75);
         add("BUTTON_BLITZ", "IMAGE_BUTTON_LIGHTNING", 170, 536, 320, 393, 75);
         add("BUTTON_CRISSCROSS", "IMAGE_BUTTON_CROSSWORD", 206, 536, 528, 393, 75);
-        add("BUTTON_GH", "BUTTON_GH", 115, 400, 653, 210, 0);
+        // Deviation UX-2: the original's BUTTON_GH, a GF2::ButtonURL to
+        // gamehouse.com (0x477b80), becomes the port's IMPROVEMENTS button in
+        // the same 115x100 footprint. Its art is generated (data/placeholder),
+        // so it shows with or without an import.
+        add("BUTTON_IMPROVEMENTS", "BUTTON_IMPROVEMENTS", 115, 400, 653, 210, 0);
         add("BUTTON_SETTINGS", "BUTTON_SETTINGS", 157, 208, 3, 539, 100);
         add("BUTTON_HOWTOPLAY", "BUTTON_HOWTOPLAY", 157, 208, 163, 539, 100);
         add("BUTTON_HIGHSCORES", "BUTTON_HIGHSCORES", 157, 208, 323, 539, 100);

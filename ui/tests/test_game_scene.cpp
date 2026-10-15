@@ -1745,7 +1745,7 @@ TEST(pause_menu_settings_ok_saves_and_returns) {
     ASSERT_EQ(s.settings_dialog()->max_word_length(), f.profile.max_word_length);
     const int saves = f.saves;
     s.dialog_press("SWITCH_LENGTH_6");
-    s.dialog_press("SWITCH_FULLSCREEN");
+    s.dialog_press("SWITCH_FULLSCREEN");                   // hidden (UX-3): does nothing
     s.update(5000);
     ASSERT_EQ(s.time_left_ms(), time_left);                // the clock stands still
     s.dialog_press("BUTTON_OK");
@@ -1754,7 +1754,7 @@ TEST(pause_menu_settings_ok_saves_and_returns) {
     ASSERT_EQ(f.profile.max_word_length, 6);
     ASSERT_EQ(f.saves, saves + 1);                          // 0x462080
     ASSERT_EQ(f.settings_commits, 1);
-    ASSERT_TRUE(f.settings.fullscreen);
+    ASSERT_TRUE(!f.settings.fullscreen);                    // the window mode lives in IMPROVEMENTS
     ASSERT_EQ(s.rack(), rack);                              // F13: the current rack stays
 }
 

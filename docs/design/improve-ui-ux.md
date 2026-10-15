@@ -87,9 +87,9 @@ Each row is filled in by the phase that ships it.
 | ID | Deviation from the original | Shipped in |
 | --- | --- | --- |
 | UX-1 | Vulkan / OpenGL / software through SDL3 instead of Direct3D 9 | |
-| UX-2 | IMPROVEMENTS button in place of the GameHouse link | |
-| UX-3 | SETTINGS hides its FULLSCREEN switch | |
-| UX-4 | Display options saved in `improvements.txt` | |
+| UX-2 | IMPROVEMENTS button in place of the GameHouse link | 0.3.0 (P2) |
+| UX-3 | SETTINGS hides its FULLSCREEN switch | 0.3.0 (P2) |
+| UX-4 | Display options saved in `improvements.txt` | 0.3.0 (P2) |
 | UX-5 | Window sizes up to 1080p; borderless and native fullscreen | |
 | UX-6 | Side bars filled in the original palette | |
 | UX-7 | No 60 fps cap by default; vsync or a chosen limit | |

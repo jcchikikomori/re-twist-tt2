@@ -11,6 +11,7 @@
 #include <string>
 
 #include "tt2ui/bitmap_font.hpp"
+#include "tt2ui/improvements_dialog.hpp"
 #include "tt2ui/profile_dialogs.hpp"
 
 using namespace tt2ui;
@@ -128,6 +129,19 @@ TEST(placeholder_buttons_are_four_state_sheets) {
         const Size got = png_size(kDir / "images" / "gui" / s.file);
         ASSERT_EQ(got.w, s.w);
         ASSERT_EQ(got.h, s.h);
+    }
+}
+
+TEST(placeholder_has_the_ports_own_buttons_ux2) {
+    // The IMPROVEMENTS badge fills BUTTON_GH's 115x100 frame, 4 states; the
+    // row arrows are 36x36, 4 states. The model's sheets must match.
+    const Size badge = png_size(kDir / "images" / "selectionscene" / "button_improvements.png");
+    ASSERT_EQ(badge.w, 115);
+    ASSERT_EQ(badge.h, 400);
+    for (const char* file : {"button_arrow_left.png", "button_arrow_right.png"}) {
+        const Size got = png_size(kDir / "images" / "gui" / file);
+        ASSERT_EQ(got.w, IMPROVEMENTS_ARROW);
+        ASSERT_EQ(got.h, IMPROVEMENTS_ARROW * 4);
     }
 }
 

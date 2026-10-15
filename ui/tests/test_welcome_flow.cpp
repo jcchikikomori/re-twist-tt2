@@ -417,6 +417,27 @@ TEST(selection_button_layout_matches_dialogs_xml) {
     ASSERT_EQ(rename->sprite.sheet.frame_h, 13);
 }
 
+TEST(selection_improvements_replaces_the_gamehouse_button_ux2) {
+    RecordingHost host;
+    tt2::CrtRandom rng(1);
+    SelectionScene menu(host, rng);
+    ASSERT_EQ(menu.buttons().size(), std::size_t{12});                 // still 12
+    ASSERT_TRUE(menu.button("BUTTON_GH") == nullptr);
+    auto* imp = menu.button("BUTTON_IMPROVEMENTS");
+    ASSERT_TRUE(imp != nullptr);
+    ASSERT_EQ(imp->sprite.x, 653.0f);                                   // BUTTON_GH's place
+    ASSERT_EQ(imp->sprite.y, 210.0f);
+    ASSERT_EQ(imp->sprite.sheet.frame_w, 115);
+    ASSERT_EQ(imp->sprite.sheet.frame_h, 100);
+    ASSERT_EQ(imp->sprite.sheet.image_id, std::string("BUTTON_IMPROVEMENTS"));
+    const float cx = imp->sprite.x + 50, cy = imp->sprite.y + 50;
+    menu.mouse_move(cx, cy, rect_only);
+    menu.mouse_down(cx, cy, rect_only);
+    menu.mouse_up(cx, cy, rect_only);
+    ASSERT_EQ(host.actions.size(), std::size_t{1});
+    ASSERT_EQ(host.actions[0], std::string("BUTTON_IMPROVEMENTS"));
+}
+
 TEST(selection_hover_press_release_fires_action) {
     RecordingHost host;
     tt2::CrtRandom rng(1);

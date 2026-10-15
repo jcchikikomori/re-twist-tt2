@@ -229,7 +229,10 @@ NULL, SW_SHOW)`, then the button callback. Nothing else happens on click
 `ev_745a890effe2c0cb57dcd84542b12430d2c0f2a3614f35bf9cd7c45f1a842286`). Whether the `moregamesurl` /
 `showmoregames` registry values override the URL is UNKNOWN (strings:
 `ev_5dff76359aae16ea7d8e064a5367c4a9cd8d835a58184e80c7da4939777cdfac`). The port does not open
-this URL; the slot is planned for the port's own IMPROVEMENTS button (`docs/design/improve-ui-ux.md`).
+this URL. **Port deviation UX-2:** the slot holds the port's own `BUTTON_IMPROVEMENTS` (same 115×100 frame at
+(653, 210), 4 states, generated art `images/selectionscene/button_improvements.png` from `data/placeholder/`),
+which opens the IMPROVEMENTS dialog (`ui/include/tt2ui/improvements_dialog.hpp`,
+[`docs/design/improve-ui-ux.md`](../design/improve-ui-ux.md)).
 
 ### Enter (`0x42d9b0`) and init (`0x42d220`) — CONFIRMED
 

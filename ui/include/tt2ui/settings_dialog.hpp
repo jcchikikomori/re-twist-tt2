@@ -1,5 +1,6 @@
-// DIALOG_SETTINGS, headless: the music and sound sliders, the fullscreen
-// switch and the maximum word length radio group.
+// DIALOG_SETTINGS, headless: the music and sound sliders and the maximum
+// word length radio group. The original's fullscreen switch is hidden
+// (deviation UX-3): the port's IMPROVEMENTS dialog owns the window mode.
 //
 // Layout: properties/dialogs.xml; behaviour: ctor 0x40bdf0, FX slider
 // 0x40c5c0, music slider 0x40c5f0, OK 0x40c620, CANCEL 0x40c700,
@@ -274,8 +275,6 @@ private:
                                      TextAlign::Left, Anchor::Top, -1});
         d.labels.push_back(TextLabel{"SOUND", "FONT_SETTINGSTEXT", settings_strings::SOUND, 43, 145,
                                      TextAlign::Left, Anchor::Top, -1});
-        d.labels.push_back(TextLabel{"LABEL_FULLSCREEN", "FONT_SETTINGSTEXT", settings_strings::FULLSCREEN, 189, 207,
-                                     TextAlign::Left, Anchor::Top, -1});
         d.labels.push_back(TextLabel{"LABEL_DIFFICULTY", "FONT_SETTINGSTEXT", settings_strings::MAX_LENGTH, 107, 263,
                                      TextAlign::Left, Anchor::Top, -1});
         // anchorpoint="left": x is the left edge, y the vertical centre.
@@ -290,8 +289,15 @@ private:
         d.sprites.push_back(tab);
         d.sprites.push_back(sprite("SLIDER_MUSICVOL", sheet("SLIDER_BACK", SLIDER_BACK_W, SLIDER_BACK_H), 123, 98));
         d.sprites.push_back(sprite("SLIDER_FXVOL", sheet("SLIDER_BACK", SLIDER_BACK_W, SLIDER_BACK_H), 123, 149));
+        // Deviation UX-3: the window mode lives in IMPROVEMENTS now, so the
+        // switch and its label are not shown. The switch stays in the model,
+        // hidden, so the other buttons keep the original's order; the stored
+        // value still follows Alt+Enter (sync_fullscreen) and OK writes it
+        // back. 0x40c1cd enabled it when fullscreen was supported.
+        (void)fullscreen_supported;
         d.buttons.push_back(make_switch("SWITCH_FULLSCREEN", 161, 208));
-        d.buttons.back().enabled = fullscreen_supported;   // 0x40c1cd
+        d.buttons.back().enabled = false;
+        d.buttons.back().sprite.visible = false;
         d.buttons.push_back(make_switch("SWITCH_LENGTH_6", 46, 298));
         d.buttons.push_back(make_switch("SWITCH_LENGTH_7", 170, 298));
         d.buttons.push_back(make_switch("SWITCH_LENGTH_8", 289, 298));

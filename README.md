@@ -166,7 +166,7 @@ tick **Unblock**.
 ├── ui/
 │   ├── include/tt2ui/        # headless scene model: sprites, modifiers, welcome flow,
 │   │                         #   bitmap fonts, profile dialogs, game scene and its dialogs,
-│   │                         #   HOW TO PLAY, SETTINGS, the asset import and its prompt
+│   │                         #   HOW TO PLAY, SETTINGS, IMPROVEMENTS, the asset import and its prompt
 │   ├── src/main.cpp          # the SDL3 front end; audio.cpp plays sounds through SDL3_mixer
 │   └── tests/                # headless UI tests
 ├── src/main.cpp              # engine driver / smoke test

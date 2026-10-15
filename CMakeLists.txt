@@ -207,6 +207,7 @@ if(TT2_BUILD_TESTS)
         engine/tests/test_profile.cpp
         engine/tests/test_saved_game.cpp
         engine/tests/test_settings.cpp
+        engine/tests/test_improvements.cpp
         engine/tests/test_sha256.cpp
         engine/tests/test_asset_manifest.cpp
         engine/tests/test_utf8_path.cpp
@@ -234,6 +235,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_import_prompt.cpp
         ui/tests/test_placeholder_assets.cpp
         ui/tests/test_audio_mix.cpp
+        ui/tests/test_improvements_dialog.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)

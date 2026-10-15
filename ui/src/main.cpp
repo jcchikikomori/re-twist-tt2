@@ -51,6 +51,7 @@
 #include "tt2ui/game_scene.hpp"
 #include "tt2ui/help_dialog.hpp"
 #include "tt2ui/import_prompt.hpp"
+#include "tt2ui/improvements_dialog.hpp"
 #include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/profile_dialogs.hpp"
 #include "audio.hpp"
@@ -85,7 +86,11 @@ const std::map<std::string, std::string> kImageFiles = {
     {"sceneselection/BACKGROUND", "images/selectionscene/background.png"},
     {"BUTTON_PLAY", "images/selectionscene/button_play.png"},
     {"BUTTON_HOWTOPLAY", "images/selectionscene/button_howtoplay.png"},
-    {"BUTTON_GH", "images/selectionscene/button_gh.png"},
+    // The port's own art (deviation UX-2): generated, never in the original
+    // install, so it always comes from data/placeholder.
+    {"BUTTON_IMPROVEMENTS", "images/selectionscene/button_improvements.png"},
+    {"BUTTON_ARROW_LEFT", "images/gui/button_arrow_left.png"},
+    {"BUTTON_ARROW_RIGHT", "images/gui/button_arrow_right.png"},
     {"BUTTON_HIGHSCORES", "images/selectionscene/button_highscores.png"},
     {"BUTTON_SETTINGS", "images/selectionscene/button_settings.png"},
     {"BUTTON_QUIT", "images/selectionscene/button_quit.png"},
@@ -1186,6 +1191,7 @@ int main(int argc, char** argv) {
                                // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP, '>' NEXT ROUND,
                                // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages,
                                // '#' SETTINGS, '@' its INFO (credits), '6'..'8' max length,
+                               // '=' the main menu's IMPROVEMENTS (then '<' / '>' its display mode),
                                // '!' fullscreen switch, '^' Alt+Enter,
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND;
                                // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
@@ -1348,6 +1354,15 @@ int main(int argc, char** argv) {
     if (!save_dir.empty() && !store.load(settings))
         std::fprintf(stderr, "warning: %s is unreadable; using the default settings\n",
                      store.settings_path().string().c_str());
+    // improvements.txt: the port's display options (deviation UX-4). A
+    // build without one yet starts from settings.txt's fullscreen flag.
+    tt2::Improvements improvements = tt2::Improvements::from_legacy(settings);
+    if (!save_dir.empty() && store.has_improvements() && !store.load(improvements))
+        std::fprintf(stderr, "warning: %s is unreadable; using the display options from settings.txt\n",
+                     store.improvements_path().string().c_str());
+    settings.fullscreen = improvements.legacy_fullscreen();
+    std::printf("improvements: window %s%s\n", tt2::to_string(improvements.window),
+                !save_dir.empty() && !store.has_improvements() ? " (from settings.txt)" : "");
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
@@ -1355,7 +1370,8 @@ int main(int argc, char** argv) {
     }
     // SDL3's fullscreen flag is the desktop-sized borderless mode, as
     // SDL2's FULLSCREEN_DESKTOP was.
-    SDL_Window* win = SDL_CreateWindow("Text Twist 2", SCREEN_W, SCREEN_H, settings.fullscreen ? SDL_WINDOW_FULLSCREEN : 0);
+    SDL_Window* win = SDL_CreateWindow("Text Twist 2", SCREEN_W, SCREEN_H,
+                                       improvements.window == tt2::WindowMode::Windowed ? 0 : SDL_WINDOW_FULLSCREEN);
     if (!win) {
         std::fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
         return 1;
@@ -1373,7 +1389,7 @@ int main(int argc, char** argv) {
     std::printf("renderer: %s\n", SDL_GetRendererName(ren));
     // One fading dialog slot per dialog source, drawn in this order.
     DialogLayer game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
-        menu_credits_layer, profile_layer, import_layer;
+        menu_credits_layer, menu_improvements_layer, profile_layer, import_layer;
 
     // Hand pointer over clickable items, hourglass on the load
     // screen, arrow everywhere else. The original's cursor handling
@@ -1400,9 +1416,10 @@ int main(int argc, char** argv) {
     settings_host.apply_sound_volume = [&](float v) { assets.set_sound_volume(v); };
     settings_host.apply_music_volume = [&](float v) { assets.set_music_volume(v); };
     settings_host.commit = [&](const tt2::GameSettings& g) {
-        if (g.fullscreen != settings.fullscreen)
-            SDL_SetWindowFullscreen(win, g.fullscreen);
+        // UX-3: SETTINGS no longer changes the window; settings.txt only
+        // mirrors IMPROVEMENTS' mode for older builds.
         settings = g;
+        settings.fullscreen = improvements.legacy_fullscreen();
         std::printf("settings: sound %.2f, music %.2f, %s\n", settings.sound_volume, settings.music_volume,
                     settings.fullscreen ? "fullscreen" : "windowed");
         if (!save_dir.empty() && !store.save(settings))
@@ -1499,14 +1516,33 @@ int main(int argc, char** argv) {
             if (start_import_from_settings) start_import_from_settings();
         }
     };
-    // Alt+Enter (deviation, see is_fullscreen_shortcut): flip the window
-    // mode, save settings.txt, and keep an open Settings dialog in step.
+    // IMPROVEMENTS (deviation UX-2) from the main menu. OK applies the
+    // window mode, saves improvements.txt and mirrors settings.txt.
+    std::optional<ImprovementsDialog> menu_improvements;
+    auto commit_improvements = [&](const tt2::Improvements& imp) {
+        if (imp.window != improvements.window)
+            SDL_SetWindowFullscreen(win, imp.window != tt2::WindowMode::Windowed);
+        improvements = imp;
+        std::printf("improvements: window %s\n", tt2::to_string(improvements.window));
+        if (!save_dir.empty() && !store.save(improvements))
+            std::fprintf(stderr, "warning: could not write %s\n", store.improvements_path().string().c_str());
+        settings_host.commit(settings);   // settings.txt's fullscreen follows (UX-4)
+    };
+    auto menu_improvements_result = [&](ImprovementsDialog::Result r) {
+        if (!menu_improvements || r == ImprovementsDialog::Result::None) return;
+        if (r == ImprovementsDialog::Result::Ok) commit_improvements(menu_improvements->values());
+        menu_improvements.reset();
+    };
+    // Alt+Enter (deviation, see is_fullscreen_shortcut): flip between a
+    // window and borderless, save both files, and keep open dialogs in step.
     auto toggle_fullscreen = [&] {
-        tt2::GameSettings g = settings;
-        g.fullscreen = !g.fullscreen;
-        settings_host.commit(g);
-        if (menu_settings) menu_settings->sync_fullscreen(g.fullscreen);
-        if (game) game->window_mode_changed(g.fullscreen);
+        tt2::Improvements imp = improvements;
+        imp.window = imp.window == tt2::WindowMode::Windowed ? tt2::WindowMode::Borderless : tt2::WindowMode::Windowed;
+        commit_improvements(imp);
+        const bool fullscreen = improvements.legacy_fullscreen();
+        if (menu_settings) menu_settings->sync_fullscreen(fullscreen);
+        if (menu_improvements) menu_improvements->sync_window(improvements.window);
+        if (game) game->window_mode_changed(fullscreen);
     };
     // "Continue the game?" (CTEXT_START_SAVEGAME, 0x42dc80) on the menu.
     Dialog menu_dialog;
@@ -1606,6 +1642,9 @@ int main(int argc, char** argv) {
         else if (name == "BUTTON_PLAY") request_game(true);
         else if (name == "BUTTON_HOWTOPLAY") menu_help.emplace();
         else if (name == "BUTTON_SETTINGS") open_menu_settings();
+        else if (name == "BUTTON_IMPROVEMENTS")
+            menu_improvements.emplace(improvements,
+                                      ImprovementsDialog::Services{[&](SoundId id) { assets.play_sound(id); }});
         else std::printf("menu: %s (not implemented yet)\n", name.c_str());
     };
     WelcomeFlow flow(services, seed_ticks() + 1);
@@ -1764,6 +1803,21 @@ int main(int argc, char** argv) {
                     menu_settings_result(menu_settings->mouse_up(e.button.x, e.button.y));
                 continue;
             }
+            if (menu_improvements) {
+                // Esc cancels, Return is OK, as in the main menu's SETTINGS.
+                if (e.type == SDL_EVENT_KEY_DOWN) {
+                    const auto k = e.key.key;
+                    if (k == SDLK_ESCAPE) menu_improvements_result(menu_improvements->press("BUTTON_CANCEL"));
+                    else if (k == SDLK_RETURN || k == SDLK_KP_ENTER)
+                        menu_improvements_result(menu_improvements->press("BUTTON_OK"));
+                }
+                if (e.type == SDL_EVENT_MOUSE_MOTION) menu_improvements->mouse_move(e.motion.x, e.motion.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
+                    menu_improvements->mouse_down(e.button.x, e.button.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
+                    menu_improvements_result(menu_improvements->mouse_up(e.button.x, e.button.y));
+                continue;
+            }
             if (menu_help) {
                 // Deviation: Esc closes the help (the original dialogs take no keys).
                 if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) menu_help_press("BUTTON_OK");
@@ -1793,6 +1847,7 @@ int main(int argc, char** argv) {
         else if (menu_dialog_open) hot = dialog_pointer_hot(menu_dialog);
         else if (menu_help) hot = dialog_pointer_hot(menu_help->dialog());
         else if (menu_settings) hot = menu_settings->pointer_hot();
+        else if (menu_improvements) hot = menu_improvements->pointer_hot();
         else if (game) hot = game->pointer_over_clickable();
         else if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             hot = flow.selection()->pointer_over_clickable();
@@ -1848,7 +1903,8 @@ int main(int argc, char** argv) {
             }
         }
         // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL;
-        // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter.
+        // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter;
+        // '=' IMPROVEMENTS, then '<' / '>' its display mode, '|' OK, '~' CANCEL.
         if (!game && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
             flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
@@ -1856,8 +1912,14 @@ int main(int argc, char** argv) {
                 auto_type_ms = 0;
                 const char c = auto_type.front();
                 auto_type.erase(0, 1);
-                if (c == '?') services.menu_action("BUTTON_HOWTOPLAY");
+                if (menu_improvements && (c == '<' || c == '>'))
+                    menu_improvements->press(c == '<' ? "BUTTON_WINDOW_PREV" : "BUTTON_WINDOW_NEXT");
+                else if (menu_improvements && c == '|') menu_improvements_result(menu_improvements->press("BUTTON_OK"));
+                else if (menu_improvements && c == '~')
+                    menu_improvements_result(menu_improvements->press("BUTTON_CANCEL"));
+                else if (c == '?') services.menu_action("BUTTON_HOWTOPLAY");
                 else if (c == '#') services.menu_action("BUTTON_SETTINGS");
+                else if (c == '=') services.menu_action("BUTTON_IMPROVEMENTS");
                 else if (c == '^') toggle_fullscreen();
                 else if (menu_settings && c == '~') menu_settings_result(menu_settings->press("BUTTON_CANCEL"));
                 else if (menu_settings && c == '|') menu_settings_result(menu_settings->press("BUTTON_OK"));
@@ -1925,6 +1987,7 @@ int main(int argc, char** argv) {
         if (menu_dialog_open) dialog_tick(menu_dialog, dt);
         if (menu_help) menu_help->tick(dt);
         if (menu_settings) menu_settings->tick(dt);
+        if (menu_improvements) menu_improvements->tick(dt);
         simulated_ms += dt;
         if (flow.current() != last_scene) {
             last_scene = flow.current();
@@ -1986,6 +2049,8 @@ int main(int argc, char** argv) {
         const Dialog* menu_credits = menu_settings ? menu_settings->credits() : nullptr;
         draw_dialog_layer(ren, menu_credits_layer, menu_credits ? 1 : 0, dt,
                           [&] { draw_dialog(ren, assets, *menu_credits); });
+        draw_dialog_layer(ren, menu_improvements_layer, menu_improvements ? 1 : 0, dt,
+                          [&] { draw_dialog(ren, assets, menu_improvements->dialog()); });
         draw_dialog_layer(ren, profile_layer, static_cast<int>(profile.dialog().kind), dt, [&] {
             draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
         });
@@ -2033,7 +2098,7 @@ int main(int argc, char** argv) {
     assets.release();   // before the mixer and the renderer it came from
     audio_out.close();
     for (DialogLayer* l : {&game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
-                           &menu_credits_layer, &profile_layer, &import_layer})
+                           &menu_credits_layer, &menu_improvements_layer, &profile_layer, &import_layer})
         l->release();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

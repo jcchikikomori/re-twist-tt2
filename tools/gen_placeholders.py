@@ -4,7 +4,8 @@
 The game needs the player's own Text Twist 2 install for its art (see
 docs/design/import-assets.md). Until an import exists it falls back to
 these files: bitmap fonts drawn from open fonts (third_party/fonts/), the
-dialog frame, its centre fill and the dialog buttons. Every shape is new;
+dialog frame, its centre fill, the dialog buttons and the port's own
+IMPROVEMENTS badge and arrows. Every shape is new;
 only the colour values were sampled from the original install, which
 CLAUDE.md allows ("look and feel may imitate the original; assets may not").
 
@@ -409,6 +410,125 @@ def build_button(name, fw, fh, label):
 
 
 # ---------------------------------------------------------------------------
+# The port's own buttons (deviation UX-2, docs/design/improve-ui-ux.md). These
+# file names never exist in the original install, so the game always loads
+# them from here, imported or not.
+#   - images/selectionscene/button_improvements.png: the main-menu badge in
+#     place of BUTTON_GH, a 115x100 frame like the original's, 4 states.
+#   - images/gui/button_arrow_left.png / _right.png: the IMPROVEMENTS rows'
+#     value arrows, 36x36 frames, 4 states.
+# ---------------------------------------------------------------------------
+MENU_BADGE = (115, 100)
+ARROW = 36
+
+
+def gear_mask(size, centre, outer, inner, teeth, hole):
+    """L mask of a gear: a disc of radius `inner` with `teeth` square teeth out to `outer`, minus a hole."""
+    import math
+    m = Image.new("L", size, 0)
+    d = ImageDraw.Draw(m)
+    cx, cy = centre
+    d.ellipse((cx - inner, cy - inner, cx + inner, cy + inner), fill=255)
+    half = math.pi / teeth / 2.2
+    for i in range(teeth):
+        a = 2 * math.pi * i / teeth
+        pts = [(cx + r * math.cos(a + s * half), cy + r * math.sin(a + s * half))
+               for r, s in ((inner - 2, -1), (outer, -0.8), (outer, 0.8), (inner - 2, 1))]
+        d.polygon(pts, fill=255)
+    d.ellipse((cx - hole, cy - hole, cx + hole, cy + hole), fill=0)
+    return m
+
+
+def spark_mask(size, centre, r):
+    """L mask of a four-point star."""
+    cx, cy = centre
+    m = Image.new("L", size, 0)
+    k = r * 0.28
+    ImageDraw.Draw(m).polygon([(cx, cy - r), (cx + k, cy - k), (cx + r, cy), (cx + k, cy + k),
+                               (cx, cy + r), (cx - k, cy + k), (cx - r, cy), (cx - k, cy - k)], fill=255)
+    return m
+
+
+def paint(frame, mask, rgb):
+    layer = Image.new("RGBA", frame.size, rgb + (255,))
+    layer.putalpha(mask)
+    frame.alpha_composite(layer)
+
+
+def outlined(frame, mask, fill, outline):
+    """Paint `mask` in `fill` over a 1 px `outline` ring."""
+    paint(frame, mask.filter(ImageFilter.MaxFilter(3)), outline)
+    paint(frame, mask, fill)
+
+
+def build_menu_badge():
+    fw, fh = MENU_BADGE
+    sheet = Image.new("RGBA", (fw, fh * 4), (0, 0, 0, 0))
+    badge = (19, 4, fw - 20, 72)
+    for row, (top_rgb, bottom_rgb, rim, ink, outline) in enumerate(STATES):
+        frame = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
+        drop = Image.new("RGBA", (fw, fh), DEEP + (0,))
+        drop.putalpha(rounded((fw, fh), (badge[0] + 1, badge[1] + 3, badge[2] + 1, badge[3] + 3), 16, 120)
+                      .filter(ImageFilter.GaussianBlur(2)))
+        frame.alpha_composite(drop)
+        paint(frame, rounded((fw, fh), badge, 16, 255), rim)
+        inner = (badge[0] + 3, badge[1] + 3, badge[2] - 3, badge[3] - 3)
+        body = vertical((fw, fh), [(0, top_rgb), (1, bottom_rgb)]).convert("RGBA")
+        body.putalpha(rounded((fw, fh), inner, 13, 255))
+        frame.alpha_composite(body)
+        gloss = Image.new("RGBA", (fw, fh), (255, 255, 255, 0))
+        gloss.putalpha(rounded((fw, fh), (inner[0] + 6, inner[1] + 3, inner[2] - 6, inner[1] + 16), 7, 55))
+        frame.alpha_composite(gloss)
+        cx, cy = fw // 2 - 3, (badge[1] + badge[3]) // 2 + 2
+        outlined(frame, gear_mask((fw, fh), (cx, cy), 21, 16, 8, 6), ink, outline)
+        outlined(frame, spark_mask((fw, fh), (cx + 21, cy - 19), 9), ink, outline)
+
+        label = "IMPROVEMENTS"
+        size = 14
+        font = load_face("ar", size)
+        while size > 8 and text_width(font, label, 0) > fw - 6:
+            size -= 1
+            font = load_face("ar", size)
+        tw = text_width(font, label, 0)
+        a_top, a_bottom = font.getbbox("A")[1::2]
+        x = (fw - tw) // 2
+        y = 86 - (a_top + a_bottom) // 2
+        draw = ImageDraw.Draw(frame)
+        label_ink, label_outline = (ink, outline) if row else (CREAM, NAVY)
+        for c in label:
+            draw.text((x, y), c, font=font, fill=label_ink + (255,), stroke_width=2, stroke_fill=label_outline + (255,))
+            x += round(font.getlength(c))
+        sheet.alpha_composite(frame, (0, row * fh))
+    save(sheet, os.path.join(OUT, "images", "selectionscene", "button_improvements.png"))
+
+
+def build_arrow(name, pointing_right):
+    fw = fh = ARROW
+    sheet = Image.new("RGBA", (fw, fh * 4), (0, 0, 0, 0))
+    disc = (3, 3, fw - 4, fh - 4)
+    for row, (top_rgb, bottom_rgb, rim, ink, outline) in enumerate(STATES):
+        frame = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
+        drop = Image.new("RGBA", (fw, fh), DEEP + (0,))
+        drop.putalpha(rounded((fw, fh), (disc[0] + 1, disc[1] + 2, disc[2] + 1, disc[3] + 2), 15, 110)
+                      .filter(ImageFilter.GaussianBlur(1.2)))
+        frame.alpha_composite(drop)
+        paint(frame, rounded((fw, fh), disc, 15, 255), rim)
+        inner = (disc[0] + 2, disc[1] + 2, disc[2] - 2, disc[3] - 2)
+        body = vertical((fw, fh), [(0, top_rgb), (1, bottom_rgb)]).convert("RGBA")
+        body.putalpha(rounded((fw, fh), inner, 13, 255))
+        frame.alpha_composite(body)
+        tri = Image.new("L", (fw, fh), 0)
+        cx, cy = fw / 2, fh / 2
+        pts = [(cx - 5, cy - 8), (cx + 7, cy), (cx - 5, cy + 8)]
+        if not pointing_right:
+            pts = [(fw - x, y) for x, y in pts]
+        ImageDraw.Draw(tri).polygon(pts, fill=255)
+        outlined(frame, tri, ink, outline)
+        sheet.alpha_composite(frame, (0, row * fh))
+    save(sheet, os.path.join(OUT, "images", "gui", name + ".png"))
+
+
+# ---------------------------------------------------------------------------
 
 def save(img, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -421,6 +541,9 @@ Everything here is written by `tools/gen_placeholders.py`; do not edit it by han
 loads these files only when the player has not imported their own Text Twist 2 install.
 
 - **Shapes:** drawn by the script. No original GameHouse pixels; only colour values were sampled.
+- **The port's own buttons:** `images/selectionscene/button_improvements.png` (the main-menu
+  IMPROVEMENTS badge) and `images/gui/button_arrow_left.png` / `button_arrow_right.png`. These
+  names don't exist in the original game, so they are used even after an import.
 - **Fonts:** bitmap renderings of open fonts from `third_party/fonts/`:
   - Luckiest Guy (Apache 2.0, `LICENSE-LuckiestGuy.txt`): font_uibar, font_dialog_headers,
     font_dialog_headers2, font_uibar_labels.
@@ -442,6 +565,10 @@ def main():
     for name, fw, fh, label in BUTTONS:
         build_button(name, fw, fh, label)
     print("images/gui: dialog frame, background, %d buttons" % len(BUTTONS))
+    build_menu_badge()
+    build_arrow("button_arrow_left", False)
+    build_arrow("button_arrow_right", True)
+    print("images: the IMPROVEMENTS badge and the row arrows")
     shutil.copyfile(os.path.join(FONT_DIR, "luckiest-guy", "LICENSE.txt"), os.path.join(OUT, "LICENSE-LuckiestGuy.txt"))
     shutil.copyfile(os.path.join(FONT_DIR, "arimo", "OFL.txt"), os.path.join(OUT, "OFL-Arimo.txt"))
     with open(os.path.join(OUT, "README.md"), "w", newline="\n") as f:
