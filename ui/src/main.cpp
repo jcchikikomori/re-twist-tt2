@@ -1040,12 +1040,13 @@ SDL_Rect draw_label_text(SDL_Renderer* ren, Assets& assets, const TextLabel& l, 
     if (a < 255)
         for (SDL_Texture* t : layers) if (t) SDL_SetTextureAlphaMod(t, a);
     const int lh = l.line_height > 0 ? l.line_height : assets.font(l.font_id).font.glyph_height();
+    const float top = first_line_y(l, text_line_count(text), lh);
     std::size_t start = 0;
     int line = 0;
     while (true) {
         const std::size_t nl = text.find('\n', start);
         const std::string part = text.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
-        last = draw_text(ren, assets, l.font_id, part, l.x + ox, l.y + oy + static_cast<float>(line * lh), l.align,
+        last = draw_text(ren, assets, l.font_id, part, l.x + ox, top + oy + static_cast<float>(line * lh), l.align,
                          l.anchor, l.char_spacing);
         if (nl == std::string::npos) break;
         start = nl + 1;

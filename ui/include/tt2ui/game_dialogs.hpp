@@ -67,6 +67,17 @@ inline int text_line_count(const std::string& s) {
     return n;
 }
 
+// Where a label's first line goes. `anchorpoint="center"` centres the
+// whole block of lines on (x, y), so the first line moves up by half the
+// extra lines; every other anchor starts the block at y. INFERRED from
+// DIALOG_TUTORIAL: its 4-line BODY_TEXT is centred at y 155 with line
+// height 32, and a block starting there would put line 4 at 251, below
+// the top of its buttons (235). Centred, the lines sit at 107..203.
+inline float first_line_y(const TextLabel& l, int lines, int line_height) {
+    if (l.anchor != Anchor::Center || lines <= 1) return l.y;
+    return l.y - static_cast<float>((lines - 1) * line_height) / 2.0f;
+}
+
 // DIALOG_MENU 322x390 (0x407f40 wires the four buttons).
 inline Dialog build_pause_menu() {
     Dialog d;

@@ -2027,6 +2027,33 @@ TEST(round_end_dialogs_carry_the_sparkle) {
     ASSERT_EQ(text_line_count("a\nb\nc"), 3);
 }
 
+// A centred label centres its whole block: the tutorial's 4 lines sit
+// at 107..203, above READ MORE / PLAY (y 235), not from 155 down to 251.
+TEST(tutorial_body_is_centred_as_a_block_above_its_buttons) {
+    for (int mode = 0; mode < 4; ++mode) {
+        const Dialog d = build_tutorial(mode);
+        const TextLabel& body = *d.label("BODY_TEXT");
+        const int lines = text_line_count(body.text);
+        const float first = first_line_y(body, lines, body.line_height);
+        const float last = first + static_cast<float>((lines - 1) * body.line_height);
+        ASSERT_TRUE((first + last) / 2.0f == body.y);                       // centred on y 155
+        ASSERT_TRUE(last + body.line_height / 2.0f <= d.button("BUTTON_OK")->sprite.y);
+        ASSERT_TRUE(first - body.line_height / 2.0f >= 52.0f);              // under the header
+    }
+    const TextLabel& four = *build_tutorial(0).label("BODY_TEXT");
+    ASSERT_TRUE(first_line_y(four, 4, 32) == 107.0f);
+}
+
+TEST(first_line_y_moves_only_centred_multi_line_labels) {
+    TextLabel l;
+    l.y = 100;
+    l.anchor = Anchor::Center;
+    ASSERT_TRUE(first_line_y(l, 1, 32) == 100.0f);                          // one line: unchanged
+    ASSERT_TRUE(first_line_y(l, 3, 20) == 80.0f);
+    l.anchor = Anchor::Top;
+    ASSERT_TRUE(first_line_y(l, 3, 20) == 100.0f);                          // a top anchor starts at y
+}
+
 TEST(first_game_in_a_mode_opens_the_tutorial_once) {
     Fixture f(true, true, 0, false);
     auto& s = *f.scene;
