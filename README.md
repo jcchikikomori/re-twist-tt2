@@ -14,8 +14,8 @@ Capacitor.
 
 The splash, loading screen and main menu are rebuilt 1:1 from the decompiled original (timings in
 `docs/reverse-engineering/welcome-flow.md`), recorded with `tt2 --dump-frames` at 4x speed. The art
-in the GIF comes from a legitimately owned copy imported with `scripts/import-original.sh`; the
-repository itself ships only procedural placeholders.
+in the GIF comes from a legitimately owned copy imported with `tt2 --import`; the repository itself
+ships only procedural placeholders.
 
 ## Tech stack
 
@@ -41,12 +41,8 @@ ctest --test-dir build --output-on-failure    # engine + headless UI tests
 ./build/tt2                                    # play
 ```
 
-Optional, and only with a copy you legally own: import the original art, fonts and sounds so the
-game looks like the 2008 release. Without this step the game boots with placeholders.
-
-```bash
-./scripts/import-original.sh "/path/to/Text Twist 2"
-```
+**You also need your own copy of Text Twist 2.** The game asks for it on the first launch; see
+[Original game assets (required for now)](#original-game-assets-required-for-now).
 
 ### Other binaries
 
@@ -62,12 +58,72 @@ game looks like the 2008 release. Without this step the game boots with placehol
 | Flag | What it does |
 | --- | --- |
 | `--save-dir DIR` | Keep profiles and saves in `DIR` instead of the per-user data directory |
-| `--assets DIR` | Read the art from `DIR` instead of `imported-assets/` |
+| `--import DIR` | Import the original art from your install at `DIR`, then exit (0 = imported, 1 = nothing copied) |
+| `--asset-dir DIR` | Import into and load from `DIR` instead of the per-user asset folder |
+| `--assets DIR` | Load the art from `DIR` as is: no import, no checks, no prompt |
+| `--asset-manifest FILE` | Check imports against `FILE` instead of `data/original-assets.sha256` |
 | `--player NAME` | Add `NAME` if new and make it the current player |
 | `--play untimed\|timed` | Start a game as soon as the menu is up |
 | `--speed N` | Run the clock `N` times faster |
 | `--exit-after MS` | Quit after `MS` simulated milliseconds |
 | `--dump-frames DIR` | Write `frame_NNNN.bmp` at `--fps N` (headless with `SDL_VIDEODRIVER=dummy`) |
+
+## Original game assets (required for now)
+
+This port's own placeholder art isn't made yet. Without the original game's art, fonts and sounds
+it looks unfinished, so **for now you need a legitimately owned copy of Text Twist 2**. The game
+copies what it needs from your install once; your copy stays untouched.
+
+### Import in the game
+
+1. Start the game. Once the main menu shows, it asks:
+
+   > **Original game required**
+   >
+   > This game needs the art, fonts and sounds from your own copy of Text Twist 2. The replacement
+   > placeholder art isn't ready yet, so without them the game won't look or sound right. Import them
+   > from your Text Twist 2 folder now?
+
+1. Choose **YES**. Your system's folder picker opens: choose the folder Text Twist 2 is installed in,
+   the one that holds `Text Twist 2.exe`.
+1. The game checks every file, copies them into its asset folder (below), and switches to the
+   original look. The next launch doesn't ask again.
+
+**NO** keeps the placeholders for this session; the game asks again next time. To import later, use
+**SETTINGS → ORIGINAL ASSETS → IMPORT** on the main menu.
+
+### Import from a terminal
+
+```bash
+./build/tt2 --import "/path/to/Text Twist 2"                          # source build
+./Re-Twist_TT2-v0.1.0-x86_64.AppImage --import "/path/to/Text Twist 2"   # Linux / Steam Deck package
+```
+
+```powershell
+.\tt2.exe --import "C:\path\to\Text Twist 2"   # Windows package
+```
+
+It exits with 0 once every file is imported and checked, or 1 with nothing copied. Use this where no
+folder picker exists, such as the Steam Deck's Game Mode (switch to Desktop Mode, or run it from
+Konsole). In a source checkout, `scripts/import-original.sh` does the same.
+
+### Where the files go
+
+| System | Imported assets |
+| --- | --- |
+| Linux | `~/.local/share/re-twist-tt2/imported-assets/` |
+| Steam Deck | `/home/deck/.local/share/re-twist-tt2/imported-assets/` |
+| Windows | `%APPDATA%\re-twist-tt2\imported-assets\` |
+| macOS (untested) | `~/Library/Application Support/re-twist-tt2/imported-assets/` |
+
+The game prints the folder it uses at start (`assets: ...`). Profiles and saves live in the parent
+folder (`--save-dir` moves them); `--asset-dir DIR` moves the imported assets.
+
+### What is checked
+
+Every file is checked against the SHA-256 checksums in `data/original-assets.sha256`, which holds
+file names and checksums only. One missing or different file means nothing is copied, and a failed
+import keeps the previous one. The game's DLL and `.nfo` files are never copied.
 
 ## CI and downloads
 
@@ -77,10 +133,19 @@ GitHub Actions runs two workflows:
   warnings as errors, plus an AddressSanitizer / UBSan run) and on Windows (MSYS2 UCRT64), each followed by a headless
   smoke run of the game.
 - **Packages** (`.github/workflows/packages.yml`), on pushes to `main`, `v*` tags and by hand: a Linux **AppImage**
-  and a Windows **zip** (`tt2.exe`, its DLLs and `data/`). Download them from the run's *Artifacts* section.
+  and a Windows **zip** (`tt2.exe`, its DLLs and `data/`). A `v*` tag also publishes both on the
+  [Releases](https://github.com/jcchikikomori/re-twist-tt2/releases) page; other runs keep them in the run's
+  *Artifacts* section.
 
-The packages carry only the open-license dictionaries and the placeholder art. A packaged game finds its dictionaries
-next to itself (`data/` beside `tt2.exe`, or `share/tt2/data` inside the AppImage); `--data-dir DIR` overrides that.
+Both workflows also import a synthetic install made of random bytes, never real game files.
+
+The packages carry only the open-license dictionaries, the asset checksums and the placeholder art; import the
+original art as above. A packaged game finds its data next to itself (`data/` beside `tt2.exe`, or `share/tt2/data`
+inside the AppImage); `--data-dir DIR` overrides that.
+
+**Windows SmartScreen:** `tt2.exe` isn't code-signed yet, so Windows may say "Windows protected your PC" with an
+unknown publisher. Choose **More info → Run anyway**, or before extracting, right-click the zip → **Properties** →
+tick **Unblock**.
 
 ## Where things live
 
@@ -94,19 +159,21 @@ next to itself (`data/` beside `tt2.exe`, or `share/tt2/data` inside the AppImag
 ├── ui/
 │   ├── include/tt2ui/        # headless scene model: sprites, modifiers, welcome flow,
 │   │                         #   bitmap fonts, profile dialogs, game scene and its dialogs,
-│   │                         #   HOW TO PLAY, SETTINGS
+│   │                         #   HOW TO PLAY, SETTINGS, the asset import and its prompt
 │   ├── src/main.cpp          # the SDL2 front end (the only file that touches SDL)
 │   └── tests/                # headless UI tests
 ├── src/main.cpp              # engine driver / smoke test
 ├── tools/tree_cli.cpp        # tt2-tree dictionary tool
-├── data/                     # runtime dictionaries (open-*.tree committed)
+├── tools/assets_cli.cpp      # tt2-assets: writes and checks the asset checksum list
+├── third_party/              # tinyfiledialogs (zlib): the folder picker
+├── data/                     # runtime dictionaries (open-*.tree) and original-assets.sha256
 ├── data-src/                 # raw word lists for rebuilding the open dictionaries
-├── scripts/import-original.sh
+├── scripts/                  # import-original.sh (wraps tt2 --import), ci-import-smoke.sh
 ├── packaging/linux/          # desktop entry and original icon for the AppImage
 ├── .github/workflows/        # CI (tests) and Packages (AppImage, Windows zip)
 └── docs/
     ├── reverse-engineering/  # evidence from the original: format specs, scene layouts, timings
-    ├── design/               # original-look brief
+    ├── design/               # original-look brief, asset import design, credits
     ├── media/                # README media
     └── dictionary-sources.md
 ```
@@ -129,6 +196,7 @@ next to itself (`data/` beside `tt2.exe`, or `share/tt2/data` inside the AppImag
 | Dictionary | Open `.tree` files committed. The codec round-trips both the original and the open files byte-for-byte and matches the Python reference decoder. The game prefers your own `data/common.tree` / `data/full.tree` (gitignored) and falls back to the open lists. |
 | Engine | Classic (Timed, Untimed, Word of the Day), Lightning and Crossword rounds, profiles, high scores, settings and the Untimed saved game. All unit-tested. |
 | Boot flow | Splash → loading → main menu with the original timings and fades. |
+| Original assets | **Required for now.** Imported from your own install on first launch, checked against SHA-256 checksums. The replacement art isn't made yet. |
 | Profiles | Welcome label, name input, player select and remove confirmation, saved to the per-user data directory. |
 | **Untimed / Timed** | **Playable.** Word grid, pearl letter balls, twist / clear / last word / enter, the 2:00 clock, the in-game popups, pause menu, Exit / Give Up confirmations, round-end reveal, GAME OVER and new high score, resume on the next launch, HOW TO PLAY and SETTINGS. |
 | Lightning, Crossword, Word of the Day | Engine done; the menu entries are still stubs. |
@@ -150,7 +218,7 @@ GameHouse. "Text Twist" is a trademark of its respective owner, and the licenses
 rights to it.
 
 The look and feel may imitate the original; the assets may not. The original `.tree` files, the
-executable, and its images, fonts and sounds are never committed. The importer copies them only on
-your own machine, from your own install, and whether your license allows that is your
-responsibility. The DRM components (`texttwist2_RADRM.dll`, the trial code, the `.nfo` files) are
-not analyzed.
+executable, and its images, fonts and sounds are never committed or packaged; the repository holds
+only their checksums (`data/original-assets.sha256`). The importer copies them only on your own
+machine, from your own install, and whether your license allows that is your responsibility. The
+DRM components (`texttwist2_RADRM.dll`, the trial code, the `.nfo` files) are not analyzed.
