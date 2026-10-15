@@ -7,14 +7,18 @@
 // a cycle control: a label, the value text, and left / right arrows that
 // step through the choices (wrapping round, past any the display can't
 // offer). A row can be disabled, with
-// a reason line under it, and any row can carry a note line (the RENDERER
-// row names the renderer in use). OK keeps the edited values and CANCEL restores
+// a reason line under it, and any row can carry a note line. Every value
+// fits on one line: RENDERER's Auto names the renderer in use in its own
+// value ("Auto (OpenGL)"), and Borderless greys out RESOLUTION without a
+// reason. A renderer change applies on the next launch, so OK first shows
+// a one-button "Restart needed" notice over the dialog. OK keeps the edited values and CANCEL restores
 // the saved ones, the same contract as SETTINGS; the host owns saving and
 // applying them.
 #pragma once
 
 #include <functional>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,13 +37,12 @@ inline constexpr const char* BORDERLESS = "Borderless";
 inline constexpr const char* NATIVE = "Native";
 inline constexpr const char* NATIVE_FAILED = "Native unavailable, using Borderless";
 inline constexpr const char* RESOLUTION = "RESOLUTION";
-inline constexpr const char* DESKTOP_SIZE = "Borderless uses the desktop size";
 inline constexpr const char* NO_LARGER_SIZE = "No larger size fits this display";
 inline constexpr const char* NO_NATIVE_SIZE = "No display mode of an offered size";
 inline constexpr const char* RENDERER = "RENDERER";
 inline constexpr const char* AUTO = "Auto";
-inline constexpr const char* USING = "Using ";
-inline constexpr const char* AFTER_RESTART = ", applies after a restart";
+inline constexpr const char* RESTART_HEADER = "Restart needed";
+inline constexpr const char* RESTART_TEXT = "The new renderer is used\nafter you restart the game.";
 inline constexpr const char* VSYNC = "VSYNC";
 inline constexpr const char* ON = "On";
 inline constexpr const char* OFF = "Off";
@@ -119,18 +122,39 @@ public:
         return nullptr;
     }
 
+    // The "Restart needed" notice OK opens over the dialog; null otherwise.
+    const Dialog* notice() const { return notice_ ? &*notice_ : nullptr; }
+    // OK would change the renderer this run started with: picked here (not
+    // only saved that way) and not what is running.
+    bool restart_needed() const {
+        return values_.renderer != saved_.renderer && values_.renderer != context_.launched;
+    }
+
     // ---- input ----------------------------------------------------------
-    void mouse_move(float x, float y) { dialog_mouse_move(dialog_, x, y); }
-    void mouse_down(float x, float y) { dialog_mouse_down(dialog_, x, y); }
-    Result mouse_up(float x, float y) { return press(dialog_mouse_up(dialog_, x, y)); }
+    void mouse_move(float x, float y) { dialog_mouse_move(top(), x, y); }
+    void mouse_down(float x, float y) { dialog_mouse_down(top(), x, y); }
+    Result mouse_up(float x, float y) { return press(dialog_mouse_up(top(), x, y)); }
 
     // A button by name (mouse, keys, tests). Unknown, hidden or disabled
-    // buttons do nothing.
+    // buttons do nothing. While the notice is up it takes every press: its
+    // OK, or the hosts' Esc (CANCEL), closes it and finishes OK, which the
+    // player already chose.
     Result press(const std::string& name) {
+        if (notice_) {
+            const MenuButton* b = notice_->button(name);
+            if (name != "BUTTON_CANCEL" && !(b && b->enabled && b->sprite.visible)) return Result::None;
+            sound(SoundId::Button);
+            notice_.reset();
+            return Result::Ok;
+        }
         const MenuButton* b = dialog_.button(name);
         if (!b || !b->enabled || !b->sprite.visible) return Result::None;
         sound(SoundId::Button);
-        if (name == "BUTTON_OK") return Result::Ok;
+        if (name == "BUTTON_OK") {
+            if (!restart_needed()) return Result::Ok;
+            notice_ = build_yes_no(improvements_strings::RESTART_HEADER, improvements_strings::RESTART_TEXT, true);
+            return Result::None;
+        }
         if (name == "BUTTON_CANCEL") {
             values_ = saved_;
             refresh();
@@ -169,10 +193,15 @@ public:
         refresh();
     }
 
-    void tick(int dt_ms) { dialog_tick(dialog_, dt_ms); }
-    bool pointer_hot() const { return dialog_pointer_hot(dialog_); }
+    void tick(int dt_ms) {
+        dialog_tick(dialog_, dt_ms);
+        if (notice_) dialog_tick(*notice_, dt_ms);
+    }
+    bool pointer_hot() const { return dialog_pointer_hot(notice_ ? *notice_ : dialog_); }
 
 private:
+    Dialog& top() { return notice_ ? *notice_ : dialog_; }
+
     void build() {
         rows_.push_back(Row{"WINDOW", improvements_strings::WINDOW,
                             {improvements_strings::WINDOWED, improvements_strings::BORDERLESS,
@@ -262,8 +291,8 @@ private:
             if (r.id == "RENDERER") {
                 for (int i = 0; i < 4; ++i)
                     if (kRendererOrder[i] == values_.renderer) r.index = i;
-                r.note = std::string(improvements_strings::USING) + backend_title(context_.active) +
-                         (values_.renderer != context_.launched ? improvements_strings::AFTER_RESTART : "");
+                // Only Auto names a renderer: what this run picked for it.
+                r.choices[0] = std::string(improvements_strings::AUTO) + " (" + backend_title(context_.active) + ")";
             }
             if (r.id == "VSYNC") r.index = values_.vsync ? 0 : 1;
             if (r.id == "WIDESCREEN_FILL") r.index = values_.widescreen_fill ? 0 : 1;
@@ -286,8 +315,9 @@ private:
                     if (tt2::FRAME_LIMITS[i] == values_.frame_limit) r.index = static_cast<int>(i);
         }
     }
-    // Borderless shows the desktop size, greyed out (Q5); a mode with no
-    // size to offer keeps the current one, greyed out.
+    // Borderless shows the desktop size, greyed out with no reason (the
+    // mode says why, Q5); a mode with no size to offer keeps the current
+    // one, greyed out.
     void load_resolution_row(Row& r) {
         const std::vector<tt2::Resolution>& sizes = sizes_for(values_.window);
         r.choices.clear();
@@ -296,7 +326,7 @@ private:
             const bool borderless = values_.window == tt2::WindowMode::Borderless;
             r.choices.push_back(tt2::to_string(borderless ? context_.display.desktop : values_.resolution));
             r.enabled = false;
-            r.reason = borderless ? improvements_strings::DESKTOP_SIZE
+            r.reason = borderless ? ""
                        : values_.window == tt2::WindowMode::Windowed ? improvements_strings::NO_LARGER_SIZE
                                                                      : improvements_strings::NO_NATIVE_SIZE;
             return;
@@ -356,6 +386,7 @@ private:
     Services services_;
     Context context_;
     Dialog dialog_;
+    std::optional<Dialog> notice_;   // "Restart needed", over the dialog
     std::vector<Row> rows_;
 };
 

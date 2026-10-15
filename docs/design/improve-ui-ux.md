@@ -62,8 +62,8 @@
 | Options file | A new `improvements.txt`, so `settings.txt` stays readable by older builds |
 | Dialog | **IMPROVEMENTS**, opened from a new main-menu button in place of "GameHouse - More Great Games" |
 | Resolution, window mode | Both live in IMPROVEMENTS; SETTINGS hides its FULLSCREEN switch (main menu and pause menu) |
-| Renderer change | Applies on the next launch |
-| Borderless | Always the desktop size; the resolution setting applies to windowed and native fullscreen |
+| Renderer change | Applies on the next launch; OK shows a one-button "Restart needed" notice when the pick differs from what runs. The row stays one line: only Auto names a renderer, the one in use ("Auto (OpenGL)") |
+| Borderless | Always the desktop size; the resolution setting applies to windowed and native fullscreen. RESOLUTION shows the desktop size greyed out, with no reason line |
 | Side fill | Any left/right bar is filled (16:10 and 21:9 too); 16:9 is the supported target |
 | Frame rate | VSync on/off plus a frame limit: Off, 60 (original), 120, 144, 165, 240 |
 

@@ -1493,7 +1493,8 @@ int main(int argc, char** argv) {
                                // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages,
                                // '#' SETTINGS, '@' its INFO (credits), '6'..'8' max length,
                                // '=' the main menu's IMPROVEMENTS (then '<' / '>' its display mode,
-                               //     '(' / ')' its resolution, '[' / ']' its texture filter, '*' its upscaler),
+                               //     '(' / ')' its resolution, '[' / ']' its texture filter, '*' its upscaler,
+                               //     '{' its renderer),
                                // '!' fullscreen switch, '^' Alt+Enter,
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND;
                                // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
@@ -1726,7 +1727,7 @@ int main(int argc, char** argv) {
     // One fading dialog slot per dialog source, drawn in this order.
     SideFillTextures side_fill;
     DialogLayer game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
-        menu_credits_layer, menu_improvements_layer, profile_layer, import_layer;
+        menu_credits_layer, menu_improvements_layer, menu_notice_layer, profile_layer, import_layer;
 
     // Hand pointer over clickable items, hourglass on the load
     // screen, arrow everywhere else. The original's cursor handling
@@ -2267,7 +2268,7 @@ int main(int argc, char** argv) {
         // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL;
         // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter;
         // '=' IMPROVEMENTS, then '<' / '>' its display mode, '(' / ')' its resolution, '[' / ']' its filter,
-        // '*' its upscaler, '|' OK, '~' CANCEL.
+        // '*' its upscaler, '{' its renderer, '|' OK (then OK on "Restart needed"), '~' CANCEL.
         if (!game && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
             flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
@@ -2282,6 +2283,7 @@ int main(int argc, char** argv) {
                 else if (menu_improvements && (c == '[' || c == ']'))
                     menu_improvements->press(c == '[' ? "BUTTON_FILTER_PREV" : "BUTTON_FILTER_NEXT");
                 else if (menu_improvements && c == '*') menu_improvements->press("BUTTON_UPSCALER_NEXT");
+                else if (menu_improvements && c == '{') menu_improvements->press("BUTTON_RENDERER_NEXT");
                 else if (menu_improvements && c == '|') menu_improvements_result(menu_improvements->press("BUTTON_OK"));
                 else if (menu_improvements && c == '~')
                     menu_improvements_result(menu_improvements->press("BUTTON_CANCEL"));
@@ -2424,6 +2426,10 @@ int main(int argc, char** argv) {
                           [&] { draw_dialog(ren, assets, *menu_credits); });
         draw_dialog_layer(ren, layer_px, menu_improvements_layer, menu_improvements ? 1 : 0, dt,
                           [&] { draw_dialog(ren, assets, menu_improvements->dialog()); });
+        // "Restart needed" opens over IMPROVEMENTS with its own backdrop and fade.
+        const Dialog* menu_notice = menu_improvements ? menu_improvements->notice() : nullptr;
+        draw_dialog_layer(ren, layer_px, menu_notice_layer, menu_notice ? 1 : 0, dt,
+                          [&] { draw_dialog(ren, assets, *menu_notice); });
         draw_dialog_layer(ren, layer_px, profile_layer, static_cast<int>(profile.dialog().kind), dt, [&] {
             draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
         });
@@ -2473,7 +2479,8 @@ int main(int argc, char** argv) {
     assets.release();   // before the mixer and the renderer it came from
     audio_out.close();
     for (DialogLayer* l : {&game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
-                           &menu_credits_layer, &menu_improvements_layer, &profile_layer, &import_layer})
+                           &menu_credits_layer, &menu_improvements_layer, &menu_notice_layer, &profile_layer,
+                           &import_layer})
         l->release();
     side_fill.release();
     SDL_DestroyRenderer(ren);

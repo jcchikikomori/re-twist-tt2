@@ -150,14 +150,13 @@ ImprovementsDialog::Context running(Backend active, tt2::RendererPref launched) 
     c.launched = launched;
     return c;
 }
-std::string note(const ImprovementsDialog& d) { return d.dialog().label("NOTE_RENDERER")->text; }
 }  // namespace
 
 TEST(improvements_renderer_row_cycles_four_choices) {
     Rig r;
     ImprovementsDialog d(windowed(), r.services(), running(Backend::OpenGL, tt2::RendererPref::Auto));
-    ASSERT_EQ(value(d, "RENDERER"), std::string("Auto"));
-    const char* expected[] = {"Vulkan", "OpenGL", "Software", "Auto"};
+    ASSERT_EQ(value(d, "RENDERER"), std::string("Auto (OpenGL)"));
+    const char* expected[] = {"Vulkan", "OpenGL", "Software", "Auto (OpenGL)"};
     for (const char* e : expected) {
         d.press("BUTTON_RENDERER_NEXT");
         ASSERT_EQ(value(d, "RENDERER"), std::string(e));
@@ -167,28 +166,98 @@ TEST(improvements_renderer_row_cycles_four_choices) {
     ASSERT_TRUE(d.values().window == tt2::WindowMode::Windowed);        // the other row is untouched
 }
 
-TEST(improvements_renderer_note_names_the_renderer_in_use) {
+TEST(improvements_renderer_auto_names_the_renderer_in_use) {
     Rig r;
-    const ImprovementsDialog d(windowed(), r.services(), running(Backend::Vulkan, tt2::RendererPref::Auto));
-    ASSERT_TRUE(d.dialog().label("NOTE_RENDERER")->visible);
-    ASSERT_EQ(note(d), std::string("Using Vulkan"));                    // no restart note: nothing changed
+    for (Backend b : {Backend::Vulkan, Backend::OpenGL, Backend::Software}) {
+        const ImprovementsDialog d(windowed(), r.services(), running(b, tt2::RendererPref::Auto));
+        ASSERT_EQ(value(d, "RENDERER"), "Auto (" + std::string(backend_title(b)) + ")");
+    }
 }
 
-TEST(improvements_renderer_note_asks_for_a_restart_only_after_a_change) {
+TEST(improvements_renderer_row_is_one_line) {
+    // No note under the row, whatever is picked or running.
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), running(Backend::Software, tt2::RendererPref::Software));
+    for (int i = 0; i < 4; ++i) {
+        ASSERT_TRUE(!d.dialog().label("NOTE_RENDERER")->visible);
+        ASSERT_TRUE(!d.dialog().label("REASON_RENDERER")->visible);
+        d.press("BUTTON_RENDERER_NEXT");
+    }
+}
+
+TEST(improvements_renderer_names_no_renderer_unless_auto) {
+    // A forced choice shows only its own name, even when this run fell
+    // back to another renderer.
+    Rig r;
+    tt2::Improvements saved;
+    saved.renderer = tt2::RendererPref::Vulkan;
+    const ImprovementsDialog d(saved, r.services(), running(Backend::Software, tt2::RendererPref::Vulkan));
+    ASSERT_EQ(value(d, "RENDERER"), std::string("Vulkan"));
+}
+
+TEST(improvements_renderer_change_asks_for_a_restart_on_ok) {
     Rig r;
     ImprovementsDialog d(windowed(), r.services(), running(Backend::OpenGL, tt2::RendererPref::Auto));
     d.press("BUTTON_RENDERER_NEXT");                                     // Vulkan
-    ASSERT_EQ(note(d), std::string("Using OpenGL, applies after a restart"));
-    d.press("BUTTON_RENDERER_PREV");                                     // back to what this run started with
-    ASSERT_EQ(note(d), std::string("Using OpenGL"));
+    ASSERT_TRUE(d.notice() == nullptr);                                  // nothing until OK
+    ASSERT_TRUE(d.press("BUTTON_OK") == ImprovementsDialog::Result::None);
+    ASSERT_TRUE(d.notice() != nullptr);
+    ASSERT_EQ(d.notice()->label("HEADER")->text, std::string("Restart needed"));
+    ASSERT_EQ(d.notice()->label("MESSAGE")->text, std::string("The new renderer is used\nafter you restart the game."));
+    ASSERT_TRUE(d.notice()->button("BUTTON_OK") != nullptr);
+    ASSERT_TRUE(d.notice()->button("BUTTON_CANCEL") == nullptr);         // one button
+    ASSERT_TRUE(d.press("BUTTON_OK") == ImprovementsDialog::Result::Ok);  // the notice's OK finishes
+    ASSERT_TRUE(d.notice() == nullptr);
+    ASSERT_TRUE(d.values().renderer == tt2::RendererPref::Vulkan);
 }
 
-TEST(improvements_renderer_note_compares_with_the_launch_not_the_file) {
-    // --renderer software overrides an "auto" file for one run: the saved
-    // choice already differs from what is running.
+TEST(improvements_restart_notice_esc_still_keeps_the_change) {
+    // The player already chose OK; Esc (the hosts' CANCEL) only closes the notice.
     Rig r;
-    const ImprovementsDialog d(windowed(), r.services(), running(Backend::Software, tt2::RendererPref::Software));
-    ASSERT_EQ(note(d), std::string("Using Software, applies after a restart"));
+    ImprovementsDialog d(windowed(), r.services(), running(Backend::OpenGL, tt2::RendererPref::Auto));
+    d.press("BUTTON_RENDERER_NEXT");
+    d.press("BUTTON_OK");
+    ASSERT_TRUE(d.press("BUTTON_CANCEL") == ImprovementsDialog::Result::Ok);
+    ASSERT_TRUE(d.values().renderer == tt2::RendererPref::Vulkan);
+}
+
+TEST(improvements_restart_notice_ignores_the_dialog_under_it) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), running(Backend::OpenGL, tt2::RendererPref::Auto));
+    d.press("BUTTON_RENDERER_NEXT");                                     // Vulkan
+    d.press("BUTTON_OK");
+    const std::size_t clicks = r.sounds.size();
+    ASSERT_TRUE(d.press("BUTTON_RENDERER_NEXT") == ImprovementsDialog::Result::None);
+    ASSERT_TRUE(d.values().renderer == tt2::RendererPref::Vulkan);       // the row didn't move
+    ASSERT_EQ(r.sounds.size(), clicks);                                  // and made no sound
+    ASSERT_TRUE(d.notice() != nullptr);
+}
+
+TEST(improvements_ok_without_a_renderer_change_skips_the_notice) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), running(Backend::OpenGL, tt2::RendererPref::Auto));
+    d.press("BUTTON_VSYNC_NEXT");                                        // other rows apply now
+    ASSERT_TRUE(d.press("BUTTON_OK") == ImprovementsDialog::Result::Ok);
+    ASSERT_TRUE(d.notice() == nullptr);
+    ImprovementsDialog back(windowed(), r.services(), running(Backend::OpenGL, tt2::RendererPref::Auto));
+    back.press("BUTTON_RENDERER_NEXT");
+    back.press("BUTTON_RENDERER_PREV");                                  // changed back to Auto
+    ASSERT_TRUE(back.press("BUTTON_OK") == ImprovementsDialog::Result::Ok);
+    ASSERT_TRUE(back.notice() == nullptr);
+}
+
+TEST(improvements_no_notice_for_the_renderer_already_running) {
+    // --renderer software over a saved Vulkan: picking Software changes the
+    // file, but this run already uses it, so nothing waits for a restart.
+    Rig r;
+    tt2::Improvements saved;
+    saved.renderer = tt2::RendererPref::Vulkan;
+    ImprovementsDialog d(saved, r.services(), running(Backend::Software, tt2::RendererPref::Software));
+    d.press("BUTTON_RENDERER_NEXT");                                     // OpenGL
+    d.press("BUTTON_RENDERER_NEXT");                                     // Software
+    ASSERT_TRUE(!d.restart_needed());
+    ASSERT_TRUE(d.press("BUTTON_OK") == ImprovementsDialog::Result::Ok);
+    ASSERT_TRUE(d.notice() == nullptr);
 }
 
 TEST(improvements_renderer_cancel_restores_the_saved_choice) {
@@ -325,7 +394,9 @@ TEST(improvements_resolution_row_greys_out_in_borderless) {
     d.press("BUTTON_WINDOW_NEXT");                                         // Borderless
     ASSERT_EQ(value(d, "RESOLUTION"), std::string("1920x1080"));           // the desktop size (Q5)
     ASSERT_TRUE(!d.row("RESOLUTION")->enabled);
-    ASSERT_TRUE(d.dialog().label("REASON_RESOLUTION")->visible);
+    ASSERT_TRUE(!d.dialog().label("REASON_RESOLUTION")->visible);          // one line: no remark
+    ASSERT_TRUE(!d.dialog().label("NOTE_RESOLUTION")->visible);
+    ASSERT_TRUE(!d.dialog().button("BUTTON_RESOLUTION_NEXT")->enabled);
     d.press("BUTTON_RESOLUTION_NEXT");                                     // does nothing
     ASSERT_TRUE(d.values().resolution == (Resolution{1280, 720}));         // kept for a later window
 }
