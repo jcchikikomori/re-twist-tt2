@@ -22,19 +22,24 @@ ships only procedural placeholders.
 - **Language:** C++17 (GCC 9+, Clang 10+ or MSVC 19.20+).
 - **Build:** CMake 3.16+.
 - **Engine:** header-only, standard library only. No third-party code.
-- **Desktop UI:** SDL2 (2.0.10+), SDL2_image and SDL2_mixer. When they are missing, CMake skips the
-  UI and still builds the engine, the tools and the tests (`-DTT2_BUILD_UI=OFF` skips it on
-  purpose).
+- **Desktop UI:** SDL3 (3.2+), SDL3_image and SDL3_mixer. `-DTT2_FETCH_SDL3=ON` downloads and builds
+  the pinned releases (SDL 3.4.18, SDL_image 3.4.8, SDL_mixer 3.2.4) for distros that don't package
+  them yet. When they are missing, CMake skips the UI and still builds the engine, the tools and the
+  tests (`-DTT2_BUILD_UI=OFF` skips it on purpose).
 - **Reverse engineering:** [REA](https://github.com/morluto/rea) and Ghidra, against a locally
   owned install. Nothing from that install is committed.
 
 ## Quick start
 
 ```bash
-# Debian / Ubuntu: the UI dependencies (skip for an engine-only build)
-sudo apt install libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev
+# Debian / Ubuntu: the headers SDL3 needs to build its video and audio backends
+# (skip for an engine-only build)
+sudo apt install cmake g++ pkg-config libasound2-dev libpulse-dev libpipewire-0.3-dev \
+  libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
+  libxtst-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl1-mesa-dev libgl1-mesa-dev \
+  libgles2-mesa-dev libdrm-dev libgbm-dev libdbus-1-dev libibus-1.0-dev libudev-dev
 
-cmake -S . -B build
+cmake -S . -B build -DTT2_FETCH_SDL3=ON        # or drop the flag to use an installed SDL3
 cmake --build build -j
 ctest --test-dir build --output-on-failure    # engine + headless UI tests
 
@@ -161,7 +166,7 @@ tick **Unblock**.
 │   ├── include/tt2ui/        # headless scene model: sprites, modifiers, welcome flow,
 │   │                         #   bitmap fonts, profile dialogs, game scene and its dialogs,
 │   │                         #   HOW TO PLAY, SETTINGS, the asset import and its prompt
-│   ├── src/main.cpp          # the SDL2 front end (the only file that touches SDL)
+│   ├── src/main.cpp          # the SDL3 front end; audio.cpp plays sounds through SDL3_mixer
 │   └── tests/                # headless UI tests
 ├── src/main.cpp              # engine driver / smoke test
 ├── tools/tree_cli.cpp        # tt2-tree dictionary tool
@@ -186,7 +191,7 @@ tick **Unblock**.
    without a window.
 2. **`ui/include/tt2ui/`** is the scene model: where each sprite sits, how it animates, and what a
    click or keypress does. It is also SDL-free, which is why the UI tests run headless.
-3. **`ui/src/main.cpp`** is a thin SDL2 layer. It loads images, sounds and fonts, feeds input and
+3. **`ui/src/main.cpp`** is a thin SDL3 layer. It loads images, sounds and fonts, feeds input and
    time into the scene model, and draws whatever sprites the model reports.
 4. **`docs/reverse-engineering/`** is the source of truth for every constant. Each behaviour cites
    the address in the original exe it was read from, or is marked as observed or unconfirmed.

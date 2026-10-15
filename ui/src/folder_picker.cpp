@@ -1,6 +1,6 @@
 #include "folder_picker.hpp"
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include <filesystem>
 #include <system_error>

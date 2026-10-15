@@ -58,7 +58,7 @@ inline constexpr Section RECREATION[] = {
     {"Made possible by", "Claude (Anthropic)"},
     {"Compiled by", "John Cyrill Corsanes"},
     {"Word lists", "ENABLE2k (public domain)\nFrequencyWords by Hermit Dave (CC BY-SA 4.0)"},
-    {"Built with", "SDL2, SDL2_image and SDL2_mixer"},
+    {"Built with", "SDL3, SDL3_image and SDL3_mixer"},
 };
 inline constexpr const char* RECREATION_MESSAGE = "A fan recreation of Text Twist 2,\nnot affiliated with GameHouse, Inc.";
 inline constexpr const char* VERSION_PREFIX = "VERSION ";

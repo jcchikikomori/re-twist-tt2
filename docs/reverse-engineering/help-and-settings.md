@@ -240,7 +240,7 @@ CMake project version) and OK, over two pages.
   `fallback_for` names the sprite it stands in for).
 - **Page 2 is this recreation.** Deliberate deviation: a second page, reached with NEXT (the help
   dialog's PREV/NEXT art at (580, 535)) and crossfaded with `HelpPager` over 200 ms, credits Claude
-  (Anthropic), who generated the code, the person who compiled it, the open word lists and SDL2,
+  (Anthropic), who generated the code, the person who compiled it, the open word lists and SDL3,
   and its `MESSAGE` says the port is not affiliated with GameHouse.
 
 INFERRED: a child sprite's offset scales with its parent, and the logo parts show frame 0.

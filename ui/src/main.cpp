@@ -1,4 +1,4 @@
-// SDL2 front end for the welcome flow (splash -> loading -> main menu)
+// SDL3 front end for the welcome flow (splash -> loading -> main menu)
 // and the player-profile dialogs.
 //
 // Assets: the repository ships none of the original art. The player
@@ -20,13 +20,8 @@
 //   --player NAME      add NAME (if new) and make it current before the
 //                      window opens; for smoke tests and frame dumps
 
-#include <SDL.h>
-#include <SDL_image.h>
-#include <SDL_mixer.h>
-
-#if !SDL_VERSION_ATLEAST(2, 0, 10)
-#error "tt2 needs SDL 2.0.10 or newer (float rects for SDL_RenderCopyExF)"
-#endif
+#include <SDL3/SDL.h>
+#include <SDL3_image/SDL_image.h>
 
 #include <algorithm>
 #include <cctype>
@@ -57,6 +52,7 @@
 #include "tt2ui/import_prompt.hpp"
 #include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/profile_dialogs.hpp"
+#include "audio.hpp"
 #include "folder_picker.hpp"
 #include "tt2ui/welcome_flow.hpp"
 
@@ -237,8 +233,8 @@ constexpr int FRAME_BOTTOM_H = 53;
 // UTF-8 paths on every OS: std::fopen takes the ANSI code page on
 // Windows, so an asset folder under C:\Users\José looked empty.
 bool file_exists(const std::string& path) {
-    if (SDL_RWops* f = SDL_RWFromFile(path.c_str(), "rb")) {
-        SDL_RWclose(f);
+    if (SDL_IOStream* f = SDL_IOFromFile(path.c_str(), "rb")) {
+        SDL_CloseIO(f);
         return true;
     }
     return false;
@@ -283,7 +279,7 @@ void paint_pearl(SDL_Surface* s, SDL_Rect cell, int f) {
             const float spec = std::pow(std::max(0.0f, lam), 24.0f);
             const float shade = 0.60f + 0.40f * lam;
             auto ch = [&](float base) { return static_cast<Uint8>(std::min(255.0f, base * shade + 255.0f * spec * 0.6f)); };
-            px[y * pitch + x] = SDL_MapRGBA(s->format, ch(236), ch(238), ch(246), static_cast<Uint8>(255 * edge));
+            px[y * pitch + x] = SDL_MapSurfaceRGBA(s, ch(236), ch(238), ch(246), static_cast<Uint8>(255 * edge));
         }
     }
 }
@@ -298,14 +294,14 @@ void paint_letter_box(SDL_Surface* s, SDL_Rect cell, int f) {
     for (int y = cell.y; y < cell.y + cell.h; ++y)
         for (int x = cell.x; x < cell.x + cell.w; ++x) {
             const float d = std::hypot(x + 0.5f - cx, y + 0.5f - cy);
-            Uint32 c = SDL_MapRGBA(s->format, 0, 0, 0, 0);
+            Uint32 c = SDL_MapSurfaceRGBA(s, 0, 0, 0, 0);
             if (f == 1) {
-                if (d <= 14.0f) c = SDL_MapRGBA(s->format, 0xf7, 0xb8, 0x10, 255);
+                if (d <= 14.0f) c = SDL_MapSurfaceRGBA(s, 0xf7, 0xb8, 0x10, 255);
             } else {
                 const bool rim = x - cell.x < 2 || y - cell.y < 2 || cell.x + cell.w - x <= 2 || cell.y + cell.h - y <= 2;
-                if (rim) c = SDL_MapRGBA(s->format, 0x7f, 0x9a, 0xdc, 255);
-                else if (d <= 29.0f) c = SDL_MapRGBA(s->format, 0x0c, 0x2c, 0x8c, 255);
-                else c = SDL_MapRGBA(s->format, 0x15, 0x54, 0xdc, 255);
+                if (rim) c = SDL_MapSurfaceRGBA(s, 0x7f, 0x9a, 0xdc, 255);
+                else if (d <= 29.0f) c = SDL_MapSurfaceRGBA(s, 0x0c, 0x2c, 0x8c, 255);
+                else c = SDL_MapSurfaceRGBA(s, 0x15, 0x54, 0xdc, 255);
             }
             px[y * pitch + x] = c;
         }
@@ -322,7 +318,7 @@ void paint_burst(SDL_Surface* s, SDL_Rect cell, int f) {
         for (int x = cell.x; x < cell.x + cell.w; ++x) {
             const float d = std::hypot(x + 0.5f - cx, y + 0.5f - cy) / r;
             const float a = d >= 1.0f ? 0.0f : (1.0f - d) * (1.0f - d) * 0.8f;
-            px[y * pitch + x] = SDL_MapRGBA(s->format, 255, 255, 255, static_cast<Uint8>(255 * a));
+            px[y * pitch + x] = SDL_MapSurfaceRGBA(s, 255, 255, 255, static_cast<Uint8>(255 * a));
         }
 }
 
@@ -330,8 +326,7 @@ void paint_burst(SDL_Surface* s, SDL_Rect cell, int f) {
 // gold) with new geometry. Each frame of a sheet gets a slightly
 // different shade so animations stay visible.
 SDL_Surface* make_placeholder(const SheetSpec& spec) {
-    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, spec.sheet_w(), spec.sheet_h(), 32,
-                                                    SDL_PIXELFORMAT_RGBA32);
+    SDL_Surface* s = SDL_CreateSurface(spec.sheet_w(), spec.sheet_h(), SDL_PIXELFORMAT_RGBA32);
     if (!s) return nullptr;
     const bool full_screen = spec.frame_w == SCREEN_W && spec.frame_h == SCREEN_H;
     Uint8 r = 0x15, g = 0x54, b = 0xdc;
@@ -357,7 +352,7 @@ SDL_Surface* make_placeholder(const SheetSpec& spec) {
 
     if (spec.image_id == "IMAGE_LETTERBALL_ANIM" || spec.image_id == "IMAGE_BURST" || spec.image_id == "LetterBox" ||
         spec.image_id == "IMAGE_PARTICLEBALL") {
-        SDL_FillRect(s, nullptr, SDL_MapRGBA(s->format, 0, 0, 0, 0));
+        SDL_FillSurfaceRect(s, nullptr, SDL_MapSurfaceRGBA(s, 0, 0, 0, 0));
         for (int f = 0; f < spec.frames; ++f) {
             SDL_Rect cell{spec.frame_x(f), spec.frame_y(f), spec.frame_w, spec.frame_h};
             if (spec.image_id == "IMAGE_BURST") paint_burst(s, cell, f);
@@ -374,14 +369,14 @@ SDL_Surface* make_placeholder(const SheetSpec& spec) {
         if (spec.image_id == "SMALL_LETTERS" || spec.image_id == "SMALL_LETTERS_UNGUESSED") a = 0;   // text drawn instead
         if (spec.image_id == "ANAGRAM_TILE" && f == 1) { r = 0xf7; g = 0xde; b = 0x2b; }           // revealed = yellow
         auto clamp = [](int v) { return static_cast<Uint8>(v > 255 ? 255 : (v < 0 ? 0 : v)); };
-        SDL_FillRect(s, &cell, SDL_MapRGBA(s->format, clamp(r + shade), clamp(g + shade), clamp(b + shade), a));
+        SDL_FillSurfaceRect(s, &cell, SDL_MapSurfaceRGBA(s, clamp(r + shade), clamp(g + shade), clamp(b + shade), a));
         const bool bordered = !full_screen && a != 0 && spec.frame_w > 4 && spec.frame_h > 4 &&
                               spec.image_id.rfind("IMAGE_PANEL", 0) != 0;
         if (bordered) {
             // 2 px gold border so the frame edges are visible.
             SDL_Rect edge[4] = {{cell.x, cell.y, cell.w, 2}, {cell.x, cell.y + cell.h - 2, cell.w, 2},
                                 {cell.x, cell.y, 2, cell.h}, {cell.x + cell.w - 2, cell.y, 2, cell.h}};
-            for (auto& e : edge) SDL_FillRect(s, &e, SDL_MapRGBA(s->format, 0xf3, 0xa8, 0x04, 255));
+            for (auto& e : edge) SDL_FillSurfaceRect(s, &e, SDL_MapSurfaceRGBA(s, 0xf3, 0xa8, 0x04, 255));
         }
     }
     return s;
@@ -390,10 +385,10 @@ SDL_Surface* make_placeholder(const SheetSpec& spec) {
 // The placeholder font sheet: 5x5 cells painted white, one row.
 SDL_Surface* make_placeholder_font_sheet(int scale) {
     const int n = static_cast<int>(std::strlen(PLACEHOLDER_CHARS));
-    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, n * (PLACEHOLDER_GLYPH_W + 1) * scale,
-                                                    PLACEHOLDER_GLYPH_H * scale, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Surface* s = SDL_CreateSurface(n * (PLACEHOLDER_GLYPH_W + 1) * scale, PLACEHOLDER_GLYPH_H * scale,
+                                       SDL_PIXELFORMAT_RGBA32);
     if (!s) return nullptr;
-    SDL_FillRect(s, nullptr, SDL_MapRGBA(s->format, 0, 0, 0, 0));
+    SDL_FillSurfaceRect(s, nullptr, SDL_MapSurfaceRGBA(s, 0, 0, 0, 0));
     for (int i = 0; i < n; ++i) {
         const char* rows = placeholder_glyph_rows(static_cast<std::uint32_t>(PLACEHOLDER_CHARS[i]));
         if (!rows) continue;
@@ -401,10 +396,53 @@ SDL_Surface* make_placeholder_font_sheet(int scale) {
             for (int x = 0; x < PLACEHOLDER_GLYPH_W; ++x)
                 if (rows[y * PLACEHOLDER_GLYPH_W + x] == '#') {
                     SDL_Rect px{(i * (PLACEHOLDER_GLYPH_W + 1) + x) * scale, y * scale, scale, scale};
-                    SDL_FillRect(s, &px, SDL_MapRGBA(s->format, 0xff, 0xff, 0xff, 0xff));
+                    SDL_FillSurfaceRect(s, &px, SDL_MapSurfaceRGBA(s, 0xff, 0xff, 0xff, 0xff));
                 }
     }
     return s;
+}
+
+// SDL3 samples textures linearly by default; SDL2 (and the original's
+// unscaled 800x600) drew them pixel for pixel, so ask for nearest.
+SDL_Texture* nearest(SDL_Texture* t) {
+    if (t) SDL_SetTextureScaleMode(t, SDL_SCALEMODE_NEAREST);
+    return t;
+}
+
+// A texture holding the surface's pixels. On the software renderer it is a
+// streaming texture: SDL 3.4.18 run-length encodes static textures there,
+// and its RLE blitter writes opaque alpha into a render target, which drew
+// every dialog shadow solid black inside the fade layers (draw_dialog_layer).
+SDL_Texture* upload(SDL_Renderer* ren, SDL_Surface* s) {
+    if (!s) return nullptr;
+    const char* name = SDL_GetRendererName(ren);
+    if (!name || std::strcmp(name, SDL_SOFTWARE_RENDERER) != 0) return nearest(SDL_CreateTextureFromSurface(ren, s));
+    SDL_Surface* rgba = s->format == SDL_PIXELFORMAT_RGBA32 ? s : SDL_ConvertSurface(s, SDL_PIXELFORMAT_RGBA32);
+    if (!rgba) return nullptr;
+    SDL_Texture* t = SDL_CreateTexture(ren, rgba->format, SDL_TEXTUREACCESS_STREAMING, rgba->w, rgba->h);
+    if (t && !SDL_UpdateTexture(t, nullptr, rgba->pixels, rgba->pitch)) {
+        SDL_DestroyTexture(t);
+        t = nullptr;
+    }
+    if (rgba != s) SDL_DestroySurface(rgba);
+    return nearest(t);
+}
+
+// SDL3 draws with float rects only; the frame code keeps its whole pixels.
+SDL_FRect frect(const SDL_Rect& r) {
+    return SDL_FRect{static_cast<float>(r.x), static_cast<float>(r.y), static_cast<float>(r.w), static_cast<float>(r.h)};
+}
+void render_copy(SDL_Renderer* ren, SDL_Texture* t, const SDL_Rect* src, const SDL_Rect* dst) {
+    const SDL_FRect s = src ? frect(*src) : SDL_FRect{}, d = dst ? frect(*dst) : SDL_FRect{};
+    SDL_RenderTexture(ren, t, src ? &s : nullptr, dst ? &d : nullptr);
+}
+void render_fill(SDL_Renderer* ren, const SDL_Rect* r) {
+    const SDL_FRect f = frect(*r);
+    SDL_RenderFillRect(ren, &f);
+}
+void render_outline(SDL_Renderer* ren, const SDL_Rect* r) {
+    const SDL_FRect f = frect(*r);
+    SDL_RenderRect(ren, &f);
 }
 
 struct Image {
@@ -439,18 +477,19 @@ public:
     }
 
     // Frees every texture, sound and song. main() calls it before
-    // Mix_CloseAudio and SDL_DestroyRenderer: the renderer frees its own
+    // AudioOut::close and SDL_DestroyRenderer: the renderer frees its own
     // textures, so destroying them afterwards (from ~Assets at the end of
     // main) read freed memory and crashed the Windows Release build.
     void release() {
         for (auto& [k, img] : images_) {
             if (img.texture) SDL_DestroyTexture(img.texture);
-            if (img.surface) SDL_FreeSurface(img.surface);
+            if (img.surface) SDL_DestroySurface(img.surface);
         }
         for (auto& [k, f] : fonts_)
             for (SDL_Texture* t : f.layers) if (t) SDL_DestroyTexture(t);
-        for (auto& [k, m] : music_) Mix_FreeMusic(m);
-        for (auto& [k, c] : chunks_) Mix_FreeChunk(c);
+        if (audio_) audio_->stop_all();   // the tracks let go of the files
+        for (auto& [k, m] : music_) AudioOut::free_clip(m);
+        for (auto& [k, c] : chunks_) AudioOut::free_clip(c);
         images_.clear();
         fonts_.clear();
         music_.clear();
@@ -472,7 +511,7 @@ public:
                         std::fprintf(stderr, "warning: %s is %dx%d, sheet spec says %dx%d\n", path.c_str(),
                                      img.surface->w, img.surface->h, spec.sheet_w(), spec.sheet_h());
                 } else {
-                    std::fprintf(stderr, "IMG_Load(%s): %s\n", path.c_str(), IMG_GetError());
+                    std::fprintf(stderr, "IMG_Load(%s): %s\n", path.c_str(), SDL_GetError());
                 }
             }
         }
@@ -499,82 +538,78 @@ public:
                 SDL_Surface* s = file_exists(path) ? IMG_Load(path.c_str()) : nullptr;
                 if (!s) std::fprintf(stderr, "warning: font layer %s missing\n", path.c_str());
                 f.layers.push_back(texture_of(s));
-                if (s) SDL_FreeSurface(s);
+                if (s) SDL_DestroySurface(s);
             }
         } else {
             f.font = make_placeholder_font(scale);
             SDL_Surface* s = make_placeholder_font_sheet(scale);
             f.layers.push_back(texture_of(s));
-            if (s) SDL_FreeSurface(s);
+            if (s) SDL_DestroySurface(s);
         }
         return fonts_.emplace(id, f).first->second;
     }
 
     void play_stream(SoundId id) {
         if (!audio_) return;
-        Mix_Music* m = music(id);
+        MIX_Audio* m = music(id);
         if (!m) return;
-        if (current_stream_ == id && Mix_PlayingMusic()) return;   // 0x42b080: keep playing
-        Mix_PlayMusic(m, -1);
-        Mix_VolumeMusic(mixer_volume(music_volume_));
+        if (current_stream_ == id && audio_->music_playing()) return;   // 0x42b080: keep playing
+        audio_->play_music(m);
         current_stream_ = id;
     }
     void play_sound(SoundId id) {
         if (!audio_) return;
         auto it = chunks_.find(id);
         if (it == chunks_.end()) {
-            Mix_Chunk* c = nullptr;
+            MIX_Audio* c = nullptr;
             auto f = kSoundFiles.find(id);
             if (f != kSoundFiles.end()) {
                 const std::string path = in_dir(f->second);
-                if (file_exists(path)) c = Mix_LoadWAV(path.c_str());
+                if (file_exists(path)) c = audio_->load_sound(path);
             }
-            auto v = kSoundVolumes.find(id);
-            if (c && v != kSoundVolumes.end()) Mix_VolumeChunk(c, mixer_volume(v->second));
             it = chunks_.emplace(id, c).first;
         }
-        if (it->second) Mix_PlayChannel(-1, it->second, 0);
+        auto v = kSoundVolumes.find(id);
+        if (it->second) audio_->play_sound(it->second, v != kSoundVolumes.end() ? v->second : 1.0f);
     }
-    void set_audio(bool on) { audio_ = on; }
+    // Null: no audio device, every sound is skipped.
+    void set_audio(AudioOut* out) { audio_ = out; }
     // GameSettings volumes, 0..1, applied at once (0x463db0 / 0x463e30).
-    // INFERRED: a linear map onto SDL_mixer's 0..128.
+    // INFERRED: a linear map onto the mixer's gain (tt2ui/audio_mix.hpp).
     void set_sound_volume(float v) {
-        sound_volume_ = v;
-        if (audio_) Mix_Volume(-1, mixer_volume(v));
+        if (audio_) audio_->set_sound_volume(v);
     }
     void set_music_volume(float v) {
-        music_volume_ = v;
-        if (audio_) Mix_VolumeMusic(mixer_volume(v));
+        if (audio_) audio_->set_music_volume(v);
     }
-    static int mixer_volume(float v) { return static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * MIX_MAX_VOLUME)); }
 
 private:
     Image& store(const std::string& key, Image img) {
         if (img.surface) {
-            SDL_Surface* conv = SDL_ConvertSurfaceFormat(img.surface, SDL_PIXELFORMAT_RGBA32, 0);
+            SDL_Surface* conv = SDL_ConvertSurface(img.surface, SDL_PIXELFORMAT_RGBA32);
             if (conv) {
-                SDL_FreeSurface(img.surface);
+                SDL_DestroySurface(img.surface);
                 img.surface = conv;
             }
-            img.texture = SDL_CreateTextureFromSurface(renderer_, img.surface);
+            img.texture = upload(renderer_, img.surface);
             if (img.texture) SDL_SetTextureBlendMode(img.texture, SDL_BLENDMODE_BLEND);
         }
         return images_.emplace(key, img).first->second;
     }
     SDL_Texture* texture_of(SDL_Surface* s) {
         if (!s) return nullptr;
-        SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
+        SDL_Texture* t = upload(renderer_, s);
         if (t) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
         return t;
     }
-    Mix_Music* music(SoundId id) {
+    MIX_Audio* music(SoundId id) {
         auto it = music_.find(id);
         if (it != music_.end()) return it->second;
-        Mix_Music* m = nullptr;
+        MIX_Audio* m = nullptr;
         auto f = kSoundFiles.find(id);
         if (f != kSoundFiles.end()) {
             const std::string path = in_dir(f->second);
-            if (file_exists(path)) m = Mix_LoadMUS(path.c_str());
+            if (file_exists(path)) m = audio_->load_music(path);
         }
         return music_.emplace(id, m).first->second;
     }
@@ -593,13 +628,11 @@ private:
 
     std::string dir_;
     std::string placeholder_dir_;
-    bool audio_ = false;
-    float sound_volume_ = 0.5f;
-    float music_volume_ = 0.5f;
+    AudioOut* audio_ = nullptr;
     std::map<std::string, Image> images_;
     std::map<std::string, Font> fonts_;
-    std::map<SoundId, Mix_Music*> music_;
-    std::map<SoundId, Mix_Chunk*> chunks_;
+    std::map<SoundId, MIX_Audio*> music_;
+    std::map<SoundId, MIX_Audio*> chunks_;
     SoundId current_stream_ = SoundId::Button;
 };
 
@@ -609,10 +642,8 @@ Uint8 pixel_alpha(const Image& img, const SpriteState& s, float px, float py) {
     const int lx = static_cast<int>(px - s.left()) + s.sheet.frame_x(s.frame);
     const int ly = static_cast<int>(py - s.top()) + s.sheet.frame_y(s.frame);
     if (lx < 0 || ly < 0 || lx >= img.surface->w || ly >= img.surface->h) return 0;
-    const Uint32* row = reinterpret_cast<const Uint32*>(
-        static_cast<const Uint8*>(img.surface->pixels) + ly * img.surface->pitch);
-    Uint8 r, g, b, a;
-    SDL_GetRGBA(row[lx], img.surface->format, &r, &g, &b, &a);
+    Uint8 r = 0, g = 0, b = 0, a = 0;
+    if (!SDL_ReadSurfacePixel(img.surface, lx, ly, &r, &g, &b, &a)) return 255;
     return a;
 }
 
@@ -629,7 +660,7 @@ void draw_sprite(SDL_Renderer* ren, Assets& assets, const SpriteState& s, float 
         SDL_SetRenderDrawColor(ren, 0, 0, 0, static_cast<Uint8>(s.alpha * 255));
         SDL_FRect dst{s.left() + ox, s.top() + oy, static_cast<float>(s.sheet.frame_w),
                       static_cast<float>(s.sheet.frame_h)};
-        SDL_RenderFillRectF(ren, &dst);
+        SDL_RenderFillRect(ren, &dst);
         return;
     }
     Image& img = assets.image(s.sheet);
@@ -663,7 +694,8 @@ void draw_sprite(SDL_Renderer* ren, Assets& assets, const SpriteState& s, float 
     SDL_SetTextureAlphaMod(img.texture, static_cast<Uint8>(s.alpha * 255));
     SDL_SetTextureColorMod(img.texture, (s.tint >> 16) & 0xFF, (s.tint >> 8) & 0xFF, s.tint & 0xFF);
     SDL_SetTextureBlendMode(img.texture, s.additive ? SDL_BLENDMODE_ADD : SDL_BLENDMODE_BLEND);
-    SDL_RenderCopyExF(ren, img.texture, &src, &dst, 0.0, nullptr, static_cast<SDL_RendererFlip>(flip));
+    const SDL_FRect srcf = frect(src);
+    SDL_RenderTextureRotated(ren, img.texture, &srcf, &dst, 0.0, nullptr, static_cast<SDL_FlipMode>(flip));
     SDL_SetTextureColorMod(img.texture, 255, 255, 255);
     SDL_SetTextureBlendMode(img.texture, SDL_BLENDMODE_BLEND);
 }
@@ -687,7 +719,7 @@ SDL_Rect draw_text(SDL_Renderer* ren, Assets& assets, const std::string& font_id
             const auto r = f.font.layer_rect(*p.glyph, li, left + p.x, top);
             SDL_Rect src{r.sx, r.sy, r.w, r.h};
             SDL_Rect dst{r.dx, r.dy, r.w, r.h};
-            SDL_RenderCopy(ren, tex, &src, &dst);
+            render_copy(ren, tex, &src, &dst);
         }
     }
     return SDL_Rect{left, top, width, height};
@@ -704,14 +736,14 @@ void draw_dialog_frame(SDL_Renderer* ren, Assets& assets, const Dialog& d) {
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         SDL_Rect body{x, y, d.w, d.h};
         SDL_SetRenderDrawColor(ren, 0x08, 0x2a, 0x8e, 0xf2);
-        SDL_RenderFillRect(ren, &body);
+        render_fill(ren, &body);
         SDL_Rect head{x, y, d.w, 56};                     // offsettop
         SDL_SetRenderDrawColor(ren, 0x03, 0x1c, 0x66, 0xff);
-        SDL_RenderFillRect(ren, &head);
+        render_fill(ren, &head);
         SDL_SetRenderDrawColor(ren, 0xf3, 0xa8, 0x04, 0xff);
         for (int i = 0; i < 3; ++i) {
             SDL_Rect edge{x + i, y + i, d.w - 2 * i, d.h - 2 * i};
-            SDL_RenderDrawRect(ren, &edge);
+            render_outline(ren, &edge);
         }
         return;
     }
@@ -722,7 +754,7 @@ void draw_dialog_frame(SDL_Renderer* ren, Assets& assets, const Dialog& d) {
         if (std::strcmp(id, "BORDER_CENTER") == 0) { src.w = dw; src.h = dh; }
         SDL_Rect dst{dx, dy, dw, dh};
         SDL_SetTextureAlphaMod(img.texture, 255);
-        SDL_RenderCopy(ren, img.texture, &src, &dst);
+        render_copy(ren, img.texture, &src, &dst);
     };
     // Centre first so the ornate borders overlap it. The borders fade to
     // transparent on their inner side, so the fill runs under the whole
@@ -805,7 +837,7 @@ void draw_dialog(SDL_Renderer* ren, Assets& assets, const Dialog& d, const std::
                 SDL_SetRenderDrawColor(ren, 0xff, 0xd0, 0x40, 0xff);
                 SDL_Rect dot{static_cast<int>(b.sprite.left() + ox) + 6, static_cast<int>(b.sprite.top() + oy) + 6,
                              b.sprite.sheet.frame_w - 12, b.sprite.sheet.frame_h - 12};
-                SDL_RenderFillRect(ren, &dot);
+                render_fill(ren, &dot);
             }
             continue;
         }
@@ -874,7 +906,7 @@ void draw_stretched(SDL_Renderer* ren, Assets& assets, const char* id, int w, in
     Image& img = assets.image(sheet(id, w, h));
     if (!img.texture) return;
     SDL_SetTextureAlphaMod(img.texture, 255);
-    SDL_RenderCopy(ren, img.texture, nullptr, &dst);
+    render_copy(ren, img.texture, nullptr, &dst);
 }
 
 void draw_text_lines(SDL_Renderer* ren, Assets& assets, const std::string& font_id, const std::string& text,
@@ -1057,16 +1089,14 @@ struct DialogLayer {
 };
 
 SDL_Texture* layer_texture(SDL_Renderer* ren) {
-    SDL_Texture* t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H);
+    SDL_Texture* t = nearest(
+        SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H));
     if (!t) return nullptr;
     // The layer holds premultiplied colour (drawn with BLEND onto a clear
-    // target), so it is composited with ONE / ONE_MINUS_SRC_ALPHA. Renderers
-    // without custom blend modes (the software one) fall back to BLEND,
-    // which only darkens soft edges a little while fading.
-    const SDL_BlendMode premultiplied = SDL_ComposeCustomBlendMode(
-        SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD,
-        SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD);
-    if (SDL_SetTextureBlendMode(t, premultiplied) != 0) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+    // target), so it is composited with ONE / ONE_MINUS_SRC_ALPHA. A
+    // renderer that refuses it falls back to BLEND, which only darkens soft
+    // edges a little while fading.
+    if (!SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND_PREMULTIPLIED)) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
     return t;
 }
 
@@ -1075,7 +1105,7 @@ void composite_layer(SDL_Renderer* ren, SDL_Texture* t, float alpha) {
     const Uint8 m = color_byte(alpha);
     SDL_SetTextureColorMod(t, m, m, m);   // premultiplied: colour fades with alpha
     SDL_SetTextureAlphaMod(t, m);
-    SDL_RenderCopy(ren, t, nullptr, nullptr);
+    render_copy(ren, t, nullptr, nullptr);
 }
 
 // `id` names the dialog open in this slot now (0 = none); `draw` paints it.
@@ -1089,11 +1119,11 @@ void draw_dialog_layer(SDL_Renderer* ren, DialogLayer& layer, int id, int dt_ms,
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(ren, dark.r, dark.g, dark.b, dark.a);
     SDL_Rect all{0, 0, SCREEN_W, SCREEN_H};
-    SDL_RenderFillRect(ren, &all);
+    render_fill(ren, &all);
     if (layer.fade.closing()) composite_layer(ren, layer.frozen, layer.fade.closing_alpha());
     if (layer.fade.open_id() == 0) return;
     if (!layer.live) layer.live = layer_texture(ren);
-    if (!layer.live || SDL_SetRenderTarget(ren, layer.live) != 0) {
+    if (!layer.live || !SDL_SetRenderTarget(ren, layer.live)) {
         draw();   // no render targets: draw straight to the screen, unfaded
         return;
     }
@@ -1180,10 +1210,7 @@ int main(int argc, char** argv) {
     // build falls back to TT2_DATA_DIR.
     if (!data_dir_given) {
         std::string exe_dir;
-        if (char* base = SDL_GetBasePath()) {
-            exe_dir = base;
-            SDL_free(base);
-        }
+        if (const char* base = SDL_GetBasePath()) exe_dir = base;
         data_dir = tt2ui::pick_data_dir(tt2ui::data_dir_candidates(exe_dir, data_dir), [](const std::string& d) {
             std::error_code ec;
             return std::filesystem::exists(std::filesystem::path(d) / "open-common.tree", ec) ||
@@ -1285,21 +1312,28 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "warning: %s is unreadable; using the default settings\n",
                      store.settings_path().string().c_str());
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) != 0) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
-    IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG);
-    SDL_Window* win = SDL_CreateWindow("Text Twist 2", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                       SCREEN_W, SCREEN_H,
-                                       SDL_WINDOW_SHOWN | (settings.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
+    // SDL3's fullscreen flag is the desktop-sized borderless mode, as
+    // SDL2's FULLSCREEN_DESKTOP was.
+    SDL_Window* win = SDL_CreateWindow("Text Twist 2", SCREEN_W, SCREEN_H, settings.fullscreen ? SDL_WINDOW_FULLSCREEN : 0);
     if (!win) {
         std::fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
         return 1;
     }
-    SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
-    SDL_RenderSetLogicalSize(ren, SCREEN_W, SCREEN_H);
+    SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    // Deviation (UX-1, display-and-timing.md §2): the original renders with
+    // Direct3D 9 only; SDL picks its best renderer for this platform here.
+    SDL_Renderer* ren = SDL_CreateRenderer(win, nullptr);
+    if (!ren) {
+        std::fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
+        return 1;
+    }
+    if (!SDL_SetRenderVSync(ren, 1)) std::fprintf(stderr, "warning: no vsync: %s\n", SDL_GetError());
+    SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    std::printf("renderer: %s\n", SDL_GetRendererName(ren));
     // One fading dialog slot per dialog source, drawn in this order.
     DialogLayer game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
         menu_credits_layer, profile_layer, import_layer;
@@ -1308,8 +1342,8 @@ int main(int argc, char** argv) {
     // screen, arrow everywhere else. The original's cursor handling
     // is not decoded; this uses the platform cursors (no game assets
     // involved).
-    SDL_Cursor* cursor_arrow = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
-    SDL_Cursor* cursor_hand = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+    SDL_Cursor* cursor_arrow = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
+    SDL_Cursor* cursor_hand = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
     SDL_Cursor* cursor_wait = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_WAIT);
     bool cursor_hot = false;
     bool cursor_busy = false;
@@ -1318,9 +1352,9 @@ int main(int argc, char** argv) {
     assets.set_placeholder_dir(data_dir + "/placeholder");
     std::printf("placeholders: %s/placeholder%s\n", data_dir.c_str(),
                 file_exists(data_dir + "/placeholder/fonts/font_settingstext.xml") ? "" : " (missing)");
-    const bool audio = Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) == 0;
-    if (audio) Mix_Init(MIX_INIT_OGG);
-    assets.set_audio(audio);
+    AudioOut audio_out;
+    const bool audio = audio_out.open();
+    assets.set_audio(audio ? &audio_out : nullptr);
     assets.set_sound_volume(settings.sound_volume);
     assets.set_music_volume(settings.music_volume);
     // DIALOG_SETTINGS, from the pause menu and the main menu.
@@ -1330,7 +1364,7 @@ int main(int argc, char** argv) {
     settings_host.apply_music_volume = [&](float v) { assets.set_music_volume(v); };
     settings_host.commit = [&](const tt2::GameSettings& g) {
         if (g.fullscreen != settings.fullscreen)
-            SDL_SetWindowFullscreen(win, g.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+            SDL_SetWindowFullscreen(win, g.fullscreen);
         settings = g;
         std::printf("settings: sound %.2f, music %.2f, %s\n", settings.sound_volume, settings.music_volume,
                     settings.fullscreen ? "fullscreen" : "windowed");
@@ -1476,7 +1510,7 @@ int main(int argc, char** argv) {
     // (WSL's /mnt/c) can still stall on a single file open.
     import_services.step_job = [&](std::size_t budget) {
         if (!import_job) return;
-        const Uint32 start = SDL_GetTicks();
+        const Uint64 start = SDL_GetTicks();
         for (std::size_t done = 0; !import_job->finished() && done < budget && SDL_GetTicks() - start < 12;
              done += 64 * 1024)
             import_job->step(64 * 1024);
@@ -1553,9 +1587,7 @@ int main(int argc, char** argv) {
             // should pop up from a smoke test.
             const char* driver = SDL_GetCurrentVideoDriver();
             const bool headless = driver && !std::strcmp(driver, "dummy");
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-            if (!headless && SDL_OpenURL(url.c_str()) == 0) return;
-#endif
+            if (!headless && SDL_OpenURL(url.c_str())) return;
             std::printf("game: look up %s\n", url.c_str());
         };
         gs.wrap_text = wrap_message;
@@ -1588,7 +1620,7 @@ int main(int argc, char** argv) {
         return pixel_alpha(img, b.sprite, px, py) > b.hit_threshold;
     };
 
-    Uint32 last = SDL_GetTicks();
+    Uint64 last = SDL_GetTicks();
     int dump_accum_ms = 0;
     int dump_index = 0;
     bool text_input_on = false;
@@ -1597,37 +1629,40 @@ int main(int argc, char** argv) {
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) {
+            // Mouse positions in the 800x600 canvas, whatever the window size
+            // (SDL2's logical size did this on its own).
+            SDL_ConvertEventToRenderCoordinates(ren, &e);
+            if (e.type == SDL_EVENT_QUIT) {
                 running = false;
                 if (game) game->leave();   // 0x427b20: closing the window saves a running round
             }
-            if (game && e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) game->focus_lost();
+            if (game && e.type == SDL_EVENT_WINDOW_FOCUS_LOST) game->focus_lost();
             // Before any routing, so Alt+Enter (and its auto-repeat) never
             // submits a word or presses OK.
-            if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_ALT) &&
-                (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER)) {
-                if (is_fullscreen_shortcut(true, true, e.key.repeat != 0)) toggle_fullscreen();
+            if (e.type == SDL_EVENT_KEY_DOWN && (e.key.mod & SDL_KMOD_ALT) &&
+                (e.key.key == SDLK_RETURN || e.key.key == SDLK_KP_ENTER)) {
+                if (is_fullscreen_shortcut(true, true, e.key.repeat)) toggle_fullscreen();
                 continue;
             }
             if (import_prompt) {
                 // The missing-assets prompt is modal, above everything else.
-                if (e.type == SDL_KEYDOWN) {
-                    const auto k = e.key.keysym.sym;
+                if (e.type == SDL_EVENT_KEY_DOWN) {
+                    const auto k = e.key.key;
                     if (k == SDLK_RETURN || k == SDLK_KP_ENTER) import_prompt->key_return();
                     else if (k == SDLK_ESCAPE) import_prompt->key_escape();
                 }
-                if (e.type == SDL_MOUSEMOTION) dialog_mouse_move(import_prompt->dialog(), e.motion.x, e.motion.y);
-                if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_MOTION) dialog_mouse_move(import_prompt->dialog(), e.motion.x, e.motion.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
                     dialog_mouse_down(import_prompt->dialog(), e.button.x, e.button.y);
-                if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
                     import_prompt->press(dialog_mouse_up(import_prompt->dialog(), e.button.x, e.button.y));
                 continue;
             }
             if (profile.open()) {
                 // A dialog is modal: it eats the input.
-                if (e.type == SDL_TEXTINPUT) profile.text_input(e.text.text);
-                if (e.type == SDL_KEYDOWN) {
-                    switch (e.key.keysym.sym) {
+                if (e.type == SDL_EVENT_TEXT_INPUT) profile.text_input(e.text.text);
+                if (e.type == SDL_EVENT_KEY_DOWN) {
+                    switch (e.key.key) {
                         case SDLK_BACKSPACE: profile.backspace(); break;
                         case SDLK_RETURN:
                         case SDLK_KP_ENTER: profile.key_return(); break;
@@ -1635,19 +1670,19 @@ int main(int argc, char** argv) {
                         default: break;
                     }
                 }
-                if (e.type == SDL_MOUSEMOTION) profile.mouse_move(e.motion.x, e.motion.y);
-                if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_MOTION) profile.mouse_move(e.motion.x, e.motion.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
                     profile.mouse_down(e.button.x, e.button.y);
-                if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
                     profile.mouse_up(e.button.x, e.button.y);
                 continue;
             }
             if (game) {
-                if (e.type == SDL_TEXTINPUT) {
+                if (e.type == SDL_EVENT_TEXT_INPUT) {
                     for (const char* c = e.text.text; *c; ++c) game->type_letter(*c);
                 }
-                if (e.type == SDL_KEYDOWN) {
-                    switch (e.key.keysym.sym) {
+                if (e.type == SDL_EVENT_KEY_DOWN) {
+                    switch (e.key.key) {
                         case SDLK_BACKSPACE: game->backspace(); break;
                         case SDLK_RETURN:
                         case SDLK_KP_ENTER: game->key_return(); break;
@@ -1657,58 +1692,58 @@ int main(int argc, char** argv) {
                         default: break;
                     }
                 }
-                if (e.type == SDL_MOUSEMOTION) game->mouse_move(e.motion.x, e.motion.y);
-                if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_MOTION) game->mouse_move(e.motion.x, e.motion.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
                     game->mouse_down(e.button.x, e.button.y);
-                if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
                     game->mouse_up(e.button.x, e.button.y);
                 continue;
             }
             if (menu_dialog_open) {
-                if (e.type == SDL_KEYDOWN) {
-                    const auto k = e.key.keysym.sym;
+                if (e.type == SDL_EVENT_KEY_DOWN) {
+                    const auto k = e.key.key;
                     if (k == SDLK_RETURN || k == SDLK_KP_ENTER) menu_dialog_press("BUTTON_YES");
                     else if (k == SDLK_ESCAPE) menu_dialog_open = false;   // INFERRED: cancel
                 }
-                if (e.type == SDL_MOUSEMOTION) dialog_mouse_move(menu_dialog, e.motion.x, e.motion.y);
-                if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_MOTION) dialog_mouse_move(menu_dialog, e.motion.x, e.motion.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
                     dialog_mouse_down(menu_dialog, e.button.x, e.button.y);
-                if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
                     menu_dialog_press(dialog_mouse_up(menu_dialog, e.button.x, e.button.y));
                 continue;
             }
             if (menu_settings) {
                 // Deviation: Esc cancels, Return is OK (the original dialogs take no keys).
-                if (e.type == SDL_KEYDOWN) {
-                    const auto k = e.key.keysym.sym;
+                if (e.type == SDL_EVENT_KEY_DOWN) {
+                    const auto k = e.key.key;
                     if (k == SDLK_ESCAPE) menu_settings_result(menu_settings->press("BUTTON_CANCEL"));
                     else if (k == SDLK_RETURN || k == SDLK_KP_ENTER)
                         menu_settings_result(menu_settings->press("BUTTON_OK"));
                 }
-                if (e.type == SDL_MOUSEMOTION) menu_settings->mouse_move(e.motion.x, e.motion.y);
-                if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_MOTION) menu_settings->mouse_move(e.motion.x, e.motion.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
                     menu_settings->mouse_down(e.button.x, e.button.y);
-                if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
                     menu_settings_result(menu_settings->mouse_up(e.button.x, e.button.y));
                 continue;
             }
             if (menu_help) {
                 // Deviation: Esc closes the help (the original dialogs take no keys).
-                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) menu_help_press("BUTTON_OK");
-                if (e.type == SDL_MOUSEMOTION) dialog_mouse_move(menu_help->dialog(), e.motion.x, e.motion.y);
-                if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) menu_help_press("BUTTON_OK");
+                if (e.type == SDL_EVENT_MOUSE_MOTION) dialog_mouse_move(menu_help->dialog(), e.motion.x, e.motion.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
                     dialog_mouse_down(menu_help->dialog(), e.button.x, e.button.y);
-                if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
                     menu_help_press(dialog_mouse_up(menu_help->dialog(), e.button.x, e.button.y));
                 continue;
             }
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = false;
+            if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) running = false;
             if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0) {
                 auto* menu = flow.selection();
-                if (e.type == SDL_MOUSEMOTION) menu->mouse_move(e.motion.x, e.motion.y, hit);
-                if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_MOTION) menu->mouse_move(e.motion.x, e.motion.y, hit);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
                     menu->mouse_down(e.button.x, e.button.y, hit);
-                if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
                     menu->mouse_up(e.button.x, e.button.y, hit);
             }
         }
@@ -1731,7 +1766,7 @@ int main(int argc, char** argv) {
             cursor_hot = hot;
             SDL_SetCursor(busy ? cursor_wait : (hot ? cursor_hand : cursor_arrow));
         }
-        const Uint32 now = SDL_GetTicks();
+        const Uint64 now = SDL_GetTicks();
         int dt = (fixed_dt > 0 ? fixed_dt : static_cast<int>(now - last)) * speed;
         last = now;
         if (dt > 100) dt = 100;
@@ -1862,7 +1897,7 @@ int main(int argc, char** argv) {
         const bool want_text = profile.wants_text_input() || (game && !profile.open());
         if (want_text != text_input_on) {
             text_input_on = want_text;
-            if (text_input_on) SDL_StartTextInput(); else SDL_StopTextInput();
+            if (text_input_on) SDL_StartTextInput(win); else SDL_StopTextInput(win);
         }
         if (exit_after_ms >= 0 && simulated_ms >= exit_after_ms) running = false;
 
@@ -1926,51 +1961,45 @@ int main(int argc, char** argv) {
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
             SDL_SetRenderDrawColor(ren, 0, 0, 0, static_cast<Uint8>(black * 255));
             SDL_Rect all{0, 0, SCREEN_W, SCREEN_H};
-            SDL_RenderFillRect(ren, &all);
+            render_fill(ren, &all);
         }
         if (!dump_dir.empty()) {
             dump_accum_ms += dt;
             const int period = 1000 / (dump_fps > 0 ? dump_fps : 12);
             if (dump_accum_ms >= period) {
                 dump_accum_ms -= period;
-                // ReadPixels(nullptr) returns the viewport in output pixels: 800x600
-                // windowed, larger once the window is fullscreen and scaled. Read at
-                // the output size, then scale the viewport back to 800x600.
-                int out_w = SCREEN_W, out_h = SCREEN_H;
-                SDL_GetRendererOutputSize(ren, &out_w, &out_h);
-                SDL_Rect view{};
-                float scale_x = 1.0f, scale_y = 1.0f;
-                SDL_RenderGetViewport(ren, &view);
-                SDL_RenderGetScale(ren, &scale_x, &scale_y);
-                SDL_Rect read{0, 0, std::min(out_w, static_cast<int>(std::lround(view.w * scale_x))),
-                              std::min(out_h, static_cast<int>(std::lround(view.h * scale_y)))};
-                SDL_Surface* raw = SDL_CreateRGBSurfaceWithFormat(0, out_w, out_h, 24, SDL_PIXELFORMAT_RGB24);
-                SDL_Surface* shot = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_W, SCREEN_H, 24, SDL_PIXELFORMAT_RGB24);
-                if (raw && shot && SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGB24, raw->pixels, raw->pitch) == 0 &&
-                    SDL_BlitScaled(raw, &read, shot, nullptr) == 0) {
+                // ReadPixels returns the screen in output pixels: 800x600 windowed,
+                // larger once the window is fullscreen and scaled. Crop the
+                // letterboxed game out of it and scale that back to 800x600.
+                SDL_FRect game_rect{};
+                SDL_GetRenderLogicalPresentationRect(ren, &game_rect);
+                const SDL_Rect read{static_cast<int>(std::lround(game_rect.x)), static_cast<int>(std::lround(game_rect.y)),
+                                    static_cast<int>(std::lround(game_rect.w)), static_cast<int>(std::lround(game_rect.h))};
+                SDL_Surface* raw = SDL_RenderReadPixels(ren, nullptr);
+                SDL_Surface* shot = SDL_CreateSurface(SCREEN_W, SCREEN_H, SDL_PIXELFORMAT_RGB24);
+                if (raw && shot && SDL_BlitSurfaceScaled(raw, &read, shot, nullptr, SDL_SCALEMODE_NEAREST)) {
                     char name[64];
                     std::snprintf(name, sizeof name, "/frame_%04d.bmp", dump_index++);
                     SDL_SaveBMP(shot, (dump_dir + name).c_str());
                 }
-                if (raw) SDL_FreeSurface(raw);
-                if (shot) SDL_FreeSurface(shot);
+                if (raw) SDL_DestroySurface(raw);
+                if (shot) SDL_DestroySurface(shot);
             }
         }
         SDL_RenderPresent(ren);
     }
 
     SDL_SetCursor(SDL_GetDefaultCursor());
-    if (cursor_wait) SDL_FreeCursor(cursor_wait);
-    if (cursor_hand) SDL_FreeCursor(cursor_hand);
-    if (cursor_arrow) SDL_FreeCursor(cursor_arrow);
+    if (cursor_wait) SDL_DestroyCursor(cursor_wait);
+    if (cursor_hand) SDL_DestroyCursor(cursor_hand);
+    if (cursor_arrow) SDL_DestroyCursor(cursor_arrow);
     assets.release();   // before the mixer and the renderer it came from
-    if (audio) Mix_CloseAudio();
+    audio_out.close();
     for (DialogLayer* l : {&game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
                            &menu_credits_layer, &profile_layer, &import_layer})
         l->release();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
-    IMG_Quit();
     SDL_Quit();
     return 0;
 }

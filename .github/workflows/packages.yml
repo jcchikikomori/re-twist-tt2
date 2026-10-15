@@ -31,17 +31,23 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # SDL3 is built from the pinned releases (TT2_FETCH_SDL3); these are
+      # the headers for its video and audio backends.
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build g++ pkg-config \
-            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev
+            libasound2-dev libpulse-dev libpipewire-0.3-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
+            libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev libdecor-0-dev \
+            libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev libdrm-dev libgbm-dev \
+            libdbus-1-dev libibus-1.0-dev libudev-dev
 
       - name: Build and install into AppDir
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr -DTT2_BUILD_TESTS=OFF
+            -DCMAKE_INSTALL_PREFIX=/usr -DTT2_BUILD_TESTS=OFF -DTT2_FETCH_SDL3=ON
           cmake --build build
           DESTDIR="$PWD/AppDir" cmake --install build
 
@@ -58,6 +64,9 @@ jobs:
             --desktop-file AppDir/usr/share/applications/tt2.desktop \
             --icon-file AppDir/usr/share/icons/hicolor/scalable/apps/tt2.svg \
             --output appimage
+          # SDL loads the GPU drivers at run time; they must come from the
+          # player's system, never from the AppImage.
+          if ls AppDir/usr/lib | grep -E '^lib(vulkan|GL|EGL|GLX)\.so'; then exit 1; fi
 
       - name: Smoke run the AppImage (headless)
         env:
@@ -111,9 +120,9 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-SDL2
-            mingw-w64-ucrt-x86_64-SDL2_image
-            mingw-w64-ucrt-x86_64-SDL2_mixer
+            mingw-w64-ucrt-x86_64-sdl3
+            mingw-w64-ucrt-x86_64-sdl3-image
+            mingw-w64-ucrt-x86_64-sdl3-mixer
 
       - name: Build and install into dist/
         run: |
@@ -126,7 +135,7 @@ jobs:
       - name: Copy the runtime DLLs next to tt2.exe
         run: |
           # Every DLL the game links that comes from the MSYS2 prefix
-          # (SDL2, SDL2_image, SDL2_mixer, their codecs, the GCC runtime).
+          # (SDL3, SDL3_image, SDL3_mixer, their codecs, the GCC runtime).
           for exe in dist/tt2.exe dist/tt2_engine.exe; do
             ldd "$exe" | awk '/\/ucrt64\// {print $3}'
           done | sort -u | xargs -r cp -t dist/

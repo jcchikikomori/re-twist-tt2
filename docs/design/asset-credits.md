@@ -8,7 +8,8 @@ page: [dictionary-sources.md](../dictionary-sources.md).
 | Component | Version | License | Where | Used for |
 | --- | --- | --- | --- | --- |
 | [tinyfiledialogs](https://sourceforge.net/projects/tinyfiledialogs/) by Guillaume Vareille | 3.21.5 | zlib | `third_party/tinyfiledialogs/` | The "choose your Text Twist 2 folder" dialog when importing the original assets |
-| [SDL2, SDL2_image, SDL2_mixer](https://www.libsdl.org/) | system / MSYS2 package | zlib | linked, not vendored | Window, input, images, audio |
+| [SDL3, SDL3_image, SDL3_mixer](https://www.libsdl.org/) | 3.4.18, 3.4.8, 3.2.4 | zlib | system or MSYS2 package, or built from the release tarball (`TT2_FETCH_SDL3`); not vendored | Window, input, rendering, images, audio |
+| [stb_image, stb_vorbis](https://github.com/nothings/stb) by Sean Barrett | as bundled in SDL3_image / SDL3_mixer | public domain or MIT | inside SDL3_image and SDL3_mixer | Decoding PNG / JPEG and Ogg Vorbis |
 
 - tinyfiledialogs is vendored **unaltered**. `third_party/tinyfiledialogs/VERSION` records the upstream commit and
   the SHA-256 of each file; `LICENSE` holds its notice.

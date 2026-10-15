@@ -16,8 +16,11 @@ the engine.
 - **CMake 3.16+** for the build.
 - **No third-party libraries in the engine.** The engine is header-only;
   the tree CLI uses only the C++ standard library. The desktop UI
-  (`ui/`) needs SDL2, SDL2_image and SDL2_mixer; it is skipped
+  (`ui/`) needs SDL3, SDL3_image and SDL3_mixer; it is skipped
   automatically when they are missing (`TT2_BUILD_UI=OFF` to disable).
+  `-DTT2_FETCH_SDL3=ON` downloads and statically builds the pinned
+  releases instead (CI and the AppImage use it; Windows uses the MSYS2
+  `sdl3` packages).
 - **No container required.** The project compiles on the host directly;
   `podman` / `docker` is optional for reproducing the same toolchain.
 
@@ -216,7 +219,8 @@ the address-level walkthrough of the gameplay code is in
   `import_prompt.hpp` / `folder_picker.hpp` for importing the original
   assets, `dialog_fade.hpp` for the
   dialog backdrop and show / hide fades),
-  `ui/src/main.cpp` is the SDL2 front end, and `ui/tests/` holds the
+  `ui/src/main.cpp` is the SDL3 front end (`ui/src/audio.cpp` wraps
+  SDL3_mixer, its rules in `audio_mix.hpp`), and `ui/tests/` holds the
   headless tests. Timings and layout for the welcome flow come from
   `docs/reverse-engineering/welcome-flow.md`, the game scene geometry
   from `docs/reverse-engineering/game-scene.md`, help and settings from

@@ -10,7 +10,10 @@ project(tt2
 # ----------------------------------------------------------------------------
 option(TT2_BUILD_TESTS "Build the engine unit tests" ON)
 option(TT2_WARN_AS_ERROR "Treat warnings as errors" OFF)
-option(TT2_BUILD_UI "Build the SDL2 desktop UI (needs SDL2, SDL2_image, SDL2_mixer)" ON)
+option(TT2_BUILD_UI "Build the SDL3 desktop UI (needs SDL3, SDL3_image, SDL3_mixer)" ON)
+# Build the pinned SDL3 releases from source (static) instead of using the
+# system's: CI and the AppImage use it, since few distros ship SDL3 yet.
+option(TT2_FETCH_SDL3 "Download and build SDL3, SDL3_image and SDL3_mixer" OFF)
 
 # Install layout. The game finds its dictionaries next to itself
 # (ui/include/tt2ui/data_paths.hpp): Windows ships a flat folder with
@@ -76,7 +79,7 @@ target_link_libraries(tt2_assets PRIVATE tt2_engine tt2_platform)
 set_target_properties(tt2_assets PROPERTIES OUTPUT_NAME tt2-assets)
 
 # ----------------------------------------------------------------------------
-# Desktop UI (SDL2). `tt2_ui_logic` is the header-only scene model used by
+# Desktop UI (SDL3). `tt2_ui_logic` is the header-only scene model used by
 # both the app and the tests; `tt2` is the playable binary.
 # ----------------------------------------------------------------------------
 add_library(tt2_ui_logic INTERFACE)
@@ -88,43 +91,69 @@ target_link_libraries(tt2_ui_logic INTERFACE tt2_engine)
 target_compile_definitions(tt2_ui_logic INTERFACE TT2_VERSION="${PROJECT_VERSION}")
 
 if(TT2_BUILD_UI)
-    # pkg-config first (works on every distro), then a plain header/library
-    # search as a fallback (e.g. when a Homebrew pkg-config shadows the
-    # system one and cannot see /usr/lib/*/pkgconfig).
     set(TT2_SDL_OK OFF)
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(SDL2 QUIET IMPORTED_TARGET sdl2>=2.0.10)   # SDL_RenderCopyExF
-        pkg_check_modules(SDL2_IMAGE QUIET IMPORTED_TARGET SDL2_image)
-        pkg_check_modules(SDL2_MIXER QUIET IMPORTED_TARGET SDL2_mixer)
-        if(SDL2_FOUND AND SDL2_IMAGE_FOUND AND SDL2_MIXER_FOUND)
-            set(TT2_SDL_LIBS PkgConfig::SDL2 PkgConfig::SDL2_IMAGE PkgConfig::SDL2_MIXER)
+    if(TT2_FETCH_SDL3)
+        # The releases pinned in docs/design/improve-ui-ux.md (Tech stack),
+        # built as static libraries. SDL still loads X11, Wayland, Vulkan,
+        # OpenGL and the audio servers at run time, so none of them is
+        # linked in. Images use the built-in stb decoders, audio decodes WAV
+        # and Ogg Vorbis (stb_vorbis); every other codec stays off.
+        enable_language(C)
+        include(FetchContent)
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+        set(SDL_STATIC ON CACHE BOOL "" FORCE)
+        set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+        set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+        set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+        set(SDLIMAGE_VENDORED OFF CACHE BOOL "" FORCE)
+        set(SDLIMAGE_BACKEND_STB ON CACHE BOOL "" FORCE)
+        set(SDLIMAGE_SAMPLES OFF CACHE BOOL "" FORCE)
+        set(SDLIMAGE_TESTS OFF CACHE BOOL "" FORCE)
+        set(SDLIMAGE_INSTALL OFF CACHE BOOL "" FORCE)
+        foreach(fmt ANI AVIF GIF JXL LBM PCX PNM QOI SVG TGA TIF WEBP XCF XPM XV)
+            set(SDLIMAGE_${fmt} OFF CACHE BOOL "" FORCE)
+        endforeach()
+        set(SDLMIXER_VENDORED OFF CACHE BOOL "" FORCE)
+        set(SDLMIXER_TESTS OFF CACHE BOOL "" FORCE)
+        set(SDLMIXER_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(SDLMIXER_INSTALL OFF CACHE BOOL "" FORCE)
+        set(SDLMIXER_WAVE ON CACHE BOOL "" FORCE)
+        set(SDLMIXER_VORBIS_STB ON CACHE BOOL "" FORCE)
+        foreach(codec AIFF VOC AU FLAC GME MOD MP3 MIDI OPUS VORBIS_VORBISFILE VORBIS_TREMOR WAVPACK)
+            set(SDLMIXER_${codec} OFF CACHE BOOL "" FORCE)
+        endforeach()
+        # SYSTEM (CMake 3.25+) keeps vendor header warnings out of our builds.
+        set(TT2_FETCH_SYSTEM "")
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.25)
+            set(TT2_FETCH_SYSTEM SYSTEM)
+        endif()
+        FetchContent_Declare(SDL3
+            URL https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz
+            URL_HASH SHA256=9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3
+            ${TT2_FETCH_SYSTEM})
+        FetchContent_Declare(SDL3_image
+            URL https://github.com/libsdl-org/SDL_image/releases/download/release-3.4.8/SDL3_image-3.4.8.tar.gz
+            URL_HASH SHA256=e8223b424bc7541cf84ffff5cf7e4f24ec3711c60462cb1bd6dc1d7bd7f25477
+            ${TT2_FETCH_SYSTEM})
+        FetchContent_Declare(SDL3_mixer
+            URL https://github.com/libsdl-org/SDL_mixer/releases/download/release-3.2.4/SDL3_mixer-3.2.4.tar.gz
+            URL_HASH SHA256=182a07c745375e113dc740d43964ff21b0be29f29f59876c4dbc4db3d32f6901
+            ${TT2_FETCH_SYSTEM})
+        FetchContent_MakeAvailable(SDL3 SDL3_image SDL3_mixer)
+        set(TT2_SDL_OK ON)
+    else()
+        find_package(SDL3 3.2 CONFIG QUIET)
+        find_package(SDL3_image CONFIG QUIET)
+        find_package(SDL3_mixer CONFIG QUIET)
+        if(SDL3_FOUND AND SDL3_image_FOUND AND SDL3_mixer_FOUND)
             set(TT2_SDL_OK ON)
         endif()
     endif()
-    if(NOT TT2_SDL_OK)
-        # Homebrew/non-distro CMake builds do not know Debian's multiarch
-        # library directory, so name it explicitly.
-        set(TT2_SDL_LIB_PATHS /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
-            /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/lib64 /usr/lib /usr/local/lib)
-        find_path(TT2_SDL2_INCLUDE_DIR SDL.h PATH_SUFFIXES SDL2 PATHS /usr/include /usr/local/include)
-        find_library(TT2_SDL2_LIB SDL2 PATHS ${TT2_SDL_LIB_PATHS})
-        find_library(TT2_SDL2_IMAGE_LIB SDL2_image PATHS ${TT2_SDL_LIB_PATHS})
-        find_library(TT2_SDL2_MIXER_LIB SDL2_mixer PATHS ${TT2_SDL_LIB_PATHS})
-        if(TT2_SDL2_INCLUDE_DIR AND TT2_SDL2_LIB AND TT2_SDL2_IMAGE_LIB AND TT2_SDL2_MIXER_LIB)
-            add_library(tt2_sdl2_deps INTERFACE)
-            # Note: use the distro compiler (/usr/bin/g++) with the distro
-            # SDL2; a Homebrew gcc ships its own glibc headers and will not
-            # find Debian's <SDL2/_real_SDL_config.h>.
-            target_include_directories(tt2_sdl2_deps INTERFACE ${TT2_SDL2_INCLUDE_DIR})
-            target_link_libraries(tt2_sdl2_deps INTERFACE
-                ${TT2_SDL2_LIB} ${TT2_SDL2_IMAGE_LIB} ${TT2_SDL2_MIXER_LIB})
-            set(TT2_SDL_LIBS tt2_sdl2_deps)
-            set(TT2_SDL_OK ON)
-        endif()
-    endif()
+    set(TT2_SDL_LIBS SDL3_image::SDL3_image SDL3_mixer::SDL3_mixer SDL3::SDL3)
     if(TT2_SDL_OK)
-        message(STATUS "SDL2 found: building the tt2 UI binary")
+        message(STATUS "SDL3 found: building the tt2 UI binary")
         # tinyfiledialogs (zlib, third_party/): the native folder picker for
         # importing the original assets. Its own C target, so the project's
         # warning flags (and -Werror) never apply to vendor code.
@@ -135,7 +164,7 @@ if(TT2_BUILD_UI)
             target_link_libraries(tt2_tinyfd PRIVATE comdlg32 ole32 shell32)
         endif()
 
-        add_executable(tt2_app ui/src/main.cpp ui/src/folder_picker.cpp)
+        add_executable(tt2_app ui/src/main.cpp ui/src/audio.cpp ui/src/folder_picker.cpp)
         target_link_libraries(tt2_app PRIVATE tt2_ui_logic tt2_platform tt2_tinyfd ${TT2_SDL_LIBS})
         set_target_properties(tt2_app PROPERTIES OUTPUT_NAME tt2)
         # The source tree's imported-assets/: a developer fallback, read when
@@ -149,7 +178,8 @@ if(TT2_BUILD_UI)
             install(FILES packaging/linux/tt2.svg DESTINATION share/icons/hicolor/scalable/apps)
         endif()
     else()
-        message(STATUS "SDL2/SDL2_image/SDL2_mixer not found: skipping the tt2 UI binary")
+        message(STATUS "SDL3/SDL3_image/SDL3_mixer not found: skipping the tt2 UI binary "
+            "(-DTT2_FETCH_SDL3=ON builds them from source)")
     endif()
 endif()
 
@@ -197,6 +227,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_folder_picker.cpp
         ui/tests/test_import_prompt.cpp
         ui/tests/test_placeholder_assets.cpp
+        ui/tests/test_audio_mix.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)
