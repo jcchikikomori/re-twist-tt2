@@ -228,6 +228,33 @@ private:
     std::vector<std::string> placed_;
 };
 
+// The round-end reveal (0x4333a0, CONFIRMED). A guess fills the first
+// empty slot of its length (0x432b20), not the slot of that board word,
+// so an empty slot's own answer may already be on show elsewhere. For
+// each empty slot in order, 0x433320 takes the first board word of the
+// slot's length (+0x178) that 0x433180 finds in no slot, and 0x431880
+// writes it at once, so later slots skip it too: no word shows twice.
+// `board_words` is the flat slot list; `shown[i]` is slot i's word, empty
+// when unfound. Returns `shown` with every empty slot filled. Should no
+// word be left (0x433320 would return index 0), the slot keeps its own.
+inline std::vector<std::string> reveal_words(const std::vector<std::string>& board_words,
+                                             std::vector<std::string> shown) {
+    shown.resize(board_words.size());
+    const auto on_show = [&shown](const std::string& w) {
+        for (const auto& s : shown) if (s == w) return true;
+        return false;
+    };
+    for (std::size_t i = 0; i < shown.size(); ++i) {
+        if (!shown[i].empty()) continue;
+        const std::size_t len = board_words[i].size();
+        std::string pick = board_words[i];
+        for (const auto& w : board_words)
+            if (w.size() == len && !on_show(w)) { pick = w; break; }
+        shown[i] = pick;
+    }
+    return shown;
+}
+
 class GuessProcessor {
 public:
     GuessProcessor(FilledBoard& board, const WordTree& common,

@@ -69,7 +69,19 @@ Backgrounds: `BACKGROUND` (untimed), `BACKGROUND_TIMED`, `BACKGROUND_WOTD`, all 
   letter on **white** tiles; the round-end reveal `0x4333a0` (`ev_882be30c…`), which sets
   `+0x174 = 1` on every unfound slot and passes 0, so missed words flip in on **yellow**
   tiles; the saved-game restore `0x433090` (from `0x42aa56`, `push 1` at `0x43312b`), so
-  restored words flip with all letters at once. Worked example: a 5-letter word settles
+  restored words flip with all letters at once.
+- Which word a revealed slot shows (CONFIRMED, 2026-10-15): not its own answer. A guess
+  fills the first empty slot of its length (`0x432b20`), so a later answer found early sits
+  in an earlier slot. For each empty slot in order, `0x4333a0` calls `0x433320`
+  (`ev_ea585423d1eae4512d66b8ee0122a1b0e550c9ef72d4f36ab3dc07789f8dbc8f`). It walks the
+  board list (`+0x180`, `+0x184` entries of 0x1c bytes) for the first word of the slot's
+  length (`+0x178`) that `0x433180`
+  (`ev_ecdd7b2159c8408898edaa90a3c1bb82c29f8fb26604d3a9c636c0111aae29e6`) finds in no slot.
+  `0x431880` (`ev_9a5628986878e0269af125f61084a14b43bd25c30ecde9f6f256b058d7afb0a5`)
+  writes it to `+0x19c` at once, so later slots skip it. `+0x1b0` is that string's
+  length (`0x4310f0` reads it as the letter count), so "empty slot" means `+0x1b0 == 0`.
+  No word shows twice. Port: `tt2::reveal_words` (`board.hpp`); before 2026-10-15 the
+  port revealed each slot's own answer and could show a found word twice. Worked example: a 5-letter word settles
   after `4 * 100 + 150 + 150 = 700` ms; a restored one after 300 ms. The flip freezes with
   the scene while the pause menu is up.
 

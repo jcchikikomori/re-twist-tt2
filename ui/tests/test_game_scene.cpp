@@ -2172,3 +2172,33 @@ TEST(resumed_game_never_shows_the_tutorial) {
     ASSERT_TRUE(!s.dialog_open());                         // 0x42a460 skips 0x425c50
     ASSERT_TRUE(!f.profile.mode_flags[static_cast<std::size_t>(tt2::GameMode::Untimed)]);
 }
+
+// 0x4333a0: a guess takes the first empty slot of its length, so a later
+// board word found early sits in an earlier slot. The reveal then fills the
+// empty slots with the words still missing, never a found word again.
+TEST(reveal_never_shows_a_found_word_twice) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    std::vector<std::string> board;
+    for (const auto& v : s.slots()) board.push_back(v.word);
+    // The last word of the first length with two or more slots.
+    std::string late;
+    for (std::size_t i = 1; i < board.size(); ++i)
+        if (board[i].size() == board[i - 1].size() && board[i] != s.rack()) late = board[i];
+    ASSERT_TRUE(!late.empty());
+    f.type(late);
+    s.key_return();
+    f.type(s.rack());                                      // the bingo qualifies
+    s.key_return();
+    s.press("BUTTON_NextRound");
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    std::vector<std::string> shown;
+    for (const auto& v : s.slots()) shown.push_back(v.word);
+    std::vector<std::string> sorted_shown = shown, sorted_board = board;
+    std::sort(sorted_shown.begin(), sorted_shown.end());
+    std::sort(sorted_board.begin(), sorted_board.end());
+    ASSERT_TRUE(std::adjacent_find(sorted_shown.begin(), sorted_shown.end()) == sorted_shown.end());
+    ASSERT_TRUE(sorted_shown == sorted_board);            // every answer exactly once
+    for (std::size_t i = 0; i < shown.size(); ++i)
+        ASSERT_EQ(shown[i].size(), board[i].size());       // each slot keeps its length
+}

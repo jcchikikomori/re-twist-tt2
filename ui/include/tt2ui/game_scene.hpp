@@ -927,6 +927,7 @@ private:
         rack_ = res.rack;
         // Board.
         slots_.clear();
+        board_words_ = res.board_words;
         table_ = layout_anagram_table(res.board_words);
         for (std::size_t i = 0; i < res.board_words.size(); ++i) {
             SlotView v;
@@ -1099,12 +1100,20 @@ private:
         }
         if (services_.on_profile_change) services_.on_profile_change();
         if (after == After::GameOver && services_.discard_save) services_.discard_save();   // 0x461840
-        if (!round_->complete())
-            for (auto& s : slots_)
-                if (!s.found) {
-                    s.revealed = true;
-                    s.flip_ms = 0;   // 0x4333a0: +0x174 = 1, then 0x4310f0 staggered
-                }
+        if (!round_->complete()) {
+            // 0x4333a0: each empty slot shows the first word of its length
+            // not on show yet (tt2::reveal_words), never a found word again.
+            std::vector<std::string> shown;
+            for (const auto& s : slots_) shown.push_back(s.found ? s.word : std::string());
+            shown = tt2::reveal_words(board_words_, std::move(shown));
+            for (std::size_t i = 0; i < slots_.size(); ++i) {
+                SlotView& s = slots_[i];
+                if (s.found) continue;
+                s.word = shown[i];
+                s.revealed = true;
+                s.flip_ms = 0;   // 0x4333a0: +0x174 = 1, then 0x4310f0 staggered
+            }
+        }
         play(SoundId::WordPassReveal);
         phase_ = GamePhase::Reveal;
         refresh_buttons();
@@ -1488,6 +1497,7 @@ private:
     std::string rack_, last_word_;
     TableLayout table_;
     std::vector<SlotView> slots_;
+    std::vector<std::string> board_words_;   // the flat slot answers (0x433320's list)
     std::vector<LetterBall> balls_;
     HelpPager help_;                         // DIALOG_HELP page state
     std::vector<std::pair<GameDialog, Dialog>> under_;   // open dialogs under the top one, bottom first

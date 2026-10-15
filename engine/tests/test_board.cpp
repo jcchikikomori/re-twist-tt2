@@ -251,3 +251,38 @@ TEST(bingo_uses_every_letter) {
     ASSERT_TRUE(!b.is_bingo("abcd"));
     ASSERT_TRUE(!b.is_bingo("abcdef"));  // longer than rack
 }
+
+// 0x4333a0 / 0x433320 / 0x433180: the round-end reveal.
+TEST(reveal_words_skips_words_already_on_show) {
+    const std::vector<std::string> board = {"abs", "bad", "bed", "bead"};
+    // "bed" was found first, so it sits in slot 0 (0x432b20).
+    const auto out = tt2::reveal_words(board, {"bed", "", "", ""});
+    ASSERT_EQ(out[0], std::string("bed"));
+    ASSERT_EQ(out[1], std::string("abs"));                 // first 3-letter word not on show
+    ASSERT_EQ(out[2], std::string("bad"));                 // "abs" is now on show too
+    ASSERT_EQ(out[3], std::string("bead"));
+}
+
+TEST(reveal_words_keeps_found_and_uncommon_words) {
+    const std::vector<std::string> board = {"abs", "bad", "bed"};
+    // An uncommon guess ("dab") holds slot 0; nothing found is moved.
+    const auto out = tt2::reveal_words(board, {"dab", "bed", ""});
+    ASSERT_EQ(out[0], std::string("dab"));
+    ASSERT_EQ(out[1], std::string("bed"));
+    ASSERT_EQ(out[2], std::string("abs"));
+    // Nothing found: every slot shows its own answer.
+    ASSERT_TRUE(tt2::reveal_words(board, {"", "", ""}) == board);
+    // All filled: unchanged.
+    ASSERT_TRUE(tt2::reveal_words(board, {"bad", "abs", "bed"}) ==
+                (std::vector<std::string>{"bad", "abs", "bed"}));
+}
+
+TEST(reveal_words_falls_back_to_the_slots_own_word) {
+    // No word of the slot's length left off show (only reachable with a
+    // repeated answer): the slot keeps its own word, not index 0.
+    const auto out = tt2::reveal_words({"bead", "abs", "abs"}, {"", "abs", ""});
+    ASSERT_EQ(out[0], std::string("bead"));
+    ASSERT_EQ(out[2], std::string("abs"));
+    // A short `shown` is padded to the board: every slot gets its answer.
+    ASSERT_TRUE(tt2::reveal_words({"abs", "bad"}, {}) == (std::vector<std::string>{"abs", "bad"}));
+}
