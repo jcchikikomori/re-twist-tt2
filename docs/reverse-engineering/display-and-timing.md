@@ -120,6 +120,24 @@ the monitor does the scaling, because the game switches the display to 800x600 (
   is filled (16:9, 16:10, ultrawide); a taller output keeps black bars above and below.
 - **`--dump-frames`** still crops to the 4:3 rectangle, so the bars never appear in a dump.
 
+### How the port scales the art (UX-8, first half)
+
+`ui/include/tt2ui/render_options.hpp` maps the saved choices onto the running renderer:
+
+- **TEXTURE FILTER** sets the SDL scale mode of every art texture (images and font layers), and OK re-applies
+  it to the textures already loaded. Sharp is `SDL_SCALEMODE_NEAREST`, the look of every earlier build; Smooth
+  is `LINEAR`; Pixel art is SDL 3.4's `PIXELART`, nearest with antialiased edges. A renderer that refuses Pixel
+  art gets Smooth, and the log says so.
+- **Hi-res dialog layers:** each fading dialog draws into a render target the size of the 4:3 game rectangle in
+  output pixels (1440x1080 at 1080p), with the target's own render scale mapping the 800x600 canvas units onto
+  it, then composites 1:1. Before, a dialog went through an 800x600 target and was upscaled as a whole. At
+  800x600 the target and scale are unchanged, so 800x600 frames match earlier builds. Below 1x, or past the
+  GPU's largest texture, the target stays 800x600.
+- **Software renderer:** Sharp and 800x600 layers, whatever the file says. The file keeps the choice for the
+  next GPU launch, and IMPROVEMENTS greys the row out with "Not available with the software renderer".
+- **Sprite sheets under Smooth:** linear sampling can pull in a neighbouring frame at a frame's edge; checked on
+  the 4-frame arrow buttons at 1600x900, where none shows.
+
 ### How the port keeps time (UX-7)
 
 `ui/include/tt2ui/frame_clock.hpp` replaces the 16 ms `Sleep` cap:
@@ -152,5 +170,5 @@ borderless fullscreen, vsync, `dt` clamped to 100 ms).
 | UX-5 | Window sizes from 800x600 to 1920x1080 (4:3 and 16:9) that fit the display; Windowed, Borderless (desktop size) or Native (an exact display mode at the desktop's refresh rate, else the fastest; Borderless when the switch fails); `window=`, `resolution=` and `fullscreen_mode=` in `improvements.txt` | 800x600 only; exclusive 800x600 mode (1, 3) | 0.3.0 (P5) |
 | UX-6 | Side bars beside the 4:3 game filled with a generated gradient, faint rings and a gold edge in the placeholder palette (`widescreen_fill=` in `improvements.txt`, on by default; off: black); top and bottom bars stay black | No widescreen (1) | 0.3.0 (P6) |
 | UX-7 | No 60 fps cap by default; vsync (on by default) and a frame limit (60, 120, 144, 165 or 240) in `improvements.txt`; a nanosecond clock whose whole-ms steps keep the leftover fraction; the 100 ms clamp is kept | 60 fps cap with `Sleep`; vsync always on (4) | 0.3.0 (P4) |
-| UX-8 | Smooth or pixel-art filtering, 2x placeholder art, full-resolution dialog layers | No scaling (1) | |
+| UX-8 | Sharp (nearest, the default), Smooth (linear) or Pixel art filtering (`filter=` in `improvements.txt`); dialog layers drawn at the 4:3 rectangle's pixel size; both off on the software renderer; 2x placeholder art still to come | No scaling (1) | 0.3.0 (P7; 2x art in P8) |
 | UX-9 | Optional texture upscaler | None | |

@@ -223,7 +223,9 @@ the address-level walkthrough of the gameplay code is in
   clock, the optional frame limit), `display.hpp` for window sizes and
   the 4:3 game rectangle (`ui/src/display.cpp` applies the Windowed /
   Borderless / Native modes), `side_fill.hpp` / `palette.hpp` for the
-  generated side bars on wide screens, `credits_dialog.hpp` for CREDITS, `asset_import.hpp` /
+  generated side bars on wide screens, `render_options.hpp` for what the
+  renderer does with the filter and hi-res dialog layers (software keeps
+  Sharp, 800x600), `credits_dialog.hpp` for CREDITS, `asset_import.hpp` /
   `import_prompt.hpp` / `folder_picker.hpp` for importing the original
   assets, `dialog_fade.hpp` for the
   dialog backdrop and show / hide fades),

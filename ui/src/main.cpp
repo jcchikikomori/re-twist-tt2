@@ -55,6 +55,7 @@
 #include "tt2ui/help_dialog.hpp"
 #include "tt2ui/import_prompt.hpp"
 #include "tt2ui/improvements_dialog.hpp"
+#include "tt2ui/render_options.hpp"
 #include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/side_fill.hpp"
 #include "tt2ui/profile_dialogs.hpp"
@@ -421,6 +422,16 @@ SDL_Texture* nearest(SDL_Texture* t) {
     return t;
 }
 
+// IMPROVEMENTS' TEXTURE FILTER (deviation UX-8) as an SDL scale mode.
+SDL_ScaleMode scale_mode_of(tt2::TextureFilter f) {
+    switch (f) {
+        case tt2::TextureFilter::Sharp: return SDL_SCALEMODE_NEAREST;
+        case tt2::TextureFilter::Smooth: return SDL_SCALEMODE_LINEAR;
+        case tt2::TextureFilter::PixelArt: return SDL_SCALEMODE_PIXELART;
+    }
+    return SDL_SCALEMODE_NEAREST;
+}
+
 // A texture holding the surface's pixels. On the software renderer it is a
 // streaming texture: SDL 3.4.18 run-length encodes static textures there,
 // and its RLE blitter writes opaque alpha into a render target, which drew
@@ -478,6 +489,17 @@ public:
     // data/placeholder/ (tools/gen_placeholders.py): generated fonts, dialog
     // frame and buttons, used for each file the asset folder lacks.
     void set_placeholder_dir(std::string dir) { placeholder_dir_ = std::move(dir); }
+
+    // The filter for every art texture (images and font layers), applied to
+    // those already loaded too. Returns what applies: a renderer without
+    // SDL_SCALEMODE_PIXELART gets Smooth (render_options.hpp).
+    tt2::TextureFilter set_filter(tt2::TextureFilter f) {
+        filter_ = f;
+        for (auto& [k, img] : images_) apply_filter(img.texture);
+        for (auto& [k, font] : fonts_)
+            for (SDL_Texture* t : font.layers) apply_filter(t);
+        return filter_;
+    }
 
     // Switches folders at run time (after an import). Frees everything from
     // the old folder first; textures come back lazily on the same renderer.
@@ -605,6 +627,7 @@ private:
             }
             img.texture = upload(renderer_, img.surface);
             if (img.texture) SDL_SetTextureBlendMode(img.texture, SDL_BLENDMODE_BLEND);
+            apply_filter(img.texture);
         }
         return images_.emplace(key, img).first->second;
     }
@@ -612,7 +635,16 @@ private:
         if (!s) return nullptr;
         SDL_Texture* t = upload(renderer_, s);
         if (t) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+        apply_filter(t);
         return t;
+    }
+    void apply_filter(SDL_Texture* t) {
+        if (!t) return;
+        if (SDL_SetTextureScaleMode(t, scale_mode_of(filter_))) return;
+        if (filter_ != tt2::TextureFilter::PixelArt) return;
+        filter_ = filter_with_support(filter_, false);
+        std::printf("filter: pixel art unsupported (%s); using %s\n", SDL_GetError(), tt2::to_string(filter_));
+        set_filter(filter_);   // the ones already set to pixel art too
     }
     MIX_Audio* music(SoundId id) {
         auto it = music_.find(id);
@@ -643,6 +675,7 @@ private:
     AudioOut* audio_ = nullptr;
     std::map<std::string, Image> images_;
     std::map<std::string, Font> fonts_;
+    tt2::TextureFilter filter_ = tt2::TextureFilter::Sharp;
     std::map<SoundId, MIX_Audio*> music_;
     std::map<SoundId, MIX_Audio*> chunks_;
     SoundId current_stream_ = SoundId::Button;
@@ -1183,9 +1216,12 @@ struct DialogLayer {
     }
 };
 
-SDL_Texture* layer_texture(SDL_Renderer* ren) {
+// A layer's render target: 800x600, or the 4:3 game rectangle's pixel size
+// with hi-res layers (deviation UX-8, render_options.hpp layer_size). It is
+// composited 1:1, so nearest sampling keeps it exact.
+SDL_Texture* layer_texture(SDL_Renderer* ren, LayerSize size) {
     SDL_Texture* t = nearest(
-        SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, SCREEN_W, SCREEN_H));
+        SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, size.w, size.h));
     if (!t) return nullptr;
     // The layer holds premultiplied colour (drawn with BLEND onto a clear
     // target), so it is composited with ONE / ONE_MINUS_SRC_ALPHA. A
@@ -1206,8 +1242,10 @@ void composite_layer(SDL_Renderer* ren, SDL_Texture* t, float alpha) {
 // `id` names the dialog open in this slot now (0 = none); `draw` paints it.
 // Order on screen: the backdrop (dodarkenbackground, 0x40d190), the dialog
 // that is closing, then the open one.
+// `px` is the target size for this frame; a layer of another size (the
+// output changed) is made again.
 template <typename Draw>
-void draw_dialog_layer(SDL_Renderer* ren, DialogLayer& layer, int id, int dt_ms, Draw&& draw) {
+void draw_dialog_layer(SDL_Renderer* ren, LayerSize px, DialogLayer& layer, int id, int dt_ms, Draw&& draw) {
     if (layer.fade.update(id, dt_ms)) std::swap(layer.live, layer.frozen);
     if (!layer.fade.visible()) return;
     const Rgba8 dark = darken_color(layer.fade.backdrop());
@@ -1217,15 +1255,25 @@ void draw_dialog_layer(SDL_Renderer* ren, DialogLayer& layer, int id, int dt_ms,
     render_fill(ren, &all);
     if (layer.fade.closing()) composite_layer(ren, layer.frozen, layer.fade.closing_alpha());
     if (layer.fade.open_id() == 0) return;
-    if (!layer.live) layer.live = layer_texture(ren);
+    float lw = 0, lh = 0;
+    if (layer.live && SDL_GetTextureSize(layer.live, &lw, &lh) &&
+        (static_cast<int>(lw) != px.w || static_cast<int>(lh) != px.h)) {
+        SDL_DestroyTexture(layer.live);
+        layer.live = nullptr;
+    }
+    if (!layer.live) layer.live = layer_texture(ren, px);
     if (!layer.live || !SDL_SetRenderTarget(ren, layer.live)) {
         draw();   // no render targets: draw straight to the screen, unfaded
         return;
     }
+    // The dialog code draws in 800x600 canvas units; the target's own view
+    // scales them to its pixels (1 at 800x600).
+    SDL_SetRenderScale(ren, static_cast<float>(px.w) / SCREEN_W, static_cast<float>(px.h) / SCREEN_H);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 0);
     SDL_RenderClear(ren);
     draw();
+    SDL_SetRenderScale(ren, 1.0f, 1.0f);
     SDL_SetRenderTarget(ren, nullptr);
     composite_layer(ren, layer.live, layer.fade.open_alpha());
 }
@@ -1253,7 +1301,7 @@ int main(int argc, char** argv) {
                                // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages,
                                // '#' SETTINGS, '@' its INFO (credits), '6'..'8' max length,
                                // '=' the main menu's IMPROVEMENTS (then '<' / '>' its display mode,
-                               //     '(' / ')' its resolution),
+                               //     '(' / ')' its resolution, '[' / ']' its texture filter),
                                // '!' fullscreen switch, '^' Alt+Enter,
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND;
                                // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
@@ -1499,6 +1547,16 @@ int main(int argc, char** argv) {
     bool cursor_busy = false;
 
     Assets assets(ren, asset_choice.dir);
+    // Deviation UX-8: the filter and hi-res dialog layers; the software
+    // renderer keeps Sharp and 800x600 layers (render_options.hpp).
+    EffectiveOptions render_opts = effective(improvements, render_caps);
+    auto apply_render_options = [&](const tt2::Improvements& imp) {
+        render_opts = effective(imp, render_caps);
+        render_opts.filter = assets.set_filter(render_opts.filter);
+        std::printf("render: filter %s%s, dialog layers %s\n", tt2::to_string(render_opts.filter),
+                    render_opts.filter != imp.filter ? " (forced)" : "", render_opts.hires_layers ? "hi-res" : "800x600");
+    };
+    apply_render_options(improvements);
     assets.set_placeholder_dir(data_dir + "/placeholder");
     std::printf("placeholders: %s/placeholder%s\n", data_dir.c_str(),
                 file_exists(data_dir + "/placeholder/fonts/font_settingstext.xml") ? "" : " (missing)");
@@ -1619,6 +1677,7 @@ int main(int argc, char** argv) {
     auto commit_improvements = [&](const tt2::Improvements& imp) {
         if (imp.window != improvements.window || imp.resolution != improvements.resolution) apply_window(imp);
         if (imp.vsync != improvements.vsync) apply_vsync(imp.vsync);
+        if (imp.filter != improvements.filter) apply_render_options(imp);
         improvements = imp;
         std::printf("improvements: window %s, resolution %s, vsync %s, frame limit %d\n",
                     tt2::to_string(improvements.window), tt2::to_string(improvements.resolution).c_str(),
@@ -2011,7 +2070,8 @@ int main(int argc, char** argv) {
         }
         // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL;
         // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter;
-        // '=' IMPROVEMENTS, then '<' / '>' its display mode, '(' / ')' its resolution, '|' OK, '~' CANCEL.
+        // '=' IMPROVEMENTS, then '<' / '>' its display mode, '(' / ')' its resolution, '[' / ']' its filter,
+        // '|' OK, '~' CANCEL.
         if (!game && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
             flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
@@ -2023,6 +2083,8 @@ int main(int argc, char** argv) {
                     menu_improvements->press(c == '<' ? "BUTTON_WINDOW_PREV" : "BUTTON_WINDOW_NEXT");
                 else if (menu_improvements && (c == '(' || c == ')'))
                     menu_improvements->press(c == '(' ? "BUTTON_RESOLUTION_PREV" : "BUTTON_RESOLUTION_NEXT");
+                else if (menu_improvements && (c == '[' || c == ']'))
+                    menu_improvements->press(c == '[' ? "BUTTON_FILTER_PREV" : "BUTTON_FILTER_NEXT");
                 else if (menu_improvements && c == '|') menu_improvements_result(menu_improvements->press("BUTTON_OK"));
                 else if (menu_improvements && c == '~')
                     menu_improvements_result(menu_improvements->press("BUTTON_CANCEL"));
@@ -2113,6 +2175,9 @@ int main(int argc, char** argv) {
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
         if (improvements.widescreen_fill) side_fill.draw(ren);   // UX-6; top / bottom bars stay black
+        int out_w = 0, out_h = 0;
+        SDL_GetRenderOutputSize(ren, &out_w, &out_h);
+        const LayerSize layer_px = layer_size(out_w, out_h, render_opts.hires_layers, render_caps.max_texture_size);
         if (game) {
             draw_game(ren, assets, *game);
         } else if (!boot_prompt_open()) {   // black behind the boot prompt
@@ -2123,7 +2188,7 @@ int main(int argc, char** argv) {
                           Anchor::Center, 2);
             }
         }
-        draw_dialog_layer(ren, game_layer, game ? static_cast<int>(game->dialog_kind()) : 0, dt, [&] {
+        draw_dialog_layer(ren, layer_px, game_layer, game ? static_cast<int>(game->dialog_kind()) : 0, dt, [&] {
             if (game->settings_dialog()) {
                 draw_settings(ren, assets, *game->settings_dialog());
                 return;
@@ -2148,24 +2213,24 @@ int main(int argc, char** argv) {
         // DIALOG_CREDITS opens over the settings (0x40c760) with its own
         // backdrop and fade.
         const Dialog* game_credits = game && game->settings_dialog() ? game->settings_dialog()->credits() : nullptr;
-        draw_dialog_layer(ren, game_credits_layer, game_credits ? 1 : 0, dt,
+        draw_dialog_layer(ren, layer_px, game_credits_layer, game_credits ? 1 : 0, dt,
                           [&] { draw_dialog(ren, assets, *game_credits); });
-        draw_dialog_layer(ren, menu_layer, menu_dialog_open ? 1 + static_cast<int>(menu_dialog.kind) : 0, dt,
+        draw_dialog_layer(ren, layer_px, menu_layer, menu_dialog_open ? 1 + static_cast<int>(menu_dialog.kind) : 0, dt,
                           [&] { draw_dialog(ren, assets, menu_dialog); });
-        draw_dialog_layer(ren, menu_help_layer, menu_help ? 1 : 0, dt,
+        draw_dialog_layer(ren, layer_px, menu_help_layer, menu_help ? 1 : 0, dt,
                           [&] { draw_help(ren, assets, menu_help->dialog()); });
-        draw_dialog_layer(ren, menu_settings_layer, menu_settings ? 1 : 0, dt,
+        draw_dialog_layer(ren, layer_px, menu_settings_layer, menu_settings ? 1 : 0, dt,
                           [&] { draw_settings(ren, assets, *menu_settings); });
         const Dialog* menu_credits = menu_settings ? menu_settings->credits() : nullptr;
-        draw_dialog_layer(ren, menu_credits_layer, menu_credits ? 1 : 0, dt,
+        draw_dialog_layer(ren, layer_px, menu_credits_layer, menu_credits ? 1 : 0, dt,
                           [&] { draw_dialog(ren, assets, *menu_credits); });
-        draw_dialog_layer(ren, menu_improvements_layer, menu_improvements ? 1 : 0, dt,
+        draw_dialog_layer(ren, layer_px, menu_improvements_layer, menu_improvements ? 1 : 0, dt,
                           [&] { draw_dialog(ren, assets, menu_improvements->dialog()); });
-        draw_dialog_layer(ren, profile_layer, static_cast<int>(profile.dialog().kind), dt, [&] {
+        draw_dialog_layer(ren, layer_px, profile_layer, static_cast<int>(profile.dialog().kind), dt, [&] {
             draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
         });
         const int import_id = import_prompt ? 1 + static_cast<int>(import_prompt->state()) : 0;
-        draw_dialog_layer(ren, import_layer, import_id, dt, [&] { draw_dialog(ren, assets, import_prompt->dialog()); });
+        draw_dialog_layer(ren, layer_px, import_layer, import_id, dt, [&] { draw_dialog(ren, assets, import_prompt->dialog()); });
         float black = flow.black_alpha();
         if (game_fade_out > 0) black = std::max(black, 1.0f - static_cast<float>(game_fade_out) / GAME_FADE_HALF_MS);
         if (game_fade_in > 0) black = std::max(black, static_cast<float>(game_fade_in) / GAME_FADE_HALF_MS);

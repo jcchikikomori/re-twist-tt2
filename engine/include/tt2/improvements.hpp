@@ -70,6 +70,34 @@ inline bool parse_renderer_pref(std::string_view s, RendererPref& out) {
     return false;
 }
 
+// How scaled art is sampled (deviation UX-8). Sharp is nearest-pixel, the
+// look every earlier build had; Smooth is linear; PixelArt is SDL 3.4's
+// nearest-pixel with antialiased edges. The software renderer always uses
+// Sharp (ui/include/tt2ui/render_options.hpp); the file keeps the choice.
+enum class TextureFilter {
+    Sharp,
+    Smooth,
+    PixelArt,
+};
+
+inline const char* to_string(TextureFilter f) {
+    switch (f) {
+        case TextureFilter::Sharp: return "sharp";
+        case TextureFilter::Smooth: return "smooth";
+        case TextureFilter::PixelArt: return "pixelart";
+    }
+    return "sharp";
+}
+
+inline bool parse_texture_filter(std::string_view s, TextureFilter& out) {
+    for (TextureFilter f : {TextureFilter::Sharp, TextureFilter::Smooth, TextureFilter::PixelArt})
+        if (s == to_string(f)) {
+            out = f;
+            return true;
+        }
+    return false;
+}
+
 // The frame limits IMPROVEMENTS offers (deviation UX-7); 0 = no limit. The
 // original caps itself at about 62.5 fps (a 16 ms Sleep); the port runs at
 // the display's refresh rate unless one of these is picked.
@@ -136,6 +164,7 @@ struct Improvements {
     // The fullscreen mode Alt+Enter switches to: the last one picked (Borderless or Native).
     WindowMode fullscreen_mode = WindowMode::Borderless;
     bool widescreen_fill = true;   // draw the side bars beside the 4:3 game (UX-6); off: black
+    TextureFilter filter = TextureFilter::Sharp;
 
     // Picks a window mode and remembers a fullscreen one for Alt+Enter.
     void set_window(WindowMode m) {
@@ -161,7 +190,8 @@ struct Improvements {
     friend bool operator==(const Improvements& a, const Improvements& b) {
         return a.window == b.window && a.renderer == b.renderer && a.vsync == b.vsync &&
                a.frame_limit == b.frame_limit && a.resolution == b.resolution &&
-               a.fullscreen_mode == b.fullscreen_mode && a.widescreen_fill == b.widescreen_fill;
+               a.fullscreen_mode == b.fullscreen_mode && a.widescreen_fill == b.widescreen_fill &&
+               a.filter == b.filter;
     }
     friend bool operator!=(const Improvements& a, const Improvements& b) { return !(a == b); }
 };
@@ -175,7 +205,8 @@ inline std::string serialize(const Improvements& imp) {
        << "frame_limit=" << imp.frame_limit << '\n'
        << "resolution=" << to_string(imp.resolution) << '\n'
        << "fullscreen_mode=" << to_string(imp.fullscreen_mode) << '\n'
-       << "widescreen_fill=" << (imp.widescreen_fill ? 1 : 0) << '\n';
+       << "widescreen_fill=" << (imp.widescreen_fill ? 1 : 0) << '\n'
+       << "filter=" << to_string(imp.filter) << '\n';
     return os.str();
 }
 
@@ -228,6 +259,8 @@ inline bool parse(std::string_view text, Improvements& out) {
         } else if (key == "widescreen_fill") {
             if (val != "0" && val != "1") return false;
             imp.widescreen_fill = val == "1";
+        } else if (key == "filter") {
+            if (!parse_texture_filter(val, imp.filter)) return false;
         }
         // Any other key belongs to a newer build: skip it.
     }

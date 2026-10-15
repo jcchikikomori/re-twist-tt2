@@ -417,3 +417,48 @@ TEST(improvements_widescreen_fill_works_on_every_renderer) {
     d.press("BUTTON_WIDESCREEN_FILL_PREV");
     ASSERT_TRUE(d.values().widescreen_fill);
 }
+
+// ---- TEXTURE FILTER (P7, deviation UX-8) ----------------------------------
+
+namespace {
+ImprovementsDialog::Context on(Backend b) {
+    ImprovementsDialog::Context c;
+    c.active = b;
+    return c;
+}
+}  // namespace
+
+TEST(improvements_filter_row_cycles_on_a_gpu) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), on(Backend::Vulkan));
+    ASSERT_EQ(d.dialog().label("LABEL_FILTER")->text, std::string("TEXTURE FILTER"));
+    ASSERT_EQ(value(d, "FILTER"), std::string("Sharp"));
+    const char* expected[] = {"Smooth", "Pixel art", "Sharp"};
+    for (const char* e : expected) {
+        d.press("BUTTON_FILTER_NEXT");
+        ASSERT_EQ(value(d, "FILTER"), std::string(e));
+    }
+    d.press("BUTTON_FILTER_PREV");
+    ASSERT_TRUE(d.values().filter == tt2::TextureFilter::PixelArt);
+    d.press("BUTTON_CANCEL");
+    ASSERT_TRUE(d.values().filter == tt2::TextureFilter::Sharp);
+}
+
+TEST(improvements_filter_row_is_greyed_out_on_software) {
+    Rig r;
+    tt2::Improvements saved;
+    saved.filter = tt2::TextureFilter::Smooth;                         // chosen on a GPU launch
+    ImprovementsDialog d(saved, r.services(), on(Backend::Software));
+    ASSERT_TRUE(!d.row("FILTER")->enabled);
+    ASSERT_EQ(value(d, "FILTER"), std::string("Sharp"));                 // what software draws
+    ASSERT_EQ(d.dialog().label("REASON_FILTER")->text, std::string("Not available with the software renderer"));
+    d.press("BUTTON_FILTER_NEXT");
+    ASSERT_TRUE(d.values().filter == tt2::TextureFilter::Smooth);      // kept, not overwritten
+}
+
+TEST(improvements_dialog_fits_with_seven_rows) {
+    Rig r;
+    const ImprovementsDialog d(windowed(), r.services(), on(Backend::OpenGL));
+    ASSERT_EQ(d.rows().size(), std::size_t{7});
+    ASSERT_TRUE(d.dialog().h <= SCREEN_H);
+}

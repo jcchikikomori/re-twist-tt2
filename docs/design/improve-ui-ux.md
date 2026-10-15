@@ -93,5 +93,5 @@ Each row is filled in by the phase that ships it.
 | UX-5 | Window sizes up to 1080p; borderless and native fullscreen | 0.3.0 (P5) |
 | UX-6 | Side bars filled in the original palette | 0.3.0 (P6) |
 | UX-7 | No 60 fps cap by default; vsync or a chosen limit | 0.3.0 (P4) |
-| UX-8 | Filtering, 2x placeholder art, full-resolution dialog layers | |
+| UX-8 | Filtering, 2x placeholder art, full-resolution dialog layers | 0.3.0 (P7 filter and layers; P8 art) |
 | UX-9 | Optional texture upscaler | |

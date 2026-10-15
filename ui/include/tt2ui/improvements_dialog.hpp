@@ -48,6 +48,11 @@ inline constexpr const char* UNLIMITED = "Unlimited";
 inline constexpr const char* FPS = " fps";
 inline constexpr const char* NO_VSYNC = "Not available with this renderer";
 inline constexpr const char* WIDESCREEN_FILL = "WIDESCREEN FILL";
+inline constexpr const char* FILTER = "TEXTURE FILTER";
+inline constexpr const char* SHARP = "Sharp";
+inline constexpr const char* SMOOTH = "Smooth";
+inline constexpr const char* PIXEL_ART = "Pixel art";
+inline constexpr const char* NO_SOFTWARE = "Not available with the software renderer";
 }  // namespace improvements_strings
 
 // Layout, dialog-local. Rows start under the header; OK / CANCEL sit 83 px
@@ -174,6 +179,9 @@ private:
         rows_.push_back(Row{"RESOLUTION", improvements_strings::RESOLUTION, {}, 0, true, {}, {}, {}});
         rows_.push_back(Row{"WIDESCREEN_FILL", improvements_strings::WIDESCREEN_FILL,
                             {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}, {}, {}});
+        rows_.push_back(Row{"FILTER", improvements_strings::FILTER,
+                            {improvements_strings::SHARP, improvements_strings::SMOOTH, improvements_strings::PIXEL_ART},
+                            0, true, {}, {}, {}});
         rows_.push_back(Row{"RENDERER", improvements_strings::RENDERER,
                             {improvements_strings::AUTO, backend_title(Backend::Vulkan), backend_title(Backend::OpenGL),
                              backend_title(Backend::Software)},
@@ -220,6 +228,8 @@ private:
     static constexpr tt2::RendererPref kRendererOrder[] = {tt2::RendererPref::Auto, tt2::RendererPref::Vulkan,
                                                             tt2::RendererPref::OpenGL, tt2::RendererPref::Software};
 
+    static constexpr tt2::TextureFilter kFilterOrder[] = {tt2::TextureFilter::Sharp, tt2::TextureFilter::Smooth,
+                                                           tt2::TextureFilter::PixelArt};
     static constexpr tt2::WindowMode kWindowOrder[] = {tt2::WindowMode::Windowed, tt2::WindowMode::Borderless,
                                                         tt2::WindowMode::Native};
 
@@ -253,6 +263,15 @@ private:
             }
             if (r.id == "VSYNC") r.index = values_.vsync ? 0 : 1;
             if (r.id == "WIDESCREEN_FILL") r.index = values_.widescreen_fill ? 0 : 1;
+            if (r.id == "FILTER") {
+                // Software always draws Sharp (render_options.hpp): show that,
+                // greyed out; the saved choice waits for a GPU launch.
+                r.enabled = context_.active != Backend::Software;
+                r.reason = r.enabled ? "" : improvements_strings::NO_SOFTWARE;
+                r.index = 0;
+                for (int i = 0; i < 3 && r.enabled; ++i)
+                    if (kFilterOrder[i] == values_.filter) r.index = i;
+            }
             if (r.id == "FRAME_LIMIT")
                 for (std::size_t i = 0; i < std::size(tt2::FRAME_LIMITS); ++i)
                     if (tt2::FRAME_LIMITS[i] == values_.frame_limit) r.index = static_cast<int>(i);
@@ -297,6 +316,7 @@ private:
         if (r.id == "RENDERER") values_.renderer = kRendererOrder[r.index];
         if (r.id == "VSYNC") values_.vsync = r.index == 0;
         if (r.id == "WIDESCREEN_FILL") values_.widescreen_fill = r.index == 0;
+        if (r.id == "FILTER") values_.filter = kFilterOrder[r.index];
         if (r.id == "FRAME_LIMIT") values_.frame_limit = tt2::FRAME_LIMITS[r.index];
     }
 

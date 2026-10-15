@@ -29,7 +29,8 @@ TEST(improvements_default_to_a_window) {
 TEST(improvements_text_round_trip_defaults) {
     const std::string text = serialize(Improvements{});
     ASSERT_EQ(text, std::string("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\nrenderer=auto\nvsync=1\nframe_limit=0\n"
-                                  "resolution=800x600\nfullscreen_mode=borderless\nwidescreen_fill=1\n"));
+                                  "resolution=800x600\nfullscreen_mode=borderless\nwidescreen_fill=1\n"
+                                  "filter=sharp\n"));
     Improvements back;
     back.window = WindowMode::Borderless;
     ASSERT_TRUE(parse(text, back));
@@ -89,6 +90,8 @@ TEST(improvements_text_rejects_garbage) {
         "format=re-twist-tt2 improvements\nfullscreen_mode=windowed\n",     // Alt+Enter needs a fullscreen mode
         "format=re-twist-tt2 improvements\nwidescreen_fill=yes\n",
         "format=re-twist-tt2 improvements\nwidescreen_fill=\n",
+        "format=re-twist-tt2 improvements\nfilter=bilinear\n",             // not a filter we offer
+        "format=re-twist-tt2 improvements\nfilter=Smooth\n",
         "format=re-twist-tt2 improvements\nno equals sign\n",
     };
     for (const char* text : bad) {
@@ -233,4 +236,17 @@ TEST(improvements_widescreen_fill_round_trips) {
     ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nresolution=1280x720\n", imp));
     ASSERT_TRUE(!imp.widescreen_fill);                                   // a missing key keeps its value
     ASSERT_TRUE(Improvements{}.widescreen_fill);                         // on by default
+}
+
+TEST(improvements_filter_round_trips_every_choice) {
+    for (TextureFilter f : {TextureFilter::Sharp, TextureFilter::Smooth, TextureFilter::PixelArt}) {
+        Improvements imp;
+        imp.filter = f;
+        Improvements back;
+        ASSERT_TRUE(parse(serialize(imp), back));
+        ASSERT_TRUE(back.filter == f);
+    }
+    Improvements imp;
+    ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nwidescreen_fill=0\n", imp));
+    ASSERT_TRUE(imp.filter == TextureFilter::Sharp);                     // a P6 file: today's look
 }
