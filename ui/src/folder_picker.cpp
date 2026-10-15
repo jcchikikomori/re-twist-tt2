@@ -2,6 +2,9 @@
 
 #include <SDL.h>
 
+#include <filesystem>
+#include <system_error>
+
 #include "tinyfiledialogs.h"
 
 namespace tt2ui {
@@ -17,7 +20,19 @@ PickResult pick_install_folder() {
     PickResult r;
     if (!picker_available(driver ? driver : "", tinyfd_response)) return r;
     // Constant strings only: tinyfiledialogs builds a shell command from them.
-    const char* path = tinyfd_selectFolderDialog("Choose your Text Twist 2 folder", "");
+    const char* start = "";
+#ifdef _WIN32
+    // Open where GameHouse installs usually live.
+    for (const char* dir : {"C:\\Program Files (x86)\\GameHouse\\Text Twist 2\\",
+                            "C:\\Program Files (x86)\\Games\\Text Twist 2\\"}) {
+        std::error_code ec;
+        if (std::filesystem::is_directory(dir, ec)) {
+            start = dir;
+            break;
+        }
+    }
+#endif
+    const char* path = tinyfd_selectFolderDialog("Choose your Text Twist 2 folder", start);
     if (!path || !*path) {
         r.kind = PickResult::Kind::Cancelled;
         return r;

@@ -42,6 +42,7 @@ echo junk > "$FAKE/images/gui/texttwist2_RADRM.dll"
 echo junk > "$FAKE/images/gui/x.nfo"
 
 "$TT2_ASSETS" manifest "$FAKE" > "$MANIFEST"
+cp -R "$FAKE" "$FAKE.good"   # step 3 damages $FAKE; step 5 imports this copy
 
 # 1. A clean import succeeds and stamps the folder.
 "$TT2" --import "$FAKE" --asset-dir "$ASSETS" --asset-manifest "$MANIFEST" || fail "import exited $?"
@@ -51,10 +52,12 @@ if [ -n "$(find "$ASSETS" -iname '*radrm*' -o -iname '*.nfo')" ]; then
     fail "a decoy DRM / .nfo file was copied"
 fi
 
-# 2. The game honours the stamp: no prompt on the next launch.
+# 2. The game honours the stamp: no prompt when the menu shows (~6.6 s in).
 LOG="$WORK/launch.log"
-"$TT2" --asset-dir "$ASSETS" --asset-manifest "$MANIFEST" --save-dir "$WORK/save" --exit-after 1500 > "$LOG"
+"$TT2" --asset-dir "$ASSETS" --asset-manifest "$MANIFEST" --save-dir "$WORK/save" --exit-after 8000 > "$LOG"
 grep -q '(user import, imported)' "$LOG" || { cat "$LOG"; fail "the import was not recognised"; }
+grep -q 'scene 2' "$LOG" || { cat "$LOG"; fail "the menu never showed"; }
+if grep -q 'prompt shown' "$LOG"; then cat "$LOG"; fail "asked to import again"; fi
 
 # 3. One flipped byte: the re-import fails and keeps the previous import.
 printf 'X' | dd of="$FAKE/images/gui/fake_2.png" bs=1 seek=10 conv=notrunc 2>/dev/null
@@ -63,8 +66,23 @@ if "$TT2" --import "$FAKE" --asset-dir "$ASSETS" --asset-manifest "$MANIFEST"; t
 fi
 "$TT2_ASSETS" verify "$ASSETS" "$MANIFEST" || fail "the previous import was damaged"
 
-# 4. An empty asset folder asks for an import.
-"$TT2" --asset-dir "$WORK/empty" --asset-manifest "$MANIFEST" --save-dir "$WORK/save" --exit-after 1500 > "$LOG"
-grep -q 'import needed' "$LOG" || { cat "$LOG"; fail "no import prompt for an empty folder"; }
+# 4. An empty asset folder asks once the menu shows; '~' answers NO.
+"$TT2" --asset-dir "$WORK/empty" --asset-manifest "$MANIFEST" --save-dir "$WORK/save" --type '~' \
+    --exit-after 8000 > "$LOG"
+grep -q 'import needed' "$LOG" || { cat "$LOG"; fail "no import needed for an empty folder"; }
+grep -q 'assets: prompt shown' "$LOG" || { cat "$LOG"; fail "the prompt never showed"; }
+grep -q 'assets: prompt closed' "$LOG" || { cat "$LOG"; fail "NO did not close the prompt"; }
+
+# 5. The in-game import, end to end: YES, the picker answered by
+#    --import-pick, verify + copy, free the loaded assets, swap the folders,
+#    reload them live; then OK. The next launch doesn't ask.
+LIVE="$WORK/live-assets"
+"$TT2" --asset-dir "$LIVE" --asset-manifest "$MANIFEST" --save-dir "$WORK/save" --import-pick "$FAKE.good" \
+    --type '||' --exit-after 9000 > "$LOG" 2>&1 || { cat "$LOG"; fail "the game exited $?"; }
+grep -q 'assets: reloaded from' "$LOG" || { cat "$LOG"; fail "no live reload after the in-game import"; }
+grep -q 'assets: prompt closed' "$LOG" || { cat "$LOG"; fail "OK did not close the result"; }
+"$TT2_ASSETS" verify "$LIVE" "$MANIFEST" || fail "the in-game import doesn't verify"
+"$TT2" --asset-dir "$LIVE" --asset-manifest "$MANIFEST" --save-dir "$WORK/save" --exit-after 8000 > "$LOG"
+if grep -q 'prompt shown' "$LOG"; then cat "$LOG"; fail "asked again after the in-game import"; fi
 
 echo "import smoke: ok"

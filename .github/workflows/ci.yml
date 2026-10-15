@@ -66,7 +66,7 @@ jobs:
           SDL_AUDIODRIVER: dummy
         run: >
           ./build/tt2 --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
-          --player CI --seed 5 --play untimed --type 'ab|' --exit-after 9000
+          --player CI --seed 5 --play untimed --type '~ab|' --exit-after 9000
 
       # tt2 --import on a synthetic install (random bytes, decoy DRM names),
       # then proof that no run touched the real per-user asset folder.
@@ -116,7 +116,7 @@ jobs:
           SDL_AUDIODRIVER: dummy
         run: >
           ./build/tt2.exe --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
-          --player CI --seed 5 --play untimed --type 'ab|' --exit-after 9000
+          --player CI --seed 5 --play untimed --type '~ab|' --exit-after 9000
 
       - name: Import smoke (synthetic install)
         env:

@@ -194,3 +194,11 @@ TEST(utf8_append_round_trips) {
     ASSERT_EQ(v[2], std::uint32_t{0x20AC});
     ASSERT_EQ(v[3], std::uint32_t{0x1F600});
 }
+
+TEST(placeholder_font_covers_the_import_dialogs) {
+    // "Importing... 42%", file paths, and the tt2 --import "<folder>" hint.
+    const BitmapFont f = make_placeholder_font(2);
+    for (char c : std::string("%/\"<>")) ASSERT_TRUE(f.glyph(static_cast<std::uint32_t>(c)) != nullptr);
+    ASSERT_EQ(std::string(placeholder_glyph_rows('%')), std::string("##..###.#...#...#.###..##"));
+    ASSERT_TRUE(placeholder_glyph_rows('\\') == nullptr);
+}

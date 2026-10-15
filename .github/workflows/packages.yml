@@ -64,8 +64,8 @@ jobs:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
         run: >
-          ./Re-Twist_TT2-*-x86_64.AppImage --save-dir "$RUNNER_TEMP/save"
-          --player CI --seed 5 --play untimed --type 'ab|' --exit-after 9000
+          ./Re-Twist_TT2-*-x86_64.AppImage --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
+          --player CI --seed 5 --play untimed --type '~ab|' --exit-after 9000
 
       - uses: actions/upload-artifact@v6
         with:
@@ -117,8 +117,8 @@ jobs:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
         run: >
-          ./dist/tt2.exe --save-dir "$RUNNER_TEMP/save" --player CI --seed 5
-          --play untimed --type 'ab|' --exit-after 9000
+          ./dist/tt2.exe --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
+          --player CI --seed 5 --play untimed --type '~ab|' --exit-after 9000
 
       - uses: actions/upload-artifact@v6
         with:

@@ -53,8 +53,10 @@
 #include "tt2ui/dialog_fade.hpp"
 #include "tt2ui/game_scene.hpp"
 #include "tt2ui/help_dialog.hpp"
+#include "tt2ui/import_prompt.hpp"
 #include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/profile_dialogs.hpp"
+#include "folder_picker.hpp"
 #include "tt2ui/welcome_flow.hpp"
 
 #ifndef TT2_IMPORTED_ASSETS_DIR
@@ -1095,6 +1097,7 @@ int main(int argc, char** argv) {
     std::string asset_dir_flag;   // --asset-dir DIR: the per-user import folder (default SDL_GetPrefPath)
     std::string import_from;      // --import DIR: import the player's own install, then exit
     std::string manifest_path;    // --asset-manifest FILE: replaces data/original-assets.sha256
+    std::string import_pick;      // --import-pick DIR: answers the in-game folder picker (smoke tests)
     std::string save_dir = tt2::default_save_dir().string();
     int speed = 1;
     long exit_after_ms = -1;
@@ -1109,13 +1112,15 @@ int main(int argc, char** argv) {
                                // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages,
                                // '#' SETTINGS, '@' its INFO (credits), '6'..'8' max length,
                                // '!' fullscreen switch, '^' Alt+Enter,
-                               // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND
+                               // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND;
+                               // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_flag = argv[++i];
         else if (!std::strcmp(argv[i], "--asset-dir") && i + 1 < argc) asset_dir_flag = argv[++i];
         else if (!std::strcmp(argv[i], "--import") && i + 1 < argc) import_from = argv[++i];
         else if (!std::strcmp(argv[i], "--asset-manifest") && i + 1 < argc) manifest_path = argv[++i];
+        else if (!std::strcmp(argv[i], "--import-pick") && i + 1 < argc) import_pick = argv[++i];
         else if (!std::strcmp(argv[i], "--save-dir") && i + 1 < argc) save_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--speed") && i + 1 < argc) speed = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--exit-after") && i + 1 < argc) exit_after_ms = std::atol(argv[++i]);
@@ -1271,7 +1276,7 @@ int main(int argc, char** argv) {
     SDL_RenderSetLogicalSize(ren, SCREEN_W, SCREEN_H);
     // One fading dialog slot per dialog source, drawn in this order.
     DialogLayer game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
-        menu_credits_layer, profile_layer;
+        menu_credits_layer, profile_layer, import_layer;
 
     // Hand pointer over clickable items, hourglass on the load
     // screen, arrow everywhere else. The original's cursor handling
@@ -1405,6 +1410,61 @@ int main(int argc, char** argv) {
         }
         begin_game(timed);
     };
+    // Entering the menu: the profile check (0x42d9b0), then --play.
+    auto menu_entered = [&] {
+        profile.on_menu_entered();
+        if (!auto_play.empty()) request_game(auto_play == "timed");
+    };
+
+    // The missing-assets prompt (import_prompt.hpp): asked once per launch,
+    // when the menu first shows and no verified import exists. It is modal;
+    // the profile dialog and --play wait until it closes.
+    std::optional<tt2ui::ImportPromptFlow> import_prompt;
+    std::optional<tt2ui::AssetImportJob> import_job;
+    bool import_prompt_shown = false;
+    const std::string import_dir = asset_inputs.user_dir;
+    tt2ui::ImportPromptServices import_services;
+    import_services.pick_folder = [&] {
+        if (!import_pick.empty()) return tt2ui::PickResult{tt2ui::PickResult::Kind::Picked, import_pick};
+        return tt2ui::pick_install_folder();
+    };
+    import_services.start_job = [&](const std::string& folder) {
+        std::printf("assets: importing from %s\n", folder.c_str());
+        import_job.emplace(tt2::utf8_path(folder), tt2::utf8_path(import_dir), manifest);
+    };
+    // One frame's share: 64 KiB pieces until the byte budget or ~12 ms is
+    // spent. A local disk imports the whole install in ~130 ms; a slow mount
+    // (WSL's /mnt/c) can still stall on a single file open.
+    import_services.step_job = [&](std::size_t budget) {
+        if (!import_job) return;
+        const Uint32 start = SDL_GetTicks();
+        for (std::size_t done = 0; !import_job->finished() && done < budget && SDL_GetTicks() - start < 12;
+             done += 64 * 1024)
+            import_job->step(64 * 1024);
+    };
+    import_services.commit_job = [&] {
+        if (!import_job) return false;
+        assets.release();   // Windows can't rename a folder with the music file open
+        const bool ok = import_job->commit();
+        if (!ok) assets.play_stream(SoundId::MusicMenu);   // still the old folder
+        return ok;
+    };
+    import_services.job_view = [&] {
+        tt2ui::ImportJobView v;
+        if (!import_job) return v;
+        v.stage = import_job->stage();
+        v.progress = import_job->progress();
+        v.error = import_job->error();
+        return v;
+    };
+    import_services.on_imported = [&] {
+        assets.set_dir(import_dir);   // textures reload lazily on the live renderer
+        assets.play_stream(SoundId::MusicMenu);
+        std::printf("assets: reloaded from %s\n", import_dir.c_str());
+    };
+    import_services.play_sound = [&](SoundId id) { assets.play_sound(id); };
+    import_services.wrap = wrap_message;
+
     auto menu_dialog_press = [&](const std::string& name) {
         if (name.empty() || !menu_dialog_open) return;
         assets.play_sound(SoundId::Button);
@@ -1496,6 +1556,20 @@ int main(int argc, char** argv) {
             if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_ALT) &&
                 (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER)) {
                 if (is_fullscreen_shortcut(true, true, e.key.repeat != 0)) toggle_fullscreen();
+                continue;
+            }
+            if (import_prompt) {
+                // The missing-assets prompt is modal, above everything else.
+                if (e.type == SDL_KEYDOWN) {
+                    const auto k = e.key.keysym.sym;
+                    if (k == SDLK_RETURN || k == SDLK_KP_ENTER) import_prompt->key_return();
+                    else if (k == SDLK_ESCAPE) import_prompt->key_escape();
+                }
+                if (e.type == SDL_MOUSEMOTION) dialog_mouse_move(import_prompt->dialog(), e.motion.x, e.motion.y);
+                if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
+                    dialog_mouse_down(import_prompt->dialog(), e.button.x, e.button.y);
+                if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT)
+                    import_prompt->press(dialog_mouse_up(import_prompt->dialog(), e.button.x, e.button.y));
                 continue;
             }
             if (profile.open()) {
@@ -1591,7 +1665,8 @@ int main(int argc, char** argv) {
         // under it: hourglass while loading, hand over a clickable
         // item, arrow everywhere else.
         bool hot = false;
-        if (profile.open()) hot = profile.pointer_over_clickable();
+        if (import_prompt) hot = dialog_pointer_hot(import_prompt->dialog());
+        else if (profile.open()) hot = profile.pointer_over_clickable();
         else if (menu_dialog_open) hot = dialog_pointer_hot(menu_dialog);
         else if (menu_help) hot = dialog_pointer_hot(menu_help->dialog());
         else if (menu_settings) hot = menu_settings->pointer_hot();
@@ -1625,6 +1700,20 @@ int main(int argc, char** argv) {
         } else if (game_fade_in > 0) {
             game_fade_in = std::max(0, game_fade_in - dt);
         }
+        // --type answers the missing-assets prompt first: '|' YES / OK, '~' NO / OK.
+        // Only while it waits for an answer: a key during the import would be lost.
+        const bool prompt_waiting = import_prompt && (import_prompt->state() == tt2ui::ImportPromptFlow::State::Prompt ||
+                                                      import_prompt->state() == tt2ui::ImportPromptFlow::State::Result);
+        if (prompt_waiting && !auto_type.empty() && (auto_type.front() == '|' || auto_type.front() == '~')) {
+            auto_type_ms += dt;
+            if (auto_type_ms >= 300) {
+                auto_type_ms = 0;
+                const char c = auto_type.front();
+                auto_type.erase(0, 1);
+                if (c == '|') import_prompt->key_return();
+                else import_prompt->key_escape();
+            }
+        }
         // --type also answers the menu's "Continue the game?" prompt: '|' YES, '~' NO.
         if (menu_dialog_open && !auto_type.empty() && (auto_type.front() == '|' || auto_type.front() == '~')) {
             auto_type_ms += dt;
@@ -1637,7 +1726,7 @@ int main(int argc, char** argv) {
         }
         // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL;
         // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter.
-        if (!game && auto_play.empty() && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
+        if (!game && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
             flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
             if (auto_type_ms >= 300) {
@@ -1694,6 +1783,15 @@ int main(int argc, char** argv) {
             flow.update(dt);
         }
         profile.update(dt);
+        if (import_prompt) {
+            import_prompt->tick(dt);   // runs the picker and the import job
+            if (!import_prompt->open()) {
+                import_prompt.reset();
+                import_job.reset();
+                std::printf("t=%ld ms: assets: prompt closed\n", simulated_ms);
+                menu_entered();
+            }
+        }
         if (menu_dialog_open) dialog_tick(menu_dialog, dt);
         if (menu_help) menu_help->tick(dt);
         if (menu_settings) menu_settings->tick(dt);
@@ -1701,8 +1799,15 @@ int main(int argc, char** argv) {
         if (flow.current() != last_scene) {
             last_scene = flow.current();
             std::printf("t=%ld ms: scene %d\n", simulated_ms, static_cast<int>(last_scene));
-            if (last_scene == SceneId::Selection) profile.on_menu_entered();   // 0x42d9b0
-            if (last_scene == SceneId::Selection && !auto_play.empty()) request_game(auto_play == "timed");
+            if (last_scene == SceneId::Selection) {
+                if (asset_choice.prompt && !import_prompt_shown) {
+                    import_prompt_shown = true;
+                    import_prompt.emplace(import_services);
+                    std::printf("t=%ld ms: assets: prompt shown\n", simulated_ms);
+                } else {
+                    menu_entered();
+                }
+            }
         }
         const bool want_text = profile.wants_text_input() || (game && !profile.open());
         if (want_text != text_input_on) {
@@ -1762,6 +1867,12 @@ int main(int argc, char** argv) {
         draw_dialog_layer(ren, profile_layer, static_cast<int>(profile.dialog().kind), dt, [&] {
             draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
         });
+        // Picking keeps the prompt on screen while the native dialog is open.
+        const int import_id = !import_prompt ? 0
+                              : import_prompt->state() == tt2ui::ImportPromptFlow::State::Picking
+                                  ? 1 + static_cast<int>(tt2ui::ImportPromptFlow::State::Prompt)
+                                  : 1 + static_cast<int>(import_prompt->state());
+        draw_dialog_layer(ren, import_layer, import_id, dt, [&] { draw_dialog(ren, assets, import_prompt->dialog()); });
         float black = flow.black_alpha();
         if (game_fade_out > 0) black = std::max(black, 1.0f - static_cast<float>(game_fade_out) / GAME_FADE_HALF_MS);
         if (game_fade_in > 0) black = std::max(black, static_cast<float>(game_fade_in) / GAME_FADE_HALF_MS);
@@ -1809,7 +1920,7 @@ int main(int argc, char** argv) {
     assets.release();   // before the mixer and the renderer it came from
     if (audio) Mix_CloseAudio();
     for (DialogLayer* l : {&game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
-                           &menu_credits_layer, &profile_layer})
+                           &menu_credits_layer, &profile_layer, &import_layer})
         l->release();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

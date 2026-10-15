@@ -43,7 +43,10 @@ inline constexpr const char* NO_PICKER_BODY =
     "This system has no folder picker. Import from a terminal instead:\ntt2 --import \"<your Text Twist 2 folder>\"";
 }  // namespace import_strings
 
-inline constexpr std::size_t IMPORT_STEP_BYTES = 4u << 20;   // per frame
+inline constexpr std::size_t IMPORT_STEP_BYTES = 4u << 20;   // per frame, at most
+// Wider than the original 400 px yes/no: the header and the paths are
+// longer than any original dialog text.
+inline constexpr int IMPORT_DIALOG_W = 600;
 inline constexpr std::size_t IMPORT_LISTED_PATHS = 3;        // paths shown in the failure dialog
 
 // "Importing... 42%"
@@ -136,21 +139,23 @@ private:
 
     void show_prompt() {
         state_ = State::Prompt;
-        dialog_ = build_yes_no(import_strings::PROMPT_HEADER, import_strings::PROMPT_BODY, false, s_.wrap);
+        dialog_ = build_yes_no(import_strings::PROMPT_HEADER, import_strings::PROMPT_BODY, false, s_.wrap,
+                               IMPORT_DIALOG_W);
     }
     void show_result(const char* header, const std::string& text) {
         state_ = State::Result;
-        dialog_ = build_yes_no(header, text, true, s_.wrap);
+        dialog_ = build_yes_no(header, text, true, s_.wrap, IMPORT_DIALOG_W);
     }
     void show_progress(float progress) {
         if (state_ != State::Running || !dialog_.label("PROGRESS")) {
             Dialog d;
-            d.w = YESNO_MIN_W;
+            d.w = IMPORT_DIALOG_W;
             d.h = YESNO_MIN_H;
-            d.labels.push_back(TextLabel{"HEADER", "FONT_DIALOG_HEADERS2", import_strings::PROGRESS_HEADER, 200, 13,
+            const float cx = IMPORT_DIALOG_W / 2.0f;
+            d.labels.push_back(TextLabel{"HEADER", "FONT_DIALOG_HEADERS2", import_strings::PROGRESS_HEADER, cx, 13,
                                          TextAlign::Center, Anchor::Top, -1});
-            d.labels.push_back(TextLabel{"PROGRESS", "FONT_SETTINGSTEXT", "", 200, 87, TextAlign::Center,
-                                         Anchor::Top, -1, YESNO_MESSAGE_W});
+            d.labels.push_back(TextLabel{"PROGRESS", "FONT_SETTINGSTEXT", "", cx, 87, TextAlign::Center,
+                                         Anchor::Top, -1, IMPORT_DIALOG_W - 10});
             dialog_ = std::move(d);
         }
         state_ = State::Running;

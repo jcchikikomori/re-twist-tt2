@@ -99,25 +99,28 @@ constexpr int YESNO_MESSAGE_W = 390;
 // main.cpp backs it with wrap_text() and the loaded FONT_SETTINGSTEXT.
 using LineBreaker = std::function<std::string(const std::string& text, int max_width)>;
 
-// Without a breaker only the message's own "\n" break lines.
+// Without a breaker only the message's own "\n" break lines. `width`
+// widens the dialog for port-only dialogs with longer text (the original
+// ones all use 400); everything stays centred.
 inline Dialog build_yes_no(const char* header, const std::string& text, bool single_ok = false,
-                           const LineBreaker& wrap = {}) {
+                           const LineBreaker& wrap = {}, int width = YESNO_MIN_W) {
     Dialog d;
-    d.w = YESNO_MIN_W;
-    const std::string message = wrap ? wrap(text, YESNO_MESSAGE_W) : text;
+    d.w = std::max(YESNO_MIN_W, width);
+    const float cx = static_cast<float>(d.w) / 2.0f;
+    const int msg_w = YESNO_MESSAGE_W + (d.w - YESNO_MIN_W);
+    const std::string message = wrap ? wrap(text, msg_w) : text;
     const int msg_h = text_line_count(message) * YESNO_LINE_H;
     const int button_y = YESNO_BUTTON_Y + msg_h;
     d.h = std::max(YESNO_MIN_H, button_y + YESNO_BUTTON_H + YESNO_BOTTOM_PAD);
-    d.labels.push_back(TextLabel{"HEADER", "FONT_DIALOG_HEADERS2", header, 200, 13, TextAlign::Center, Anchor::Top, -1});
-    TextLabel msg{"MESSAGE", "FONT_SETTINGSTEXT", message, 200, 87, TextAlign::Center, Anchor::Top, -1,
-                  YESNO_MESSAGE_W};
+    d.labels.push_back(TextLabel{"HEADER", "FONT_DIALOG_HEADERS2", header, cx, 13, TextAlign::Center, Anchor::Top, -1});
+    TextLabel msg{"MESSAGE", "FONT_SETTINGSTEXT", message, cx, 87, TextAlign::Center, Anchor::Top, -1, msg_w};
     msg.line_height = YESNO_LINE_H;
     d.labels.push_back(msg);
     if (single_ok) {
-        d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", 200, static_cast<float>(button_y), Anchor::Top));
+        d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", cx, static_cast<float>(button_y), Anchor::Top));
     } else {
-        d.buttons.push_back(make_dialog_button("BUTTON_YES", "BUTTON_YES", 190, static_cast<float>(button_y), Anchor::TopRight));
-        d.buttons.push_back(make_dialog_button("BUTTON_NO", "BUTTON_NO", 210, static_cast<float>(button_y), Anchor::TopLeft));
+        d.buttons.push_back(make_dialog_button("BUTTON_YES", "BUTTON_YES", cx - 10, static_cast<float>(button_y), Anchor::TopRight));
+        d.buttons.push_back(make_dialog_button("BUTTON_NO", "BUTTON_NO", cx + 10, static_cast<float>(button_y), Anchor::TopLeft));
     }
     return d;
 }

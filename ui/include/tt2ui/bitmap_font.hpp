@@ -299,7 +299,7 @@ inline std::string wrap_text(const BitmapFont& font, const std::string& text, in
 // maps to uppercase.
 inline constexpr int PLACEHOLDER_GLYPH_W = 5;
 inline constexpr int PLACEHOLDER_GLYPH_H = 5;
-inline constexpr const char* PLACEHOLDER_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789?!.,\'-_";
+inline constexpr const char* PLACEHOLDER_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789?!.,\'-_%/\"<>";
 
 inline const char* placeholder_glyph_rows(std::uint32_t cp) {
     switch (cp) {
@@ -346,6 +346,12 @@ inline const char* placeholder_glyph_rows(std::uint32_t cp) {
         case '\'': return "..#....#.................";
         case '-': return "...........###...........";
         case '_': return "....................#####";
+        // The asset import dialogs: "42%", paths, and the tt2 --import "<folder>" hint.
+        case '%': return "##..###.#...#...#.###..##";
+        case '/': return "....#...#...#...#...#....";
+        case '"': return ".#.#..#.#................";
+        case '<': return "...#...#...#.....#.....#.";
+        case '>': return ".#.....#.....#...#...#...";
         default: return nullptr;
     }
 }

@@ -229,3 +229,26 @@ TEST(import_prompt_wraps_the_message_with_the_breaker) {
     ASSERT_EQ(f.dialog().label("MESSAGE")->text.substr(0, 11), std::string("This game \n"));
     ASSERT_TRUE(f.dialog().h > YESNO_MIN_H - 1);
 }
+
+TEST(import_dialogs_are_wider_and_centred) {
+    Fake fake;
+    fake.pick = PickResult{};
+    ImportPromptFlow f(fake.services());
+    ASSERT_EQ(f.dialog().w, IMPORT_DIALOG_W);
+    ASSERT_TRUE(f.dialog().label("HEADER")->x == IMPORT_DIALOG_W / 2.0f);
+    ASSERT_TRUE(f.dialog().button("BUTTON_YES")->sprite.x == IMPORT_DIALOG_W / 2.0f - 10);
+    f.press("BUTTON_YES");
+    f.tick(16);   // no picker: the result dialog
+    ASSERT_EQ(f.dialog().w, IMPORT_DIALOG_W);
+    ASSERT_TRUE(f.dialog().button("BUTTON_OK")->sprite.x == IMPORT_DIALOG_W / 2.0f);
+}
+
+TEST(build_yes_no_default_width_is_the_original_layout) {
+    // The original dialogs keep 400 px, centred on x = 200.
+    const Dialog d = build_yes_no("PASS?", "Do you want to use a pass", false);
+    ASSERT_EQ(d.w, YESNO_MIN_W);
+    ASSERT_TRUE(d.label("HEADER")->x == 200.0f);
+    ASSERT_TRUE(d.button("BUTTON_YES")->sprite.x == 190.0f);
+    ASSERT_TRUE(d.button("BUTTON_NO")->sprite.x == 210.0f);
+    ASSERT_EQ(build_yes_no("x", "y", true, {}, 300).w, YESNO_MIN_W);   // never narrower
+}
