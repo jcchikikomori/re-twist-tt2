@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(tt2
-    VERSION 0.2.0
+    VERSION 0.2.1
     DESCRIPTION "Text Twist 2 — extracted engine in portable C++17"
     LANGUAGES CXX
 )
