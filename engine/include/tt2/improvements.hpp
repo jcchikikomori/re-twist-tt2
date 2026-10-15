@@ -39,8 +39,38 @@ inline bool parse_window_mode(std::string_view s, WindowMode& out) {
     return false;
 }
 
+// Which renderer to try first (deviation UX-1; the original only has
+// Direct3D 9). Auto tries Vulkan, then OpenGL, then software
+// (ui/include/tt2ui/render_backend.hpp). A change applies on the next launch.
+enum class RendererPref {
+    Auto,
+    Vulkan,
+    OpenGL,
+    Software,
+};
+
+inline const char* to_string(RendererPref r) {
+    switch (r) {
+        case RendererPref::Auto: return "auto";
+        case RendererPref::Vulkan: return "vulkan";
+        case RendererPref::OpenGL: return "opengl";
+        case RendererPref::Software: return "software";
+    }
+    return "auto";
+}
+
+inline bool parse_renderer_pref(std::string_view s, RendererPref& out) {
+    for (RendererPref r : {RendererPref::Auto, RendererPref::Vulkan, RendererPref::OpenGL, RendererPref::Software})
+        if (s == to_string(r)) {
+            out = r;
+            return true;
+        }
+    return false;
+}
+
 struct Improvements {
     WindowMode window = WindowMode::Windowed;   // GameSettings' default: windowed first run
+    RendererPref renderer = RendererPref::Auto;
 
     // A 0.2.x settings.txt only knows fullscreen on / off; its fullscreen
     // was SDL's desktop-sized borderless window.
@@ -53,14 +83,17 @@ struct Improvements {
     // still starts in the same kind of window.
     bool legacy_fullscreen() const { return window != WindowMode::Windowed; }
 
-    friend bool operator==(const Improvements& a, const Improvements& b) { return a.window == b.window; }
+    friend bool operator==(const Improvements& a, const Improvements& b) {
+        return a.window == b.window && a.renderer == b.renderer;
+    }
     friend bool operator!=(const Improvements& a, const Improvements& b) { return !(a == b); }
 };
 
 inline std::string serialize(const Improvements& imp) {
     std::ostringstream os;
     os << "format=re-twist-tt2 improvements\nversion=1\n"
-       << "window=" << to_string(imp.window) << '\n';
+       << "window=" << to_string(imp.window) << '\n'
+       << "renderer=" << to_string(imp.renderer) << '\n';
     return os.str();
 }
 
@@ -89,6 +122,8 @@ inline bool parse(std::string_view text, Improvements& out) {
             if (val != "1") return false;
         } else if (key == "window") {
             if (!parse_window_mode(val, imp.window)) return false;
+        } else if (key == "renderer") {
+            if (!parse_renderer_pref(val, imp.renderer)) return false;
         }
         // Any other key belongs to a newer build: skip it.
     }

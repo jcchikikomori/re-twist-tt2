@@ -6,7 +6,8 @@
 // TextLabel), so the renderer draws it like any other dialog. Each row is
 // a cycle control: a label, the value text, and left / right arrows that
 // step through the choices (wrapping round). A row can be disabled, with
-// a reason line under it. OK keeps the edited values and CANCEL restores
+// a reason line under it, and any row can carry a note line (the RENDERER
+// row names the renderer in use). OK keeps the edited values and CANCEL restores
 // the saved ones, the same contract as SETTINGS; the host owns saving and
 // applying them.
 #pragma once
@@ -17,6 +18,7 @@
 
 #include "tt2/improvements.hpp"
 #include "tt2ui/game_dialogs.hpp"
+#include "tt2ui/render_backend.hpp"
 
 namespace tt2ui {
 
@@ -25,6 +27,10 @@ inline constexpr const char* HEADER = "IMPROVEMENTS";
 inline constexpr const char* WINDOW = "DISPLAY MODE";
 inline constexpr const char* WINDOWED = "Windowed";
 inline constexpr const char* BORDERLESS = "Borderless";
+inline constexpr const char* RENDERER = "RENDERER";
+inline constexpr const char* AUTO = "Auto";
+inline constexpr const char* USING = "Using ";
+inline constexpr const char* AFTER_RESTART = ", applies after a restart";
 }  // namespace improvements_strings
 
 // Layout, dialog-local. Rows start under the header; OK / CANCEL sit 83 px
@@ -51,8 +57,15 @@ public:
         std::function<void(SoundId)> play_sound;
     };
 
+    // What this run started with: the renderer change applies on the next
+    // launch (Q4), so the dialog compares against it.
+    struct Context {
+        Backend active = Backend::Software;
+        tt2::RendererPref launched = tt2::RendererPref::Auto;
+    };
+
     // One cycle row. `id` names its buttons and labels: LABEL_<id>,
-    // VALUE_<id>, REASON_<id>, BUTTON_<id>_PREV, BUTTON_<id>_NEXT.
+    // VALUE_<id>, REASON_<id>, NOTE_<id>, BUTTON_<id>_PREV, BUTTON_<id>_NEXT.
     struct Row {
         std::string id;
         std::string title;
@@ -60,10 +73,13 @@ public:
         int index = 0;
         bool enabled = true;
         std::string reason;   // shown while disabled
+        std::string note;     // shown while enabled
     };
 
     ImprovementsDialog(const tt2::Improvements& saved, Services services)
-        : saved_(saved), values_(saved), services_(std::move(services)) {
+        : ImprovementsDialog(saved, std::move(services), Context()) {}
+    ImprovementsDialog(const tt2::Improvements& saved, Services services, Context context)
+        : saved_(saved), values_(saved), services_(std::move(services)), context_(context) {
         build();
     }
 
@@ -129,7 +145,11 @@ public:
 private:
     void build() {
         rows_.push_back(Row{"WINDOW", improvements_strings::WINDOW,
-                            {improvements_strings::WINDOWED, improvements_strings::BORDERLESS}, 0, true, {}});
+                            {improvements_strings::WINDOWED, improvements_strings::BORDERLESS}, 0, true, {}, {}});
+        rows_.push_back(Row{"RENDERER", improvements_strings::RENDERER,
+                            {improvements_strings::AUTO, backend_title(Backend::Vulkan), backend_title(Backend::OpenGL),
+                             backend_title(Backend::Software)},
+                            0, true, {}, {}});
         Dialog d;
         d.w = IMPROVEMENTS_W;
         d.h = improvements_dialog_height(static_cast<int>(rows_.size()));
@@ -143,6 +163,8 @@ private:
             d.labels.push_back(TextLabel{"VALUE_" + r.id, "FONT_SETTINGSTEXT", {}, IMPROVEMENTS_VALUE_X, cy,
                                          TextAlign::Center, Anchor::Center, -1});
             d.labels.push_back(TextLabel{"REASON_" + r.id, "FONT_SETTINGSTEXT", r.reason, IMPROVEMENTS_LABEL_X,
+                                         cy + 22.0f, TextAlign::Left, Anchor::Center, -1});
+            d.labels.push_back(TextLabel{"NOTE_" + r.id, "FONT_SETTINGSTEXT", r.note, IMPROVEMENTS_LABEL_X,
                                          cy + 22.0f, TextAlign::Left, Anchor::Center, -1});
             d.buttons.push_back(arrow("BUTTON_" + r.id + "_PREV", "BUTTON_ARROW_LEFT", IMPROVEMENTS_PREV_X, cy));
             d.buttons.push_back(arrow("BUTTON_" + r.id + "_NEXT", "BUTTON_ARROW_RIGHT", IMPROVEMENTS_NEXT_X, cy));
@@ -160,14 +182,25 @@ private:
         return make_dialog_button(name.c_str(), image, x, y, Anchor::Center, IMPROVEMENTS_ARROW, IMPROVEMENTS_ARROW * 4);
     }
 
-    // values_ -> row indices.
+    static constexpr tt2::RendererPref kRendererOrder[] = {tt2::RendererPref::Auto, tt2::RendererPref::Vulkan,
+                                                            tt2::RendererPref::OpenGL, tt2::RendererPref::Software};
+
+    // values_ -> row indices and notes.
     void load_rows() {
-        for (auto& r : rows_)
+        for (auto& r : rows_) {
             if (r.id == "WINDOW") r.index = values_.window == tt2::WindowMode::Borderless ? 1 : 0;
+            if (r.id == "RENDERER") {
+                for (int i = 0; i < 4; ++i)
+                    if (kRendererOrder[i] == values_.renderer) r.index = i;
+                r.note = std::string(improvements_strings::USING) + backend_title(context_.active) +
+                         (values_.renderer != context_.launched ? improvements_strings::AFTER_RESTART : "");
+            }
+        }
     }
     // One row's index -> values_.
     void store(const Row& r) {
         if (r.id == "WINDOW") values_.window = r.index == 1 ? tt2::WindowMode::Borderless : tt2::WindowMode::Windowed;
+        if (r.id == "RENDERER") values_.renderer = kRendererOrder[r.index];
     }
 
     void refresh() {
@@ -178,6 +211,10 @@ private:
             if (TextLabel* why = dialog_.label("REASON_" + r.id)) {
                 why->text = r.reason;
                 why->visible = !r.enabled && !r.reason.empty();
+            }
+            if (TextLabel* note = dialog_.label("NOTE_" + r.id)) {
+                note->text = r.note;
+                note->visible = r.enabled && !r.note.empty();
             }
             for (const char* side : {"_PREV", "_NEXT"})
                 if (MenuButton* b = dialog_.button("BUTTON_" + r.id + side)) b->enabled = r.enabled;
@@ -190,6 +227,7 @@ private:
     tt2::Improvements saved_;
     tt2::Improvements values_;
     Services services_;
+    Context context_;
     Dialog dialog_;
     std::vector<Row> rows_;
 };

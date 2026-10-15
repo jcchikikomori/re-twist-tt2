@@ -86,7 +86,7 @@ Each row is filled in by the phase that ships it.
 
 | ID | Deviation from the original | Shipped in |
 | --- | --- | --- |
-| UX-1 | Vulkan / OpenGL / software through SDL3 instead of Direct3D 9 | |
+| UX-1 | Vulkan / OpenGL / software through SDL3 instead of Direct3D 9 | 0.3.0 (P1, P3) |
 | UX-2 | IMPROVEMENTS button in place of the GameHouse link | 0.3.0 (P2) |
 | UX-3 | SETTINGS hides its FULLSCREEN switch | 0.3.0 (P2) |
 | UX-4 | Display options saved in `improvements.txt` | 0.3.0 (P2) |

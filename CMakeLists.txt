@@ -102,6 +102,9 @@ if(TT2_BUILD_UI)
         # system libpng and dlopen it, a file no package carries (the first
         # SDL3 Windows zip lost its JPEG decoder that way).
         enable_language(C)
+        if(POLICY CMP0135)
+            cmake_policy(SET CMP0135 NEW)   # extracted files get the extraction time
+        endif()
         include(FetchContent)
         set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
         set(SDL_SHARED OFF CACHE BOOL "" FORCE)
@@ -170,7 +173,7 @@ if(TT2_BUILD_UI)
             target_link_libraries(tt2_tinyfd PRIVATE comdlg32 ole32 shell32)
         endif()
 
-        add_executable(tt2_app ui/src/main.cpp ui/src/audio.cpp ui/src/folder_picker.cpp)
+        add_executable(tt2_app ui/src/main.cpp ui/src/audio.cpp ui/src/folder_picker.cpp ui/src/render_backend.cpp)
         target_link_libraries(tt2_app PRIVATE tt2_ui_logic tt2_platform tt2_tinyfd ${TT2_SDL_LIBS})
         set_target_properties(tt2_app PROPERTIES OUTPUT_NAME tt2)
         # The source tree's imported-assets/: a developer fallback, read when
@@ -236,6 +239,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_placeholder_assets.cpp
         ui/tests/test_audio_mix.cpp
         ui/tests/test_improvements_dialog.cpp
+        ui/tests/test_render_backend.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)

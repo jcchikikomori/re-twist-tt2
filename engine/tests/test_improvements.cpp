@@ -28,7 +28,7 @@ TEST(improvements_default_to_a_window) {
 
 TEST(improvements_text_round_trip_defaults) {
     const std::string text = serialize(Improvements{});
-    ASSERT_EQ(text, std::string("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\n"));
+    ASSERT_EQ(text, std::string("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\nrenderer=auto\n"));
     Improvements back;
     back.window = WindowMode::Borderless;
     ASSERT_TRUE(parse(text, back));
@@ -72,6 +72,8 @@ TEST(improvements_text_rejects_garbage) {
         "format=re-twist-tt2 improvements\nversion=2\n",
         "format=re-twist-tt2 improvements\nwindow=fullscreen-ish\n",          // known key, bad value
         "format=re-twist-tt2 improvements\nwindow=\n",
+        "format=re-twist-tt2 improvements\nrenderer=metal\n",               // not a backend we offer
+        "format=re-twist-tt2 improvements\nrenderer=direct3d11\n",          // excluded (Q12)
         "format=re-twist-tt2 improvements\nno equals sign\n",
     };
     for (const char* text : bad) {
@@ -128,4 +130,17 @@ TEST(improvements_never_change_the_settings_txt_format) {
     GameSettings back;
     ASSERT_TRUE(parse(serialize(g), back));
     ASSERT_TRUE(back.fullscreen);
+}
+
+TEST(improvements_renderer_round_trips_every_choice) {
+    for (RendererPref r : {RendererPref::Auto, RendererPref::Vulkan, RendererPref::OpenGL, RendererPref::Software}) {
+        Improvements imp;
+        imp.renderer = r;
+        Improvements back;
+        ASSERT_TRUE(parse(serialize(imp), back));
+        ASSERT_TRUE(back.renderer == r);
+    }
+    Improvements imp;
+    ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\n", imp));
+    ASSERT_TRUE(imp.renderer == RendererPref::Auto);                    // a P2 file: the default
 }

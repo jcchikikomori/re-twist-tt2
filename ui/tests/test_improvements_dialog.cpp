@@ -140,3 +140,65 @@ TEST(improvements_dialog_fits_the_screen_with_every_planned_row) {
         ASSERT_TRUE(b.sprite.top() + b.sprite.sheet.frame_h <= d.dialog().h);
     }
 }
+
+// ---- RENDERER (P3, deviation UX-1) --------------------------------------
+
+namespace {
+ImprovementsDialog::Context running(Backend active, tt2::RendererPref launched) {
+    ImprovementsDialog::Context c;
+    c.active = active;
+    c.launched = launched;
+    return c;
+}
+std::string note(const ImprovementsDialog& d) { return d.dialog().label("NOTE_RENDERER")->text; }
+}  // namespace
+
+TEST(improvements_renderer_row_cycles_four_choices) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), running(Backend::OpenGL, tt2::RendererPref::Auto));
+    ASSERT_EQ(value(d, "RENDERER"), std::string("Auto"));
+    const char* expected[] = {"Vulkan", "OpenGL", "Software", "Auto"};
+    for (const char* e : expected) {
+        d.press("BUTTON_RENDERER_NEXT");
+        ASSERT_EQ(value(d, "RENDERER"), std::string(e));
+    }
+    d.press("BUTTON_RENDERER_PREV");                                     // wraps backwards
+    ASSERT_TRUE(d.values().renderer == tt2::RendererPref::Software);
+    ASSERT_TRUE(d.values().window == tt2::WindowMode::Windowed);        // the other row is untouched
+}
+
+TEST(improvements_renderer_note_names_the_renderer_in_use) {
+    Rig r;
+    const ImprovementsDialog d(windowed(), r.services(), running(Backend::Vulkan, tt2::RendererPref::Auto));
+    ASSERT_TRUE(d.dialog().label("NOTE_RENDERER")->visible);
+    ASSERT_EQ(note(d), std::string("Using Vulkan"));                    // no restart note: nothing changed
+}
+
+TEST(improvements_renderer_note_asks_for_a_restart_only_after_a_change) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), running(Backend::OpenGL, tt2::RendererPref::Auto));
+    d.press("BUTTON_RENDERER_NEXT");                                     // Vulkan
+    ASSERT_EQ(note(d), std::string("Using OpenGL, applies after a restart"));
+    d.press("BUTTON_RENDERER_PREV");                                     // back to what this run started with
+    ASSERT_EQ(note(d), std::string("Using OpenGL"));
+}
+
+TEST(improvements_renderer_note_compares_with_the_launch_not_the_file) {
+    // --renderer software overrides an "auto" file for one run: the saved
+    // choice already differs from what is running.
+    Rig r;
+    const ImprovementsDialog d(windowed(), r.services(), running(Backend::Software, tt2::RendererPref::Software));
+    ASSERT_EQ(note(d), std::string("Using Software, applies after a restart"));
+}
+
+TEST(improvements_renderer_cancel_restores_the_saved_choice) {
+    Rig r;
+    tt2::Improvements saved;
+    saved.renderer = tt2::RendererPref::OpenGL;
+    ImprovementsDialog d(saved, r.services(), running(Backend::OpenGL, tt2::RendererPref::OpenGL));
+    d.press("BUTTON_RENDERER_NEXT");
+    ASSERT_TRUE(d.values().renderer == tt2::RendererPref::Software);
+    d.press("BUTTON_CANCEL");
+    ASSERT_TRUE(d.values().renderer == tt2::RendererPref::OpenGL);
+    ASSERT_EQ(value(d, "RENDERER"), std::string("OpenGL"));
+}

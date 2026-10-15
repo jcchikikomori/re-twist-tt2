@@ -203,9 +203,11 @@ The port moves the window mode out of `DIALOG_SETTINGS` into its own IMPROVEMENT
   format=re-twist-tt2 improvements
   version=1
   window=windowed
+  renderer=auto
   ```
 
-  `window` is `windowed` or `borderless`. Unlike `settings.txt`, an unknown key is skipped, so a file from a
+  `window` is `windowed` or `borderless`; `renderer` is `auto`, `vulkan`, `opengl` or `software`, the first
+  renderer to try on the next launch (UX-1, [`display-and-timing.md`](display-and-timing.md) §2). Unlike `settings.txt`, an unknown key is skipped, so a file from a
   newer build still loads; a known key with a bad value rejects the file. A build that finds no
   `improvements.txt` derives it from `settings.txt` (`fullscreen=1` is borderless). Every change also writes
   `settings.txt`'s `fullscreen` (on for any mode but windowed), so a 0.2.x build opened later starts in the

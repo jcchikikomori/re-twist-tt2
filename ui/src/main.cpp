@@ -19,6 +19,8 @@
 //                      (headless with SDL_VIDEODRIVER=dummy; feeds the README GIF)
 //   --player NAME      add NAME (if new) and make it current before the
 //                      window opens; for smoke tests and frame dumps
+//   --renderer NAME    auto, vulkan, opengl or software: the first renderer to
+//                      try, for this run only (IMPROVEMENTS saves it)
 
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
@@ -56,6 +58,7 @@
 #include "tt2ui/profile_dialogs.hpp"
 #include "audio.hpp"
 #include "folder_picker.hpp"
+#include "render_backend_sdl.hpp"
 #include "tt2ui/welcome_flow.hpp"
 
 #ifndef TT2_IMPORTED_ASSETS_DIR
@@ -1198,6 +1201,7 @@ int main(int argc, char** argv) {
                                // '&' the main menu SETTINGS' IMPORT (re-import, deviation OP-7)
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     std::vector<std::string> probe_files;   // --probe-media FILE (repeatable): decode, report, exit
+    std::string renderer_flag;              // --renderer auto|vulkan|opengl|software: this run only
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--assets") && i + 1 < argc) assets_flag = argv[++i];
         else if (!std::strcmp(argv[i], "--asset-dir") && i + 1 < argc) asset_dir_flag = argv[++i];
@@ -1216,10 +1220,12 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--type") && i + 1 < argc) auto_type = argv[++i];
         else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc) debug_seed = std::atol(argv[++i]);
         else if (!std::strcmp(argv[i], "--probe-media") && i + 1 < argc) probe_files.push_back(argv[++i]);
+        else if (!std::strcmp(argv[i], "--renderer") && i + 1 < argc) renderer_flag = argv[++i];
         else if (!std::strcmp(argv[i], "--help")) {
             std::printf("usage: tt2 [--assets DIR] [--data-dir DIR] [--save-dir DIR] [--player NAME]\n"
                         "           [--play untimed|timed] [--speed N] [--exit-after MS]\n"
                         "           [--import DIR] [--asset-dir DIR] [--asset-manifest FILE]\n"
+                        "           [--renderer auto|vulkan|opengl|software]\n"
                         "\n"
                         "  --import DIR          copy the art, fonts and sounds from your own Text Twist 2\n"
                         "                        install at DIR into the asset folder, then exit\n"
@@ -1228,7 +1234,8 @@ int main(int argc, char** argv) {
                         "                        ~/.local/share/re-twist-tt2/imported-assets)\n"
                         "  --assets DIR          load the art from DIR as is (no import, no checks)\n"
                         "  --asset-manifest FILE check imports against FILE instead of\n"
-                        "                        data/original-assets.sha256\n");
+                        "                        data/original-assets.sha256\n"
+                        "  --renderer NAME       try NAME first for this run (IMPROVEMENTS saves it for good)\n");
             return 0;
         }
     }
@@ -1237,6 +1244,11 @@ int main(int argc, char** argv) {
         for (const std::string& f : probe_files) all_ok = probe_media(f) && all_ok;
         std::printf("probe: %s\n", all_ok ? "ok" : "failed");
         return all_ok ? 0 : 1;
+    }
+    tt2::RendererPref renderer_override = tt2::RendererPref::Auto;
+    if (!renderer_flag.empty() && !tt2::parse_renderer_pref(renderer_flag, renderer_override)) {
+        std::fprintf(stderr, "unknown --renderer %s (auto, vulkan, opengl or software)\n", renderer_flag.c_str());
+        return 2;
     }
     if (speed < 1) speed = 1;
     if (fixed_dt < 0) fixed_dt = 0;
@@ -1361,6 +1373,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "warning: %s is unreadable; using the display options from settings.txt\n",
                      store.improvements_path().string().c_str());
     settings.fullscreen = improvements.legacy_fullscreen();
+    // The renderer this run starts with: the file's, or --renderer for this run only.
+    const tt2::RendererPref launch_renderer = renderer_flag.empty() ? improvements.renderer : renderer_override;
     std::printf("improvements: window %s%s\n", tt2::to_string(improvements.window),
                 !save_dir.empty() && !store.has_improvements() ? " (from settings.txt)" : "");
 
@@ -1378,15 +1392,19 @@ int main(int argc, char** argv) {
     }
     SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
     // Deviation (UX-1, display-and-timing.md §2): the original renders with
-    // Direct3D 9 only; SDL picks its best renderer for this platform here.
-    SDL_Renderer* ren = SDL_CreateRenderer(win, nullptr);
+    // Direct3D 9 only; the port tries Vulkan, then OpenGL, then software
+    // (render_backend.hpp).
+    const RendererPick pick = create_renderer(win, launch_renderer);
+    SDL_Renderer* ren = pick.renderer;
     if (!ren) {
-        std::fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
+        std::fprintf(stderr, "renderer: %s\n", pick.log.c_str());
         return 1;
     }
+    const RenderCaps render_caps = pick.caps;
     if (!SDL_SetRenderVSync(ren, 1)) std::fprintf(stderr, "warning: no vsync: %s\n", SDL_GetError());
     SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H, SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    std::printf("renderer: %s\n", SDL_GetRendererName(ren));
+    std::printf("renderer: %s; enhancements %s, max texture %d\n", pick.log.c_str(),
+                render_caps.enhancements ? "on" : "off", render_caps.max_texture_size);
     // One fading dialog slot per dialog source, drawn in this order.
     DialogLayer game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
         menu_credits_layer, menu_improvements_layer, profile_layer, import_layer;
@@ -1644,7 +1662,8 @@ int main(int argc, char** argv) {
         else if (name == "BUTTON_SETTINGS") open_menu_settings();
         else if (name == "BUTTON_IMPROVEMENTS")
             menu_improvements.emplace(improvements,
-                                      ImprovementsDialog::Services{[&](SoundId id) { assets.play_sound(id); }});
+                                      ImprovementsDialog::Services{[&](SoundId id) { assets.play_sound(id); }},
+                                      ImprovementsDialog::Context{render_caps.backend, launch_renderer});
         else std::printf("menu: %s (not implemented yet)\n", name.c_str());
     };
     WelcomeFlow flow(services, seed_ticks() + 1);

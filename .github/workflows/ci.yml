@@ -73,9 +73,13 @@ jobs:
         env:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
-        run: >
-          ./build/tt2 --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets"
-          --player CI --seed 5 --play untimed --type '~ab|' --exit-after 9000
+        run: |
+          set -o pipefail   # a crash must not hide behind tee
+          ./build/tt2 --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/assets" \
+            --player CI --seed 5 --play untimed --type '~ab|' --exit-after 9000 | tee smoke.log
+          # The dummy driver has no Vulkan or OpenGL: the renderer chain must
+          # end at software, with the enhancements off (render_backend.hpp).
+          grep -q '^renderer: software (.*); enhancements off' smoke.log
 
       # Decode real files with the game's own loaders: a package that lost
       # a decoder (the first SDL3 Windows zip showed a black splash) fails

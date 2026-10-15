@@ -73,6 +73,7 @@ ctest --test-dir build --output-on-failure    # engine + headless UI tests
 | `--exit-after MS` | Quit after `MS` simulated milliseconds |
 | `--dump-frames DIR` | Write `frame_NNNN.bmp` at `--fps N` (headless with `SDL_VIDEODRIVER=dummy`) |
 | `--fixed-dt MS` | Advance every frame by exactly `MS` ms instead of the real time, so frame dumps repeat exactly |
+| `--renderer NAME` | Try `auto`, `vulkan`, `opengl` or `software` first, for this run only (IMPROVEMENTS saves a choice); the log names the renderer that started and why others failed |
 | `--probe-media FILE` | Decode `FILE` (image, `.ogg` or `.wav`) with the game's own loaders and exit; repeatable. Exit 1 if one fails |
 
 ## Original game assets (required for now)

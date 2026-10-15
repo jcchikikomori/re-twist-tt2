@@ -94,7 +94,7 @@ borderless fullscreen, vsync, `dt` clamped to 100 ms).
 
 | ID | The port | The original (section) | Shipped in |
 | --- | --- | --- | --- |
-| UX-1 | Renders with Vulkan, then OpenGL, then software, through SDL3 | Direct3D 9 only (2) | |
+| UX-1 | Renders with Vulkan, then OpenGL, then software, through SDL3; `renderer=` in `improvements.txt` or `--renderer` picks the first to try; never Direct3D | Direct3D 9 only (2) | 0.3.0 (P1 SDL3, P3 order) |
 | UX-5 | Window sizes up to 1080p; borderless and native fullscreen | 800x600 only; exclusive 800x600 mode (1, 3) | |
 | UX-6 | Side bars beside the 4:3 game filled in the original palette | No widescreen (1) | |
 | UX-7 | No 60 fps cap by default; vsync or a chosen limit; nanosecond clock | 60 fps cap with `Sleep` (4) | |
