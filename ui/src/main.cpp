@@ -425,6 +425,9 @@ public:
     ~Assets() { release(); }
 
     const std::string& dir() const { return dir_; }
+    // data/placeholder/ (tools/gen_placeholders.py): generated fonts, dialog
+    // frame and buttons, used for each file the asset folder lacks.
+    void set_placeholder_dir(std::string dir) { placeholder_dir_ = std::move(dir); }
 
     // Switches folders at run time (after an import). Frees everything from
     // the old folder first; textures come back lazily on the same renderer.
@@ -460,7 +463,7 @@ public:
         Image img;
         auto f = kImageFiles.find(spec.image_id);
         if (f != kImageFiles.end()) {
-            const std::string path = in_dir(f->second);
+            const std::string path = find_art(f->second);
             if (file_exists(path)) {
                 img.surface = IMG_Load(path.c_str());
                 if (img.surface) {
@@ -486,11 +489,13 @@ public:
         int scale = spec != kFontFiles.end() ? spec->second.placeholder_scale : 3;
         if (id.rfind("PLACEHOLDER_", 0) == 0) scale = std::max(1, std::atoi(id.c_str() + 12));
         std::string xml;
-        if (spec != kFontFiles.end() && read_text(in_dir(spec->second.xml), xml) &&
-            BitmapFont::parse(xml, f.font)) {
+        const std::string xml_path = spec != kFontFiles.end() ? find_art(spec->second.xml) : std::string();
+        if (!xml_path.empty() && read_text(xml_path, xml) && BitmapFont::parse(xml, f.font)) {
             f.placeholder = false;
+            // The layers sit next to the XML they came with.
+            const std::string font_dir = xml_path.substr(0, xml_path.find_last_of('/'));
             for (const FontLayer& layer : f.font.layers) {
-                const std::string path = in_dir("fonts/" + layer.image);
+                const std::string path = font_dir + "/" + layer.image;
                 SDL_Surface* s = file_exists(path) ? IMG_Load(path.c_str()) : nullptr;
                 if (!s) std::fprintf(stderr, "warning: font layer %s missing\n", path.c_str());
                 f.layers.push_back(texture_of(s));
@@ -577,8 +582,17 @@ private:
     SDL_Renderer* renderer_;
     // A file inside the asset folder; empty (never found) without a folder.
     std::string in_dir(const std::string& rel) const { return dir_.empty() ? std::string() : dir_ + "/" + rel; }
+    // Art: the asset folder's file, else the generated placeholder, else
+    // the asset folder's path (missing, so the caller draws its own).
+    std::string find_art(const std::string& rel) const {
+        const std::string own = in_dir(rel);
+        if (!own.empty() && file_exists(own)) return own;
+        if (!placeholder_dir_.empty() && file_exists(placeholder_dir_ + "/" + rel)) return placeholder_dir_ + "/" + rel;
+        return own;
+    }
 
     std::string dir_;
+    std::string placeholder_dir_;
     bool audio_ = false;
     float sound_volume_ = 0.5f;
     float music_volume_ = 0.5f;
@@ -1291,6 +1305,9 @@ int main(int argc, char** argv) {
     bool cursor_busy = false;
 
     Assets assets(ren, asset_choice.dir);
+    assets.set_placeholder_dir(data_dir + "/placeholder");
+    std::printf("placeholders: %s/placeholder%s\n", data_dir.c_str(),
+                file_exists(data_dir + "/placeholder/fonts/font_settingstext.xml") ? "" : " (missing)");
     const bool audio = Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) == 0;
     if (audio) Mix_Init(MIX_INIT_OGG);
     assets.set_audio(audio);

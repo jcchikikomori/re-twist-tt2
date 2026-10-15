@@ -16,7 +16,17 @@ page: [dictionary-sources.md](../dictionary-sources.md).
 
 ## Art, Fonts and Sounds
 
-- **Shipped:** none from Text Twist 2. The default build draws procedural placeholders.
+- **Shipped:** none from Text Twist 2. `data/placeholder/` holds generated stand-ins for the fonts, the dialog
+  frame and the dialog buttons, written by `tools/gen_placeholders.py`. The shapes are new; only the colour values
+  were sampled from the original. Anything else still draws as a procedural placeholder in code.
+
+| Font | License | Where | Used for |
+| --- | --- | --- | --- |
+| [Luckiest Guy](https://fonts.google.com/specimen/Luckiest+Guy) by Astigmatic | Apache 2.0 | `third_party/fonts/luckiest-guy/` | Header-style bitmap fonts (`font_uibar`, `font_dialog_headers*`, `font_uibar_labels`) |
+| [Arimo](https://fonts.google.com/specimen/Arimo) by Steve Matteson | SIL OFL 1.1, no Reserved Font Name | `third_party/fonts/arimo/` | Text bitmap fonts and the button labels |
+
+- Both are unaltered copies from the google/fonts repository; `third_party/fonts/README.md` records the commits.
+- The bitmap sheets are renderings of these fonts, so their licence files ship next to them in `data/placeholder/`.
 - **Imported by the player:** the original art, fonts and sounds come from the player's own install, copied on
   their machine by `tt2 --import` or the in-game importer (`docs/design/import-assets.md`). They are never
   committed or packaged. `data/original-assets.sha256` holds only their relative paths and SHA-256 hashes.

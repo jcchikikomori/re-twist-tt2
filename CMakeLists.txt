@@ -196,9 +196,12 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_asset_import.cpp
         ui/tests/test_folder_picker.cpp
         ui/tests/test_import_prompt.cpp
+        ui/tests/test_placeholder_assets.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)
+    # The generated placeholder art the tests check (data/placeholder/).
+    target_compile_definitions(tt2_ui_tests PRIVATE TT2_SOURCE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
     add_test(NAME tt2_ui_unit_tests COMMAND tt2_ui_tests)
 endif()
 
@@ -216,3 +219,6 @@ install(FILES data/open-common.tree data/open-full.tree data/LICENSE.md
     data/original-assets.sha256
     DESTINATION ${TT2_DATA_INSTALL_DIR}
 )
+# The generated placeholder art (tools/gen_placeholders.py): open fonts and
+# drawn shapes, used for any file the player hasn't imported.
+install(DIRECTORY data/placeholder DESTINATION ${TT2_DATA_INSTALL_DIR})

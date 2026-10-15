@@ -164,9 +164,10 @@ tick **Unblock**.
 │   └── tests/                # headless UI tests
 ├── src/main.cpp              # engine driver / smoke test
 ├── tools/tree_cli.cpp        # tt2-tree dictionary tool
+├── tools/gen_placeholders.py # writes data/placeholder/ (fonts, dialog frame, buttons)
 ├── tools/assets_cli.cpp      # tt2-assets: writes and checks the asset checksum list
-├── third_party/              # tinyfiledialogs (zlib): the folder picker
-├── data/                     # runtime dictionaries (open-*.tree) and original-assets.sha256
+├── third_party/              # tinyfiledialogs (the folder picker), the open fonts for the placeholders
+├── data/                     # dictionaries (open-*.tree), original-assets.sha256, placeholder/ art
 ├── data-src/                 # raw word lists for rebuilding the open dictionaries
 ├── scripts/                  # import-original.sh (wraps tt2 --import), ci-import-smoke.sh
 ├── packaging/linux/          # desktop entry and original icon for the AppImage
