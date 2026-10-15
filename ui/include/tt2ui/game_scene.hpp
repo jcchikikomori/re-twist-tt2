@@ -617,12 +617,7 @@ public:
         if (phase_ != GamePhase::Playing || dialog_open()) return;
         if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
         if (c < 'a' || c > 'z') return;
-        // First available ball with that letter, left to right (0x427680 scans the row in order).
-        int best = -1;
-        for (std::size_t i = 0; i < balls_.size(); ++i) {
-            if (balls_[i].played || balls_[i].letter != c) continue;
-            if (best < 0 || balls_[i].slot < balls_[static_cast<std::size_t>(best)].slot) best = static_cast<int>(i);
-        }
+        const int best = available_ball(c);
         if (best >= 0) place(static_cast<std::size_t>(best));
     }
     void backspace() {
@@ -1247,12 +1242,23 @@ private:
         b.move_elapsed_ms = 0;
         refresh_buttons();   // every letter move changes TWIST / CLEAR / ENTER / LAST
     }
-    // 0x43bad0(index = -1): the ball goes to the first empty cell of the row.
-    void place(std::size_t i) {
+    // The first available ball with that letter, left to right (0x427680
+    // scans the row in order), or -1.
+    int available_ball(char c) const {
+        int best = -1;
+        for (std::size_t i = 0; i < balls_.size(); ++i) {
+            if (balls_[i].played || balls_[i].letter != c) continue;
+            if (best < 0 || balls_[i].slot < balls_[static_cast<std::size_t>(best)].slot) best = static_cast<int>(i);
+        }
+        return best;
+    }
+    // 0x43bad0(index = -1): the ball goes to the first empty cell of the
+    // row. The move itself is silent; a typed letter clicks.
+    void place(std::size_t i, bool click = true) {
         const int slot = first_free_slot(true);
         if (slot < 0) return;
         move_to(balls_[i], true, slot);
-        play(SoundId::LetterPlace);
+        if (click) play(SoundId::LetterPlace);
     }
     void unplace(std::size_t i) {
         const int slot = first_free_slot(false);
@@ -1276,10 +1282,21 @@ private:
         return_all_letters();
         play(SoundId::LetterClear);
     }
+    // 0x425000 plays SOUND_word_last once, at full volume, then moves each
+    // letter of the last word with 0x43bad0, which plays nothing: one
+    // whoosh, no letter_place per ball. It plays even with no last word,
+    // because Return on an empty row (0x427560 case 5) calls it without
+    // checking; the LAST button is disabled then (0x425710), so only the
+    // key reaches that case.
     void last_word_again() {
-        if (phase_ != GamePhase::Playing || last_word_.empty()) return;
+        if (phase_ != GamePhase::Playing || dialog_open()) return;
+        play(SoundId::WordLast);
+        if (last_word_.empty()) return;
         return_all_letters();
-        for (char c : last_word_) type_letter(c);
+        for (char c : last_word_) {
+            const int i = available_ball(c);
+            if (i >= 0) place(static_cast<std::size_t>(i), false);
+        }
     }
     // 0x425240 plays SOUND_word_twist on every press, then 0x43c370 asks
     // 0x43c280 whether the rack may move. DEVIATION: the port plays the

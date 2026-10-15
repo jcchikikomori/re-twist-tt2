@@ -141,6 +141,16 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   is ENTER (`0x424730`); with the row empty, Return is LAST WORD (`0x425000`). So pressing
   Return twice puts the word just submitted back in the played row, ready to extend. The
   ENTER *button* (`0x425b60`) calls `0x424730` directly, so with nothing typed it does nothing.
+- `0x425000` (LAST WORD, CONFIRMED, `ev_ec1755c442f2e335bdc5ba491ef25668f8b5ff34a71bb6ab8c2b02321dc59c4a`):
+  it plays `SOUND_word_last` **once** at full volume (`0x4634b0(1.0, 0, 1.0, 0)`), then, for
+  each letter of the last word, finds an available ball (`0x43be50`) and moves it with
+  `0x43bad0(1, -1, 1.0)`. `0x43bad0` plays no sound
+  (`ev_e5a4433055832cdec9d43fd8150d632c77b7c0275dea9bba703d89fc1fa48da9`), and none of the six
+  `SOUND_letter_place` references (`ev_fe370170576423088a978c2c168211ce1e9c348269268606147ece3379939264`)
+  is inside `0x425000`, so a recall is one whoosh, not a click per letter. It ends with the
+  button refresh `0x425710`. Its callers are the button dispatcher `0x425b60` and the Return
+  key `0x427560`, which calls it with no last-word check, so Return on an empty row with nothing
+  to recall still plays the whoosh. The LAST button is disabled then, so only the key does it.
 - `0x427680` (mouse): a click on an available ball plays it (`SOUND_letter_place`); a click
   on the **last** played ball takes it back (`SOUND_letter_clear`).
 - `0x427a60` (mouse move, CONFIRMED): the scene's mouse interface (vtable `0x590a50`: key

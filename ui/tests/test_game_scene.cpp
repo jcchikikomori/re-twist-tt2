@@ -552,15 +552,52 @@ TEST(return_on_an_empty_row_recalls_the_last_word) {
     ASSERT_TRUE(s.typed().empty());
 }
 
-TEST(return_on_an_empty_row_without_a_last_word_does_nothing) {
+// 0x427560 calls 0x425000 without checking for a last word, so the
+// whoosh still plays; nothing moves and nothing is submitted.
+TEST(return_on_an_empty_row_without_a_last_word_only_whooshes) {
     Fixture f(false);
     auto& s = *f.scene;
     f.sounds.clear();
     s.key_return();
     ASSERT_TRUE(s.typed().empty());
     ASSERT_EQ(s.score(), 0);
-    ASSERT_TRUE(!f.played(SoundId::WordReject));
-    ASSERT_TRUE(!f.played(SoundId::LetterPlace));
+    ASSERT_EQ(f.sounds.size(), std::size_t{1});
+    ASSERT_TRUE(f.sounds[0] == SoundId::WordLast);
+}
+
+// 0x425000: SOUND_word_last once, and the balls move silently (0x43bad0
+// plays nothing), so recalling "car" is one whoosh, not three clicks.
+TEST(last_word_plays_word_last_once_and_no_letter_clicks) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type("car");
+    s.press("BUTTON_Enter");
+    f.sounds.clear();
+    s.press("BUTTON_LastWord");
+    ASSERT_EQ(s.typed(), std::string("car"));
+    ASSERT_EQ(f.sounds.size(), std::size_t{1});
+    ASSERT_TRUE(f.sounds[0] == SoundId::WordLast);
+    s.press("BUTTON_Clear");
+    s.update(BALL_MOVE_MS);
+    f.sounds.clear();
+    s.key_return();                                        // the Return key: the same sound
+    ASSERT_EQ(s.typed(), std::string("car"));
+    ASSERT_EQ(f.sounds.size(), std::size_t{1});
+    ASSERT_TRUE(f.sounds[0] == SoundId::WordLast);
+    f.sounds.clear();
+    f.type("t");                                           // typing still clicks
+    ASSERT_TRUE(f.played(SoundId::LetterPlace));
+}
+
+// The LAST button is off with no last word (0x425710), so a press is
+// silent, unlike the Return key above.
+TEST(disabled_last_word_button_plays_nothing) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.sounds.clear();
+    s.press("BUTTON_LastWord");
+    ASSERT_TRUE(s.typed().empty());
+    ASSERT_TRUE(f.sounds.empty());
 }
 
 // 0x427560, engine key 4 (Delete): CLEAR.
