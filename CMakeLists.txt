@@ -164,6 +164,8 @@ if(TT2_BUILD_TESTS)
         engine/tests/test_asset_manifest.cpp
     )
     target_link_libraries(tt2_tests PRIVATE tt2_engine tt2_platform)
+    # The committed data/ files the tests check (original-assets.sha256).
+    target_compile_definitions(tt2_tests PRIVATE TT2_SOURCE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 
     include(CTest)
     add_test(NAME tt2_unit_tests COMMAND tt2_tests)
@@ -193,6 +195,9 @@ install(TARGETS tt2_engine_app
 )
 # Only the open-license dictionaries. data/ may also hold the user's own
 # GameHouse common.tree / full.tree (gitignored); those never get packaged.
+# original-assets.sha256 is paths and SHA-256 hashes only, no GameHouse
+# bytes: the importer checks the player's own install against it.
 install(FILES data/open-common.tree data/open-full.tree data/LICENSE.md
+    data/original-assets.sha256
     DESTINATION ${TT2_DATA_INSTALL_DIR}
 )

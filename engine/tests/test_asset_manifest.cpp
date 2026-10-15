@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <random>
 #include <set>
 #include <string>
@@ -282,4 +283,21 @@ TEST(verify_files_reports_missing_and_mismatched_files) {
     ASSERT_TRUE(problems[1].kind == FileProblem::Kind::Missing);
     ASSERT_EQ(problems[1].path, std::string("sound/click.ogg"));
     fs::remove_all(root);
+}
+
+TEST(shipped_manifest_parses_sorted_and_covers_the_roots) {
+    std::ifstream in(fs::path(TT2_SOURCE_DATA_DIR) / "original-assets.sha256", std::ios::binary);
+    ASSERT_TRUE(static_cast<bool>(in));
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    AssetManifest m;
+    ASSERT_TRUE(AssetManifest::parse(text, m));   // paths and hashes only; parse rejects excluded names
+    ASSERT_TRUE(!m.entries.empty());
+    for (std::size_t i = 1; i < m.entries.size(); ++i) ASSERT_TRUE(m.entries[i - 1].path < m.entries[i].path);
+    for (const char* root : IMPORT_ROOTS) {
+        const std::string prefix = std::string(root) + "/";
+        bool found = false;
+        for (const auto& e : m.entries) found = found || e.path.compare(0, prefix.size(), prefix) == 0;
+        ASSERT_TRUE(found);
+    }
+    ASSERT_EQ(m.serialize(), text);   // byte-for-byte what tt2-assets prints
 }

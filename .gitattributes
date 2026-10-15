@@ -1,0 +1,3 @@
+# The asset manifest keeps LF on every checkout (Windows runners default to
+# core.autocrlf=true), so it stays byte-identical to what tt2-assets prints.
+*.sha256 text eol=lf
