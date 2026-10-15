@@ -76,8 +76,8 @@ as integers, once as booleans.
 ### 1.1 Trophies (XML `text.xml`, `TEXT_TROPHY_TITLES` / `_DESCRIPTIONS`)
 
 Slot order is the XML order (1-based in the ids, 0-based in the array).
-The conditions below are the on-screen descriptions; the code paths that
-set each slot are **not yet decompiled** (follow-up).
+The conditions below are the on-screen descriptions; the code that sets
+each slot, and the exact rules, are in `trophies.md`.
 
 | # | Title | Condition |
 | --- | --- | --- |
@@ -266,8 +266,8 @@ listed here:
   not registry + per-player XML. There is no obfuscation pass.
 - Names may not contain tab or newline (the file format's separators).
   The original has no such limit; it is a 15-character box either way.
-- Trophy _conditions_ are not evaluated yet (slots and counters are
-  stored). See §1.1.
+- Trophy conditions follow `trophies.md` (`engine/include/tt2/trophies.hpp`);
+  the Lightning and Crossword ones wait for those modes.
 
 ### 5.1 The UI (`ui/include/tt2ui/profile_dialogs.hpp`)
 

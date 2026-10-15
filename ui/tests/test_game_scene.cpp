@@ -2202,3 +2202,130 @@ TEST(reveal_never_shows_a_found_word_twice) {
     for (std::size_t i = 0; i < shown.size(); ++i)
         ASSERT_EQ(shown[i].size(), board[i].size());       // each slot keeps its length
 }
+
+// ---- trophies (0x424730, 0x425240, 0x426860, 0x429510) ----------------
+
+namespace {
+// Enter `w` and let the letters fly home so the rack can twist again.
+void enter_word(Fixture& f, const std::string& w) {
+    f.type(w);
+    f.scene->key_return();
+    f.scene->update(BALL_MOVE_MS);
+}
+std::vector<std::string> bingo_words(const Fixture& f) {
+    std::vector<std::string> out;
+    for (const auto& s : f.scene->slots()) if (s.word.size() == f.scene->rack().size()) out.push_back(s.word);
+    return out;
+}
+std::vector<std::string> short_words(const Fixture& f) {
+    std::vector<std::string> out;
+    for (const auto& s : f.scene->slots()) if (s.word.size() < f.scene->rack().size()) out.push_back(s.word);
+    return out;
+}
+}  // namespace
+
+TEST(trophy_five_words_without_a_twist_win_quick_draw) {
+    Fixture f(false);
+    const auto words = short_words(f);
+    ASSERT_TRUE(words.size() >= 5);
+    for (int i = 0; i < 5; ++i) enter_word(f, words[static_cast<std::size_t>(i)]);
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_QUICK_DRAW], tt2::TROPHY_NEW);
+    // The word popups have their own queue; the trophy starts at once.
+    f.scene->update(0);
+    ASSERT_EQ(f.scene->trophy_popup_id(), static_cast<int>(tt2::TROPHY_QUICK_DRAW));
+    ASSERT_TRUE(f.played(SoundId::TrophyWon));
+    const SpriteState& art = f.scene->trophy_popup();
+    ASSERT_EQ(art.sheet.image_id, std::string("IMAGE_TROPHY1"));
+    ASSERT_TRUE(std::fabs(art.x - 725.0f) < 0.01f);
+    ASSERT_TRUE(std::fabs(art.y - 475.0f) < 0.01f);
+    ASSERT_EQ(f.scene->trophy_label().name, std::string("Quick\nDraw"));
+    ASSERT_TRUE(std::fabs(f.scene->trophy_label().y - 535.0f) < 0.01f);
+    // 200 + 500 + 300 ms in: at rest, 0.5 and 1.0.
+    f.scene->update(1000);
+    ASSERT_TRUE(std::fabs(f.scene->trophy_popup().scale - 0.5f) < 0.001f);
+    ASSERT_TRUE(std::fabs(f.scene->trophy_label().scale - 1.0f) < 0.001f);
+    ASSERT_TRUE(std::fabs(f.scene->trophy_popup().alpha - 1.0f) < 0.001f);
+    f.scene->update(2500);   // hold 2000 + fade 500 = 3500 ms in all
+    f.scene->update(1);
+    ASSERT_EQ(f.scene->trophy_popup_id(), -1);
+    ASSERT_TRUE(!f.scene->trophy_popup().visible);
+}
+
+TEST(trophy_a_twist_breaks_the_no_twist_streak) {
+    Fixture f(false);
+    const auto words = short_words(f);
+    for (int i = 0; i < 4; ++i) enter_word(f, words[static_cast<std::size_t>(i)]);
+    f.scene->key_space();
+    enter_word(f, words[4]);
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_QUICK_DRAW], tt2::TROPHY_NOT_WON);
+}
+
+TEST(trophy_bingo_streak_counts_bingo_words_in_a_row) {
+    Fixture f(false);
+    const auto bingos = bingo_words(f);
+    ASSERT_TRUE(bingos.size() >= 5);
+    for (int i = 0; i < 5; ++i) enter_word(f, bingos[static_cast<std::size_t>(i)]);
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_BINGO_BLASTER], tt2::TROPHY_NEW);
+}
+
+TEST(trophy_a_short_word_resets_the_bingo_streak) {
+    Fixture f(false);
+    const auto bingos = bingo_words(f);
+    for (int i = 0; i < 4; ++i) enter_word(f, bingos[static_cast<std::size_t>(i)]);
+    enter_word(f, short_words(f)[0]);
+    enter_word(f, bingos[4]);
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_BINGO_BLASTER], tt2::TROPHY_NOT_WON);
+}
+
+TEST(trophy_twist_and_word_counters_award_at_their_thresholds) {
+    Fixture f(false);
+    f.profile.twists = 999;
+    f.profile.solved = 999;
+    f.scene->key_space();
+    ASSERT_EQ(f.profile.twists, 1000);
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_WITH_A_TWIST], tt2::TROPHY_NEW);
+    f.scene->update(BALL_MOVE_MS);
+    enter_word(f, short_words(f)[0]);
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_WORD_NERD], tt2::TROPHY_NEW);
+    ASSERT_EQ(f.scene->trophies_waiting() + (f.scene->trophy_popup_id() >= 0 ? 1u : 0u), std::size_t{2});
+}
+
+TEST(trophy_every_word_fast_and_untwisted_wins_look_ma_and_speed_speller) {
+    Fixture f(false);
+    std::vector<std::string> all;
+    for (const auto& s : f.scene->slots()) all.push_back(s.word);
+    for (const auto& w : all) { f.type(w); f.scene->key_return(); }
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_LOOK_MA], tt2::TROPHY_NEW);
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_SPEED_SPELLER], tt2::TROPHY_NEW);
+}
+
+TEST(trophy_a_slow_twisted_round_wins_neither) {
+    Fixture f(false);
+    f.scene->update(6000);
+    f.scene->key_space();
+    f.scene->update(BALL_MOVE_MS);
+    std::vector<std::string> all;
+    for (const auto& s : f.scene->slots()) all.push_back(s.word);
+    for (const auto& w : all) { f.type(w); f.scene->key_return(); }
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_LOOK_MA], tt2::TROPHY_NOT_WON);
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_SPEED_SPELLER], tt2::TROPHY_NOT_WON);
+}
+
+TEST(trophy_popup_waits_while_a_dialog_is_open) {
+    Fixture f(false);
+    f.profile.twists = 999;
+    f.scene->press("BUTTON_Menu");
+    f.scene->update(0);
+    f.scene->dialog_press("BUTTON_RESUME");
+    f.scene->update(BALL_MOVE_MS);
+    f.drain_popups();
+    f.scene->key_space();
+    f.scene->press("BUTTON_Menu");
+    f.scene->update(100);
+    ASSERT_EQ(f.scene->trophy_popup_id(), -1);
+    ASSERT_EQ(f.scene->trophies_waiting(), std::size_t{1});
+    f.scene->dialog_press("BUTTON_RESUME");
+    f.scene->update(400);   // the pause menu fades out first
+    f.scene->update(0);
+    ASSERT_EQ(f.scene->trophy_popup_id(), static_cast<int>(tt2::TROPHY_WITH_A_TWIST));
+}

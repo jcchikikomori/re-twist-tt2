@@ -24,10 +24,12 @@
 #include "tt2/random.hpp"
 #include "tt2/round_classic.hpp"
 #include "tt2/saved_game.hpp"
+#include "tt2/trophies.hpp"
 #include "tt2/word_tree.hpp"
 #include "tt2ui/game_dialogs.hpp"
 #include "tt2ui/help_dialog.hpp"
 #include "tt2ui/settings_dialog.hpp"
+#include "tt2ui/trophy_room.hpp"
 #include "tt2ui/modifier.hpp"
 #include "tt2ui/sprite.hpp"
 #include "tt2ui/welcome_flow.hpp"
@@ -504,6 +506,8 @@ public:
         particle_rng_.set_seed(rng_seed + 1);
         build_buttons();
         popup_.visible = false;
+        trophy_sprite_.visible = false;
+        trophy_label_.visible = false;
         if (!(resume && resume_game(*resume))) {
             start_round(1);
             open_tutorial_once();
@@ -552,6 +556,13 @@ public:
     const SpriteState& popup() const { return popup_; }
     std::optional<PopupKind> popup_kind() const { return popup_kind_; }
     std::size_t popups_waiting() const { return popup_waiting_.size(); }
+    // The trophy popup (0x429510): the trophy art and its FONT_TROPHYNAMES
+    // title, both hidden when none is up; the id on show (-1 = none) and
+    // how many wait.
+    const SpriteState& trophy_popup() const { return trophy_sprite_; }
+    const SpriteState& trophy_label() const { return trophy_label_; }
+    int trophy_popup_id() const { return trophy_id_; }
+    std::size_t trophies_waiting() const { return trophy_waiting_.size(); }
     const char* background_id() const { return timed_ ? "gamescene/BACKGROUND_TIMED" : "gamescene/BACKGROUND"; }
     bool dialog_open() const { return dialog_kind_ != GameDialog::None; }
     GameDialog dialog_kind() const { return dialog_kind_; }
@@ -850,6 +861,16 @@ public:
             start_popup(next);
         }
         popup_queue_.update(dt_ms);
+        // 0x426860 @0x426ce6: the next trophy shows when no dialog or
+        // round-end step is pending and none is up. It does not stop the clock.
+        if (trophy_id_ < 0 && !trophy_waiting_.empty() && !dialog_open() && queue_.empty()) {
+            const int next = trophy_waiting_.front();
+            trophy_waiting_.pop_front();
+            start_trophy_popup(next);
+        }
+        trophy_queue_.update(dt_ms);
+        trophy_label_queue_.update(dt_ms);
+        if (phase_ == GamePhase::Playing && round_number_ == round_before) round_elapsed_ms_ += dt_ms;
         for (auto& v : slots_)
             if (v.flipping()) v.flip_ms += dt_ms;
         for (auto& b : balls_)
@@ -954,6 +975,14 @@ private:
             balls_.push_back(b);
         }
         popup_waiting_.clear();   // 0x425c50 -> 0x42ace0: queued popups are dropped
+        // 0x425c50: +0x370 (twisted this round) clears every round; the
+        // streaks (+0x36c, +0x374) only on round 1 of a new game.
+        twisted_this_round_ = false;
+        round_elapsed_ms_ = 0;
+        if (number == 1) {
+            no_twist_streak_ = 0;
+            bingo_streak_ = 0;
+        }
         refresh_buttons();
     }
 
@@ -1022,8 +1051,19 @@ private:
                 break;
         }
         score_ += rep.points_awarded;
-        profile_.solved += 1;
-        if (rep.status == GuessStatus::Uncommon) profile_.hard_solved += 1;
+        // 0x424730, in its order: the no-twist streak, the word counters,
+        // the bingo streak (any other word resets it), then Look Ma.
+        no_twist_streak_ += 1;
+        queue_trophy(tt2::award_no_twist_streak(profile_, no_twist_streak_));
+        queue_trophy(tt2::count_word(profile_));
+        if (rep.status == GuessStatus::Uncommon) queue_trophy(tt2::count_uncommon(profile_));
+        if (rep.bingo) {
+            bingo_streak_ += 1;
+            queue_trophy(tt2::award_bingo_streak(profile_, bingo_streak_));
+        } else {
+            bingo_streak_ = 0;
+        }
+        if (rep.filled_last) queue_trophy(tt2::award_look_ma(profile_, twisted_this_round_));
         // The slot that received the guess shows the guessed word —
         // it may not be the board answer (0x432b20 / 0x431880).
         if (rep.slot_index < slots_.size()) {
@@ -1087,7 +1127,11 @@ private:
             case RoundEnd::AllWords:
             case RoundEnd::TimeUpQualified:
             case RoundEnd::NextRound:
-                profile_.rounds_completed[static_cast<std::size_t>(mode())] += 1;
+                // 0x428840: a round finished within 5 s wins Speed Speller.
+                if (why != RoundEnd::NextRound) queue_trophy(tt2::award_speed_speller(profile_, round_elapsed_ms_));
+                // 0x40f2b0 (the original counts it on NEXT ROUND, 0x425190;
+                // the popup waits for the dialog either way).
+                queue_trophy(tt2::count_round(profile_, mode()));
                 break;
             case RoundEnd::TimeUpMissed:
             case RoundEnd::Passed:
@@ -1363,7 +1407,10 @@ private:
         }
         // 0x43c370: the relayout slides every ball to its new cell in 400 ms.
         for (std::size_t k = 0; k < avail.size(); ++k) move_to(balls_[avail[k]], false, slots[k], BALL_RELAYOUT_MS);
-        profile_.twists += 1;
+        // 0x425240: a twist ends the no-twist streak and marks the round.
+        no_twist_streak_ = 0;
+        twisted_this_round_ = true;
+        queue_trophy(tt2::count_twist(profile_));
     }
     // 0x43c280: may the available row be twisted now?
     bool can_twist() const {
@@ -1427,6 +1474,42 @@ private:
         });
     }
     void play(SoundId id) { if (services_.play_sound) services_.play_sound(id); }
+
+    // 0x429480: award sites push their result; -1 (nothing won) is dropped
+    // here instead of at 0x429510.
+    void queue_trophy(int id) {
+        if (id >= 0) trophy_waiting_.push_back(id);
+    }
+    // 0x429510: IMAGE_TROPHY<id+1> at (725, 475) and the title at (725, 535),
+    // both grow in, hold 2 s and fade out (3.5 s); SOUND_game_trophy_won.
+    void start_trophy_popup(int id) {
+        trophy_id_ = id;
+        play(SoundId::TrophyWon);
+        trophy_sprite_ = trophy_sprite(id, TROPHY_POPUP_X, TROPHY_POPUP_Y);
+        trophy_sprite_.alpha = 0.0f;
+        trophy_sprite_.scale = TROPHY_START_SCALE;
+        trophy_label_ = SpriteState{};
+        trophy_label_.name = trophy_title(id);
+        trophy_label_.anchor = Anchor::Center;
+        trophy_label_.x = TROPHY_POPUP_X;
+        trophy_label_.y = TROPHY_LABEL_Y;
+        trophy_label_.alpha = 0.0f;
+        trophy_label_.scale = 0.0f;
+        trophy_queue_.clear();
+        trophy_label_queue_.clear();
+        push_trophy_reveal(trophy_queue_, &trophy_sprite_, TROPHY_REST_SCALE, TROPHY_OVERSHOOT);
+        trophy_queue_.push_delay(TROPHY_POPUP_HOLD_MS);
+        trophy_queue_.push_alpha(&trophy_sprite_, 1.0f, 0.0f, TROPHY_POPUP_FADE_OUT_MS);
+        // 0x4235d0 clears the busy flag (+0x368).
+        trophy_queue_.push_method([this] {
+            trophy_sprite_.visible = false;
+            trophy_label_.visible = false;
+            trophy_id_ = -1;
+        });
+        push_trophy_reveal(trophy_label_queue_, &trophy_label_, 1.0f, TROPHY_LABEL_OVERSHOOT);
+        trophy_label_queue_.push_delay(TROPHY_POPUP_HOLD_MS);
+        trophy_label_queue_.push_alpha(&trophy_label_, 1.0f, 0.0f, TROPHY_POPUP_FADE_OUT_MS);
+    }
 
     // dialogs.xml SCENE_GAME: 119x200 sheets (4 rows of 50) and 157x208
     // sheets (4 rows of 52) for the big round-end buttons.
@@ -1516,6 +1599,19 @@ private:
     std::deque<PopupKind> popup_waiting_;    // 0x428e20 queue (+0x334)
     bool definitions_hint_shown_ = false;    // +0x1f0: popup 10 already queued
     ModifierQueue queue_, popup_queue_;
+    // Trophies (docs/reverse-engineering/trophies.md).
+    static constexpr float TROPHY_POPUP_X = 725.0f, TROPHY_POPUP_Y = 475.0f, TROPHY_LABEL_Y = 535.0f;
+    static constexpr float TROPHY_LABEL_OVERSHOOT = 1.2f;
+    static constexpr int TROPHY_POPUP_HOLD_MS = 2000;
+    static constexpr int TROPHY_POPUP_FADE_OUT_MS = 500;
+    std::int32_t no_twist_streak_ = 0;       // +0x36c
+    std::int32_t bingo_streak_ = 0;          // +0x374
+    bool twisted_this_round_ = false;        // +0x370
+    int round_elapsed_ms_ = 0;               // 120000 - (+0x2fc), counted in every mode
+    std::deque<int> trophy_waiting_;         // +0x354
+    int trophy_id_ = -1;                     // +0x368 busy, and which trophy
+    SpriteState trophy_sprite_, trophy_label_;
+    ModifierQueue trophy_queue_, trophy_label_queue_;
     GameDialog dialog_kind_ = GameDialog::None;
     Dialog dialog_;
 };

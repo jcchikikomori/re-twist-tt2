@@ -65,6 +65,7 @@
 #include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/side_fill.hpp"
 #include "tt2ui/tooltip.hpp"
+#include "tt2ui/trophy_room.hpp"
 #include "tt2ui/upscale.hpp"
 #include "tt2ui/profile_dialogs.hpp"
 #include "audio.hpp"
@@ -177,6 +178,34 @@ const std::map<std::string, std::string> kImageFiles = {
     {"IMAGE_BUTTON_READMORE", "images/gui/button_readmore.png"},
     {"IMAGE_BUTTON_PLAY", "images/gui/button_play.png"},
     {"IMAGE_BURST", "images/trophyscene/burst.png"},
+    // SCENE_TROPHY and the game scene's trophy popup (resources.xml section
+    // trophyscene). Sic: IMAGE_TROPHY18 / 19 / 20 are trophy20 / 18 / 19.png.
+    {"trophyscene/BACKGROUND", "images/trophyscene/background.png"},
+    {"IMAGE_TROPHY_RIBBON", "images/trophyscene/trophy_ribbon.png"},
+    {"IMAGE_TROPHY1", "images/trophyscene/trophy.png"},
+    {"IMAGE_TROPHY2", "images/trophyscene/trophy2.png"},
+    {"IMAGE_TROPHY3", "images/trophyscene/trophy3.png"},
+    {"IMAGE_TROPHY4", "images/trophyscene/trophy04.png"},
+    {"IMAGE_TROPHY5", "images/trophyscene/trophy05.png"},
+    {"IMAGE_TROPHY6", "images/trophyscene/trophy06.png"},
+    {"IMAGE_TROPHY7", "images/trophyscene/trophy07.png"},
+    {"IMAGE_TROPHY8", "images/trophyscene/trophy08.png"},
+    {"IMAGE_TROPHY9", "images/trophyscene/trophy09.png"},
+    {"IMAGE_TROPHY10", "images/trophyscene/trophy10.png"},
+    {"IMAGE_TROPHY11", "images/trophyscene/trophy11.png"},
+    {"IMAGE_TROPHY12", "images/trophyscene/trophy12.png"},
+    {"IMAGE_TROPHY13", "images/trophyscene/trophy13.png"},
+    {"IMAGE_TROPHY14", "images/trophyscene/trophy14.png"},
+    {"IMAGE_TROPHY15", "images/trophyscene/trophy15.png"},
+    {"IMAGE_TROPHY16", "images/trophyscene/trophy16.png"},
+    {"IMAGE_TROPHY17", "images/trophyscene/trophy17.png"},
+    {"IMAGE_TROPHY18", "images/trophyscene/trophy20.png"},
+    {"IMAGE_TROPHY19", "images/trophyscene/trophy18.png"},
+    {"IMAGE_TROPHY20", "images/trophyscene/trophy19.png"},
+    {"IMAGE_TROPHY21", "images/trophyscene/trophy21.png"},
+    {"IMAGE_TROPHY22", "images/trophyscene/trophy22.png"},
+    {"IMAGE_TROPHY23", "images/trophyscene/trophy23.png"},
+    {"IMAGE_TROPHY24", "images/trophyscene/trophy24.png"},
     {"IMAGE_PARTICLEBALL", "images/gamescene/particleball.png"},
     // DIALOG_HELP (help-and-settings.md §2).
     // DIALOG_SETTINGS (help-and-settings.md §3).
@@ -213,6 +242,7 @@ const std::map<std::string, FontFile> kFontFiles = {
     {"FONT_TUTORIAL", {"fonts/font_tutorial01.xml", 3}},
     {"FONT_FONT_HIGHSCORE_TEXT", {"fonts/font_highscore_text.xml", 2}},
     {"FONT_TOOLTIP", {"fonts/arial12.xml", 2}},
+    {"FONT_TROPHYNAMES", {"fonts/font_trophynames.xml", 2}},
 };
 
 const std::map<SoundId, std::string> kSoundFiles = {
@@ -242,6 +272,8 @@ const std::map<SoundId, std::string> kSoundFiles = {
     {SoundId::CheckboxOn, "sound/checkbox_on.ogg"},
     {SoundId::CheckboxOff, "sound/checkbox_off.ogg"},
     {SoundId::Slider, "sound/slider_4.ogg"},
+    {SoundId::TrophyWon, "sound/game_trophy_won.ogg"},
+    {SoundId::MusicTrophyRoom, "music/music_trophy_room.ogg"},
 };
 // The few resources.xml sounds whose attribute is spelled `volume` (the
 // `volue` ones are never read; help-and-settings.md §3.3).
@@ -978,6 +1010,42 @@ SDL_Rect draw_text(SDL_Renderer* ren, Assets& assets, const std::string& font_id
     return SDL_Rect{left, top, width, height};
 }
 
+// Lines of `text` centred on (cx, cy), scaled about that point and drawn
+// at `alpha` (the trophy popup's title, a Label under scale modifiers).
+void draw_text_scaled(SDL_Renderer* ren, Assets& assets, const std::string& font_id, const std::string& text,
+                      float cx, float cy, float scale, float alpha) {
+    if (scale <= 0.0f || alpha <= 0.0f) return;
+    Font& f = assets.font(font_id);
+    std::vector<std::string> lines;
+    std::string cur;
+    for (char c : text) { if (c == '\n') { lines.push_back(cur); cur.clear(); } else cur.push_back(c); }
+    lines.push_back(cur);
+    const int line_h = f.font.line_height > 0 ? f.font.line_height : f.font.glyph_height();
+    const float block_h = static_cast<float>(line_h) * static_cast<float>(lines.size());
+    const Uint8 a = static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f);
+    for (SDL_Texture* t : f.layers) if (t) SDL_SetTextureAlphaMod(t, a);
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const int width = f.font.measure(lines[i], -1);
+        const float left = -0.5f * static_cast<float>(width);
+        const float top = -0.5f * block_h + static_cast<float>(line_h) * static_cast<float>(i);
+        const auto run = f.font.layout(lines[i], -1);
+        for (std::size_t li = f.layers.size(); li-- > 0;) {
+            SDL_Texture* tex = f.layers[li];
+            if (!tex) continue;
+            for (const auto& g : run) {
+                const auto r = f.font.layer_rect(*g.glyph, li, 0 + g.x, 0);
+                const float d = f.density;
+                const SDL_FRect src{r.sx * d, r.sy * d, r.w * d, r.h * d};
+                const SDL_FRect dst{cx + (left + static_cast<float>(r.dx)) * scale,
+                                    cy + (top + static_cast<float>(r.dy)) * scale, static_cast<float>(r.w) * scale,
+                                    static_cast<float>(r.h) * scale};
+                SDL_RenderTexture(ren, tex, &src, &dst);
+            }
+        }
+    }
+    for (SDL_Texture* t : f.layers) if (t) SDL_SetTextureAlphaMod(t, 255);
+}
+
 // DEFAULT_PAINTER: nine images; the centre is background.png cropped
 // around its middle (centerimages="true").
 void draw_dialog_frame(SDL_Renderer* ren, Assets& assets, const Dialog& d) {
@@ -1334,6 +1402,34 @@ void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
         draw_sprite_or_label(ren, assets, p, p.scale >= 0.9f ? popup_placeholder_text(*g.popup_kind()) : "",
                              "PLACEHOLDER_3", 20);
     }
+    // 0x429510: the trophy and its FONT_TROPHYNAMES title, bottom right.
+    if (g.trophy_popup_id() >= 0) {
+        const SpriteState& t = g.trophy_popup();
+        if (t.visible) draw_sprite(ren, assets, t);
+        const SpriteState& l = g.trophy_label();
+        if (l.visible) draw_text_scaled(ren, assets, "FONT_TROPHYNAMES", l.name, l.x, l.y, l.scale, l.alpha);
+    }
+}
+
+// SCENE_TROPHY (dialogs.xml): background, ribbons, the header, the
+// description label, the sparkle under the trophies, then the button.
+void draw_trophy_room(SDL_Renderer* ren, Assets& assets, const TrophyRoom& room) {
+    draw_sprite(ren, assets, sprite("BACKGROUND", sheet(room.background_id(), 800, 600), 0, 0));
+    for (const auto& r : room.ribbons()) draw_sprite(ren, assets, r);
+    draw_text(ren, assets, "FONT_DIALOG_HEADERS", trophy_strings::HEADER, TrophyRoom::HEADER_X, TrophyRoom::HEADER_Y,
+              TextAlign::Center, Anchor::Top, 4);
+    float y = TrophyRoom::LABEL_Y;
+    std::string cur;
+    const std::string label = room.label() + "\n";
+    for (char c : label) {
+        if (c != '\n') { cur.push_back(c); continue; }
+        draw_text(ren, assets, "FONT_SETTINGSTEXT", cur, TrophyRoom::LABEL_X, y, TextAlign::Center, Anchor::Top, -1);
+        y += static_cast<float>(TrophyRoom::LABEL_LINE_H);
+        cur.clear();
+    }
+    if (room.sparkle_sprite().visible) draw_sprite(ren, assets, room.sparkle_sprite());
+    for (const auto& t : room.trophies()) if (t.visible) draw_sprite(ren, assets, t);
+    for (const auto& b : room.buttons()) draw_sprite(ren, assets, b.sprite);
 }
 
 // --probe-media FILE: decode FILE with the game's own loaders (images through
@@ -1577,7 +1673,8 @@ int main(int argc, char** argv) {
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND;
                                // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
                                // '&' the main menu SETTINGS' IMPORT (re-import, deviation OP-7),
-                               // '"' the main menu's CHANGE NAME, then '-' its REMOVE
+                               // '"' the main menu's CHANGE NAME, then '-' its REMOVE,
+                               // '+' the main menu's TROPHIES, then '~' its MENU
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     std::vector<std::string> probe_files;   // --probe-media FILE (repeatable): decode, report, exit
     std::string renderer_flag;              // --renderer auto|vulkan|opengl|software: this run only
@@ -1900,6 +1997,10 @@ int main(int argc, char** argv) {
     // (TRANSITION_DEFAULT: 500 ms to black, then 500 ms back; each half
     // uses FadeBlackTransition's full `time`, 0x46c362 / 0x46c78f).
     std::unique_ptr<GameScene> game;
+    // SCENE_TROPHY: opened from the menu (0x42e390) and left by its MENU
+    // button (0x42fcb0), both through TRANSITION_DEFAULT like the game.
+    std::unique_ptr<TrophyRoom> trophy_room;
+    bool pending_trophies = false, pending_trophy_exit = false;
     constexpr int GAME_FADE_HALF_MS = 500;
     int game_fade_out = 0, game_fade_in = 0;
     bool pending_start = false, pending_timed = false, pending_exit = false;
@@ -2099,6 +2200,10 @@ int main(int argc, char** argv) {
         else if (name == "BUTTON_PLAY_UNTIMED") request_game(false);
         else if (name == "BUTTON_PLAY") request_game(true);
         else if (name == "BUTTON_HOWTOPLAY") menu_help.emplace();
+        else if (name == "BUTTON_TROPHY" && players.current()) {
+            pending_trophies = true;
+            game_fade_out = GAME_FADE_HALF_MS;
+        }
         else if (name == "BUTTON_SETTINGS") open_menu_settings();
         else if (name == "BUTTON_IMPROVEMENTS") {
             menu_improvements.emplace(improvements,
@@ -2196,6 +2301,10 @@ int main(int argc, char** argv) {
             pick(sd.dialog().buttons, TooltipSurface::Settings, tag);
         };
         if (import_prompt) return;
+        if (trophy_room) {   // BUTTON_Menu: tooltip="CTOOLTIP_INGAME_MENU"
+            pick(trophy_room->buttons(), TooltipSurface::Game, "trophy");
+            return;
+        }
         if (profile.open()) {
             if (profile.dialog().kind == DialogKind::PlayerSelect)
                 pick(profile.dialog().buttons, TooltipSurface::PlayerSelect, "players");
@@ -2311,6 +2420,15 @@ int main(int argc, char** argv) {
                     game->mouse_up(e.button.x, e.button.y);
                 continue;
             }
+            if (trophy_room) {
+                if (game_fade_out > 0) continue;
+                if (e.type == SDL_EVENT_MOUSE_MOTION) trophy_room->mouse_move(e.motion.x, e.motion.y, hit);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
+                    trophy_room->mouse_down(e.button.x, e.button.y, hit);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
+                    trophy_room->mouse_up(e.button.x, e.button.y, hit);
+                continue;
+            }
             if (menu_dialog_open) {
                 if (e.type == SDL_EVENT_KEY_DOWN) {
                     const auto k = e.key.key;
@@ -2385,6 +2503,7 @@ int main(int argc, char** argv) {
         else if (menu_settings) hot = menu_settings->pointer_hot();
         else if (menu_improvements) hot = menu_improvements->pointer_hot();
         else if (game) hot = game->pointer_over_clickable();
+        else if (trophy_room) hot = trophy_room->pointer_over_clickable();
         else if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             hot = flow.selection()->pointer_over_clickable();
         const bool busy = flow.pointer_busy();
@@ -2401,6 +2520,23 @@ int main(int argc, char** argv) {
             if (game_fade_out <= 0) {
                 game_fade_out = 0;
                 if (pending_start) { pending_start = false; start_game(); }
+                else if (pending_trophies) {
+                    pending_trophies = false;
+                    TrophyRoom::Services ts;
+                    ts.play_sound = [&](SoundId id) { assets.play_sound(id); };
+                    ts.on_profile_change = pservices.on_change;
+                    ts.on_exit = [&] { pending_trophy_exit = true; game_fade_out = GAME_FADE_HALF_MS; };
+                    trophy_room = std::make_unique<TrophyRoom>(*players.current(), ts);
+                    // DEVIATION: 0x42fb20 plays it at 0.7; the port has no per-stream gain.
+                    assets.play_stream(SoundId::MusicTrophyRoom);
+                    std::printf("t=%ld ms: trophy room\n", simulated_ms);
+                }
+                else if (pending_trophy_exit) {
+                    pending_trophy_exit = false;
+                    trophy_room.reset();
+                    assets.play_stream(SoundId::MusicMenu);
+                    std::printf("t=%ld ms: back to the menu\n", simulated_ms);
+                }
                 else if (pending_exit) {
                     pending_exit = false;
                     game.reset();
@@ -2460,7 +2596,10 @@ int main(int argc, char** argv) {
                 auto_type_ms = 0;
                 const char c = auto_type.front();
                 auto_type.erase(0, 1);
-                if (c == '"' && !menu_improvements && !menu_settings && !menu_help) profile.open_player_select();
+                if (trophy_room) {
+                    if (c == '~') trophy_room->press("BUTTON_Menu");
+                }
+                else if (c == '"' && !menu_improvements && !menu_settings && !menu_help) profile.open_player_select();
                 else if (menu_improvements && (c == '<' || c == '>'))
                     menu_improvements->press(c == '<' ? "BUTTON_WINDOW_PREV" : "BUTTON_WINDOW_NEXT");
                 else if (menu_improvements && (c == '(' || c == ')'))
@@ -2473,6 +2612,7 @@ int main(int argc, char** argv) {
                 else if (menu_improvements && c == '~')
                     menu_improvements_result(menu_improvements->press("BUTTON_CANCEL"));
                 else if (c == '?') services.menu_action("BUTTON_HOWTOPLAY");
+                else if (c == '+') services.menu_action("BUTTON_TROPHY");
                 else if (c == '#') services.menu_action("BUTTON_SETTINGS");
                 else if (c == '=') services.menu_action("BUTTON_IMPROVEMENTS");
                 else if (c == '^') toggle_fullscreen();
@@ -2490,6 +2630,7 @@ int main(int argc, char** argv) {
                 else if (c == '~') menu_help_press("BUTTON_OK");
             }
         }
+        if (trophy_room) trophy_room->update(dt);
         if (game) {
             game->update(dt);
             // --type: one key every 300 ms while a round is being played.
@@ -2565,6 +2706,8 @@ int main(int argc, char** argv) {
         const LayerSize layer_px = layer_size(out_w, out_h, render_opts.hires_layers, render_caps.max_texture_size);
         if (game) {
             draw_game(ren, assets, *game);
+        } else if (trophy_room) {
+            draw_trophy_room(ren, assets, *trophy_room);
         } else if (!boot_prompt_open()) {   // black behind the boot prompt
             for (const SpriteState* s : flow.draw_list()) draw_sprite(ren, assets, *s);
             if (flow.current() == SceneId::Selection) {

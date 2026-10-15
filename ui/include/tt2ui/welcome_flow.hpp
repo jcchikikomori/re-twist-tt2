@@ -53,6 +53,9 @@ enum class SoundId {
     CheckboxOn,         // SOUND_CHECKBOX_ON  (sound/checkbox_on.ogg)
     CheckboxOff,        // SOUND_CHECKBOX_OFF (sound/checkbox_off.ogg)
     Slider,             // SOUND_SLIDER_1     (sound/slider_4.ogg)
+    // Trophies (docs/reverse-engineering/trophies.md).
+    TrophyWon,          // SOUND_game_trophy_won (sound/game_trophy_won.ogg)
+    MusicTrophyRoom,    // Stream MUSIC_trophy_room (music/music_trophy_room.ogg)
 };
 
 // What the scenes need from the application.
