@@ -181,6 +181,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_settings_dialog.cpp
         ui/tests/test_data_paths.cpp
         ui/tests/test_dialog_fade.cpp
+        ui/tests/test_asset_import.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)
