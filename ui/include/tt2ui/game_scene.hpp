@@ -556,6 +556,13 @@ public:
     bool dialog_open() const { return dialog_kind_ != GameDialog::None; }
     GameDialog dialog_kind() const { return dialog_kind_; }
     const Dialog& dialog() const { return settings_ ? settings_->dialog() : dialog_; }
+    // The dialog still open under the top one (the pause menu under its
+    // "Exit Game?", SETTINGS or HOW TO PLAY; the tutorial under its help),
+    // or nullptr. The original stacks them: 0x408320 / 0x408250 / 0x408180
+    // show the new dialog without hiding the menu, and NO / OK (0x408c00)
+    // close only the dialog on top.
+    const Dialog* under_dialog() const { return under_.empty() ? nullptr : &under_.back().second; }
+    GameDialog under_kind() const { return under_.empty() ? GameDialog::None : under_.back().first; }
     Dialog& dialog() { return settings_ ? settings_->dialog() : dialog_; }
     // DIALOG_SETTINGS while dialog_kind() == Settings, else nullptr.
     const SettingsDialog* settings_dialog() const { return settings_ ? &*settings_ : nullptr; }
@@ -778,28 +785,29 @@ public:
         switch (dialog_kind_) {
             case GameDialog::PauseMenu:
                 if (name == "BUTTON_RESUME") close_dialog();
-                else if (name == "BUTTON_STOP") open_dialog(GameDialog::ConfirmExit);
-                else if (name == "BUTTON_HOWTOPLAY") open_help(GameDialog::PauseMenu);   // 0x408180
-                else if (name == "BUTTON_SETTINGS") open_dialog(GameDialog::Settings);   // 0x408250
+                else if (name == "BUTTON_STOP") push_dialog(GameDialog::ConfirmExit);    // 0x408320
+                else if (name == "BUTTON_HOWTOPLAY") push_dialog(GameDialog::HowToPlay); // 0x408180
+                else if (name == "BUTTON_SETTINGS") push_dialog(GameDialog::Settings);   // 0x408250
                 break;
             case GameDialog::HowToPlay:
                 // OK (0x408c00) closes the help; the dialog that opened it
                 // (pause menu or tutorial) is still under it.
-                if (name == "BUTTON_OK") open_dialog(help_under_);
+                if (name == "BUTTON_OK") pop_dialog();
                 else help_.turn(dialog_, name == "BUTTON_PREV" ? -1 : 1);
                 break;
             case GameDialog::Tutorial:
                 // READ MORE 0x40e1f0 opens DIALOG_HELP over the tutorial;
                 // PLAY 0x40e1c0 -> GameScene 0x427b10 clears the block
                 // flag +0x260 and refreshes the buttons.
-                if (name == "BUTTON_HELP") open_help(GameDialog::Tutorial);
+                if (name == "BUTTON_HELP") push_dialog(GameDialog::HowToPlay);
                 else close_dialog();
                 break;
             case GameDialog::ConfirmExit:
-                // 0x408320: YES leaves (the round is saved on the way out,
-                // 0x427b20); NO goes back to the menu (INFERRED).
+                // 0x408320: YES (0x408430) hands the answer to the scene,
+                // which saves the round and leaves (0x427b20); NO (0x408c00)
+                // closes only this dialog, uncovering the pause menu.
                 if (name == "BUTTON_YES") { close_dialog(); leave(); exit_to_menu(); }
-                else open_dialog(GameDialog::PauseMenu);
+                else pop_dialog();
                 break;
             case GameDialog::ConfirmPass:
             case GameDialog::ConfirmGiveUp:
@@ -981,10 +989,6 @@ private:
         open_dialog(GameDialog::Tutorial);
     }
 
-    void open_help(GameDialog under) {
-        help_under_ = under;
-        open_dialog(GameDialog::HowToPlay);
-    }
 
     void submit() {
         if (phase_ != GamePhase::Playing) return;
@@ -1152,7 +1156,13 @@ private:
         if (finished_ || dialog_open()) return;
         open_dialog(GameDialog::PauseMenu);
     }
+    // Replaces every open dialog with `kind` (None closes them all).
     void open_dialog(GameDialog kind) {
+        under_.clear();
+        show_dialog(kind);
+    }
+    // Builds `kind` as the top dialog; the ones under it are left alone.
+    void show_dialog(GameDialog kind) {
         dialog_kind_ = kind;
         dialog_balls_.clear();
         dialog_particles_.clear();
@@ -1195,6 +1205,22 @@ private:
         ball_hot_ = word_hot_ = false;
     }
     void close_dialog() { open_dialog(GameDialog::None); }
+    // Opens `kind` over the open dialog, which stays as it is underneath.
+    void push_dialog(GameDialog kind) {
+        if (dialog_kind_ != GameDialog::None) under_.emplace_back(dialog_kind_, dialog_);
+        show_dialog(kind);
+    }
+    // Closes the top dialog only: the one under it comes back unchanged
+    // (its page, its values), with no hover left over from before.
+    void pop_dialog() {
+        if (under_.empty()) { close_dialog(); return; }
+        auto [kind, d] = std::move(under_.back());
+        under_.pop_back();
+        show_dialog(GameDialog::None);
+        dialog_kind_ = kind;
+        dialog_ = std::move(d);
+        for (auto& b : dialog_.buttons) b.hover = b.pressed = false;
+    }
 
     // OK (0x40c620) stores the player's max word length and saves the
     // players (0x462080); it applies from the next rack (F13). Both OK and
@@ -1206,7 +1232,7 @@ private:
             if (services_.on_profile_change) services_.on_profile_change();
             if (services_.settings.commit) services_.settings.commit(settings_->values());
         }
-        if (r == SettingsDialog::Result::Ok || r == SettingsDialog::Result::Cancel) open_dialog(GameDialog::PauseMenu);
+        if (r == SettingsDialog::Result::Ok || r == SettingsDialog::Result::Cancel) pop_dialog();   // the menu is under it
     }
 
     void exit_to_menu() {
@@ -1464,7 +1490,7 @@ private:
     std::vector<SlotView> slots_;
     std::vector<LetterBall> balls_;
     HelpPager help_;                         // DIALOG_HELP page state
-    GameDialog help_under_ = GameDialog::PauseMenu;   // where the help's OK returns
+    std::vector<std::pair<GameDialog, Dialog>> under_;   // open dialogs under the top one, bottom first
     std::optional<SettingsDialog> settings_; // DIALOG_SETTINGS while open
     std::vector<LetterBall> dialog_balls_;   // DIALOG_NEXTROUND letterballs
     std::vector<Particle> dialog_particles_;

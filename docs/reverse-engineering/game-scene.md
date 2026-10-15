@@ -420,6 +420,17 @@ All are `autocenter` and `dodarkenbackground="true"`.
 
 - `0x407f40` wires the pause menu. STOP opens `0x408320`: "Exit Game?" / "Are you sure you
   want to leave this game? Your game will be saved for next time." YES saves and leaves.
+- **Dialogs stack** (CONFIRMED, `ev_efc05cab711733699a313abb52b1106b294383583419898c25de77480f41e176`,
+  `ev_cd8a7b2ab31b2eccb64ad0ca43bf775c4797da0b9091d436ea7b304ff43551f8`): STOP (`0x408320`) builds the
+  YES / NO with `0x40b310` and shows it (vtable `+0xb0`); SETTINGS (`0x408250`) does the same. Neither hides
+  the pause menu. YES (`0x408430`) hands the answer to the owner (`[+0x1dc]`, vtable `+0xdc`); NO is
+  `0x408c00`, which stores the dialog in its own `+0x1d0` and jumps to the hide `0x40ce80`
+  (`ev_de068f09a96bb022c74a2525455f1ee9257e840ceec28c2a690ff06bfa498c9d`,
+  `ev_4162cf97aa1db90036c5cb4fee799f641d06f8262f3d765d4073627ca1a83d3d`), so only the top dialog closes and
+  the menu is uncovered. HOW TO PLAY's OK is the same `0x408c00`. Each dialog darkens what is behind it
+  (`dodarkenbackground`), so the menu shows dimmed under its confirm. **Port:** `GameScene::push_dialog()` /
+  `pop_dialog()` keep the dialogs underneath (`under_dialog()`), and `main.cpp` draws the one under the top
+  on its own layer with its own backdrop. Only the top dialog takes input.
 - `0x428b60` event `0x206` opens `DIALOG_MENU` and touches no sound or stream
   (`ev_761416f061c3d27fa5dbec9fe2fa719dfc783be3dcaa2821d1000c69b0284d43`); that the event is
   the window losing focus is INFERRED.

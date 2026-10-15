@@ -1866,6 +1866,59 @@ TEST(pause_menu_how_to_play_pages_and_returns) {
     ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
 }
 
+// 0x408320 / 0x408250 / 0x408180 show their dialog over the pause menu
+// without hiding it; NO / OK / CANCEL (0x408c00) close only the top one.
+TEST(pause_menu_stays_open_under_its_confirm_settings_and_help) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    s.press("BUTTON_Menu");
+    ASSERT_TRUE(s.under_dialog() == nullptr);              // nothing stacked yet
+    s.dialog_press("BUTTON_STOP");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::ConfirmExit);
+    ASSERT_TRUE(s.under_kind() == GameDialog::PauseMenu);  // the menu is still there
+    ASSERT_TRUE(s.under_dialog()->button("BUTTON_RESUME") != nullptr);
+    s.dialog_press("BUTTON_NO");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+    ASSERT_TRUE(s.under_dialog() == nullptr);
+    s.dialog_press("BUTTON_SETTINGS");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::Settings && s.under_kind() == GameDialog::PauseMenu);
+    s.dialog_press("BUTTON_CANCEL");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu && s.under_dialog() == nullptr);
+    s.dialog_press("BUTTON_HOWTOPLAY");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::HowToPlay && s.under_kind() == GameDialog::PauseMenu);
+    s.key_escape();                                        // OK: back to the menu
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu && s.under_dialog() == nullptr);
+}
+
+TEST(the_dialog_under_takes_no_input) {
+    // Only the top dialog answers: the menu's RESUME does nothing while
+    // "Exit Game?" covers it, and the clock stays stopped.
+    Fixture f(true);
+    auto& s = *f.scene;
+    s.press("BUTTON_Menu");
+    s.dialog_press("BUTTON_STOP");
+    const int left = s.time_left_ms();
+    s.dialog_press("BUTTON_RESUME");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::ConfirmExit);
+    s.update(1000);
+    ASSERT_EQ(s.time_left_ms(), left);
+}
+
+TEST(leaving_or_resuming_clears_the_whole_stack) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    s.press("BUTTON_Menu");
+    s.dialog_press("BUTTON_STOP");
+    s.dialog_press("BUTTON_YES");                          // leave: nothing stays open
+    ASSERT_TRUE(!s.dialog_open());
+    ASSERT_TRUE(s.under_dialog() == nullptr);
+    Fixture g(false);
+    auto& t = *g.scene;
+    t.press("BUTTON_Menu");
+    t.dialog_press("BUTTON_RESUME");
+    ASSERT_TRUE(!t.dialog_open() && t.under_dialog() == nullptr);
+}
+
 TEST(stop_asks_then_saves_and_leaves) {
     Fixture f(false);
     auto& s = *f.scene;
@@ -2094,6 +2147,7 @@ TEST(tutorial_read_more_opens_help_and_returns) {
     auto& s = *f.scene;
     s.dialog_press("BUTTON_HELP");                         // READ MORE 0x40e1f0
     ASSERT_TRUE(s.dialog_kind() == GameDialog::HowToPlay);
+    ASSERT_TRUE(s.under_kind() == GameDialog::Tutorial);   // drawn under the help
     s.dialog_press("BUTTON_OK");                           // the tutorial is still under it
     ASSERT_TRUE(s.dialog_kind() == GameDialog::Tutorial);
     s.key_escape();                                        // Esc does not skip it

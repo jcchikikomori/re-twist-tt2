@@ -1728,7 +1728,7 @@ int main(int argc, char** argv) {
     std::printf("display: %s\n", check_presentation(ren).c_str());
     // One fading dialog slot per dialog source, drawn in this order.
     SideFillTextures side_fill;
-    DialogLayer game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
+    DialogLayer game_under_layer, game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
         menu_credits_layer, menu_improvements_layer, menu_notice_layer, profile_layer, import_layer;
 
     // Hand pointer over clickable items, hourglass on the load
@@ -2407,6 +2407,12 @@ int main(int argc, char** argv) {
                           Anchor::Center, 2);
             }
         }
+        // The dialog still open under the top one (the pause menu under
+        // "Exit Game?", SETTINGS or HOW TO PLAY), with its own backdrop:
+        // each GF2 dialog darkens what is behind it (dodarkenbackground).
+        const Dialog* game_under = game ? game->under_dialog() : nullptr;
+        draw_dialog_layer(ren, layer_px, game_under_layer, game_under ? static_cast<int>(game->under_kind()) : 0, dt,
+                          [&] { draw_dialog(ren, assets, *game_under); });
         draw_dialog_layer(ren, layer_px, game_layer, game ? static_cast<int>(game->dialog_kind()) : 0, dt, [&] {
             if (game->settings_dialog()) {
                 draw_settings(ren, assets, *game->settings_dialog());
@@ -2497,7 +2503,7 @@ int main(int argc, char** argv) {
     if (cursor_arrow) SDL_DestroyCursor(cursor_arrow);
     assets.release();   // before the mixer and the renderer it came from
     audio_out.close();
-    for (DialogLayer* l : {&game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
+    for (DialogLayer* l : {&game_under_layer, &game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
                            &menu_credits_layer, &menu_improvements_layer, &menu_notice_layer, &profile_layer,
                            &import_layer})
         l->release();
