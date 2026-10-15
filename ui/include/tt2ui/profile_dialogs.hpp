@@ -234,6 +234,9 @@ public:
         std::function<void()> on_change;
         std::function<std::uint32_t()> seed_millis = [] { return 0u; };   // timeGetTime for a new player
         LineBreaker wrap;   // word-wraps MESSAGE (wrapstyle="wordwrap"); empty: "\n" only
+        // A player was removed or added: drop that name's saved games, so a
+        // new player never inherits a removed one's (port deviation).
+        std::function<void(const std::string&)> forget_player;
     };
 
     ProfileFlow(tt2::PlayerManager& pm, Services s) : pm_(pm), services_(std::move(s)) {}
@@ -412,6 +415,7 @@ private:
         const auto r = pm_.add(input_, services_.seed_millis());   // 0x45fa60 + 0x460d10
         switch (r) {
             case tt2::AddPlayerResult::Added:
+                forget(pm_.current()->name);   // saves left by an older player of this name
                 changed();
                 close();
                 break;
@@ -505,7 +509,9 @@ private:
         if (name != "BUTTON_YES") return;
         const int old = selected_;
         if (old >= 0 && old < pm_.count()) {
-            pm_.remove(pm_.players()[static_cast<std::size_t>(old)].name);   // 0x460c30
+            const std::string name = pm_.players()[static_cast<std::size_t>(old)].name;
+            pm_.remove(name);   // 0x460c30
+            forget(name);
             changed();
         }
         selected_ = tt2::PlayerManager::selection_after_remove(old, pm_.count());
@@ -560,6 +566,7 @@ private:
     }
     void sound(SoundId id) { if (services_.play_sound) services_.play_sound(id); }
     void changed() { if (services_.on_change) services_.on_change(); }
+    void forget(const std::string& name) { if (services_.forget_player) services_.forget_player(name); }
     static void append_utf8(std::string& s, std::uint32_t cp) {
         if (cp < 0x80) s += static_cast<char>(cp);
         else if (cp < 0x800) { s += static_cast<char>(0xC0 | (cp >> 6)); s += static_cast<char>(0x80 | (cp & 0x3F)); }

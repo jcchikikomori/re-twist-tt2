@@ -160,6 +160,16 @@ public:
         return !ec;
     }
 
+    // Port: every saved game of `player` (savegames/<player>/). A removed
+    // player's games must not come back for a new player of the same name
+    // (deviation, docs/reverse-engineering/game-scene.md section 7). True when
+    // the folder is gone afterwards (missing counts as success).
+    bool remove_saved_games(const std::string& player) const {
+        std::error_code ec;
+        std::filesystem::remove_all(dir_ / SAVEGAMES_DIR / encode_file_name(player), ec);
+        return !ec;
+    }
+
 private:
     static bool read_file(const std::filesystem::path& p, std::string& out) {
         std::ifstream in(p, std::ios::binary);

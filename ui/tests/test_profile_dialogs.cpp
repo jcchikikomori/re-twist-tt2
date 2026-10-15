@@ -23,6 +23,7 @@ struct Fixture {
         : flow(pm, ProfileFlow::Services{[this](SoundId s) { sounds.push_back(s); },
                                          [this] { ++changes; },
                                          [] { return 0x1234u; },
+                                         {},
                                          {}}) {}
 
     // Screen position of a dialog button's centre.
@@ -513,4 +514,46 @@ TEST(pointer_hot_tracks_clickable_hover) {
     f.flow.mouse_move(x, y);
     f.flow.close();
     ASSERT_TRUE(!f.flow.pointer_over_clickable());
+}
+
+// Port deviation: a removed player's saved games go with them, and a new
+// player of the same name starts clean (no "Continue the game?" from the old one).
+TEST(removing_or_adding_a_player_forgets_that_names_saved_games) {
+    tt2::PlayerManager pm;
+    pm.add("A", 1);
+    pm.add("B", 2);
+    pm.select("A");
+    std::vector<std::string> forgotten;
+    ProfileFlow::Services s;
+    s.forget_player = [&](const std::string& n) { forgotten.push_back(n); };
+    ProfileFlow flow(pm, s);
+    flow.open_player_select();
+    flow.press("BUTTON_REMOVE");
+    flow.press("BUTTON_NO");
+    ASSERT_TRUE(forgotten.empty());                      // NO keeps the player and the saves
+    flow.press("BUTTON_REMOVE");
+    flow.press("BUTTON_YES");
+    ASSERT_EQ(forgotten.size(), std::size_t{1});
+    ASSERT_EQ(forgotten[0], std::string("A"));
+    flow.press("BUTTON_ADD");
+    flow.text_input("A");
+    flow.press("BUTTON_OK");
+    ASSERT_EQ(forgotten.size(), std::size_t{2});
+    ASSERT_EQ(forgotten[1], std::string("A"));           // the new "A" starts clean
+    flow.open_player_select();
+    flow.press("BUTTON_ADD");
+    flow.text_input("B");
+    flow.press("BUTTON_OK");                             // "Player exists.": nothing forgotten
+    ASSERT_EQ(forgotten.size(), std::size_t{2});
+    ASSERT_TRUE(flow.dialog().kind == DialogKind::Message);
+}
+
+TEST(forget_player_is_optional) {
+    tt2::PlayerManager pm;
+    pm.add("A", 1);
+    ProfileFlow flow(pm, ProfileFlow::Services{});
+    flow.open_player_select();
+    flow.press("BUTTON_REMOVE");
+    flow.press("BUTTON_YES");                            // no service set: no crash
+    ASSERT_EQ(pm.count(), 0);
 }

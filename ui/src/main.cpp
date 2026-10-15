@@ -1819,6 +1819,10 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "warning: could not write %s\n", store.highscores_path().string().c_str());
     };
     pservices.seed_millis = [&] { return seed_ticks(); };   // timeGetTime()
+    pservices.forget_player = [&](const std::string& name) {
+        if (!save_dir.empty() && !store.remove_saved_games(name))
+            std::fprintf(stderr, "warning: could not remove the saved games of %s\n", name.c_str());
+    };
     pservices.wrap = [&assets](const std::string& text, int max_width) {
         return wrap_text(assets.font("FONT_SETTINGSTEXT").font, text, max_width);
     };
@@ -1927,7 +1931,9 @@ int main(int argc, char** argv) {
         if (menu_improvements) menu_improvements->sync_window(improvements.window);
         if (game) game->window_mode_changed(fullscreen);
     };
-    // "Continue the game?" (CTEXT_START_SAVEGAME, 0x42dc80) on the menu.
+    // "Continue the game?" (CTEXT_START_SAVEGAME, 0x42dc80) on the menu. Port
+    // improvement: the original never shows it in play (a save just resumes,
+    // and starting again means passing until GIVE UP); see game-scene.md 7.
     Dialog menu_dialog;
     bool menu_dialog_open = false;
     bool menu_dialog_timed = false;

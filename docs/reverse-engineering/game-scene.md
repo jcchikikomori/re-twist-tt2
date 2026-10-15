@@ -522,8 +522,20 @@ All are `autocenter` and `dodarkenbackground="true"`.
 - `PlayerManager` (`0x460900`) keeps a `savegames` folder next to `players`. On scene start
   (`0x4242a0`) a save for the mode (`CLASSIC_TIMED`, `CLASSIC_UNTIMED`, `WORD_OF_THE_DAY`)
   is loaded with `0x42a460`; otherwise a fresh game starts (`0x425c50`).
-- The menu asks first (`0x42dc80`): "Continue the game?" / "Do you want to continue your
-  last played game? (Select 'No' to start again.)". NO deletes the save.
+- "Continue the game?" / "Do you want to continue your last played game? (Select 'No' to
+  start again.)" is built by `0x42dc80` (`CTEXT_START_SAVEGAME`,
+  `ev_2153c453dd0d668a6bc2cf751712e82483b7b7dbc569a82f7beffe1c52ddbc59`). UNKNOWN whether the
+  original ever shows it: `0x42dc80` has no direct caller, only a vtable slot at `0x591220`
+  (`ev_b32b0f5d2218417c64055a3a3d03b00fbdcf6d381bb513d73ea95eedb9d7488c`), next to the menu's
+  profile check `0x42d9b0` at `0x59121c`. Play-testing the original (2026-10-15), the prompt
+  never appears: a save simply resumes, and the only way to start again is to pass and GIVE UP.
+  **Port improvement (2026-10-15):** the port asks with this dialog whenever a save exists;
+  NO deletes the save and starts a new game.
+- **Port deviation:** removing a player deletes their saves (`savegames/<player>/`), and
+  adding a player deletes any left under that name, so a new player never inherits a
+  removed one's game (`ProfileStore::remove_saved_games`, `ProfileFlow::Services::forget_player`).
+  Before this, a new profile reusing a removed player's name was asked to continue the
+  old game. What the original does with a removed player's saves is not traced.
 - Save (`0x429dd0`), called when the scene is left mid-round (`0x427b20`, only when
   `+0x264 == 0`): `WORD`, `ROUND`, `TIME`, `LONGESTWORD` (the qualified flag), `SCORE`,
   `DAY`, `FAILCOUNT` and a `WORD_LIST` of the found words (`0x432cb0`).

@@ -144,3 +144,18 @@ TEST(store_saves_loads_and_removes_saved_games) {
     ASSERT_TRUE(!store.has_saved_game("Mugwump", mode));
     std::filesystem::remove_all(dir);
 }
+
+TEST(store_removes_every_saved_game_of_one_player) {
+    const auto dir = scratch_dir();
+    ProfileStore store(dir);
+    ASSERT_TRUE(store.remove_saved_games("Nobody"));                    // missing: still fine
+    ASSERT_TRUE(store.save_saved_game("A B", "CLASSIC_UNTIMED", sample()));
+    ASSERT_TRUE(store.save_saved_game("A B", "CLASSIC_TIMED", sample()));
+    ASSERT_TRUE(store.save_saved_game("Other", "CLASSIC_TIMED", sample()));
+    ASSERT_TRUE(store.remove_saved_games("A B"));
+    ASSERT_TRUE(!store.has_saved_game("A B", "CLASSIC_UNTIMED"));
+    ASSERT_TRUE(!store.has_saved_game("A B", "CLASSIC_TIMED"));
+    ASSERT_TRUE(!std::filesystem::exists(store.saved_game_path("A B", "CLASSIC_TIMED").parent_path()));
+    ASSERT_TRUE(store.has_saved_game("Other", "CLASSIC_TIMED"));        // other players keep theirs
+    std::filesystem::remove_all(dir);
+}
