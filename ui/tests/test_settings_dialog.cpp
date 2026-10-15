@@ -2,9 +2,12 @@
 // (docs/reverse-engineering/help-and-settings.md §3).
 #include "test_harness.hpp"
 
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
+#include "tt2ui/bitmap_font.hpp"
 #include "tt2ui/settings_dialog.hpp"
 
 using namespace tt2ui;
@@ -266,11 +269,7 @@ TEST(settings_credits_next_crossfades_to_the_recreation_page) {
     ASSERT_TRUE(c->label("P1_HEADING_0")->alpha == 0.25f && c->label("P1_MESSAGE")->alpha == 0.25f);
     d.tick(HELP_FADE_MS);
     ASSERT_TRUE(c->label("P0_MESSAGE")->alpha == 0.0f && c->label("P1_LINES_0")->alpha == 1.0f);
-    ASSERT_TRUE(c->button("BUTTON_PREV")->sprite.visible && !c->button("BUTTON_NEXT")->sprite.visible);
-    // NEXT is hidden on the last page: a press is ignored, silently.
-    ASSERT_TRUE(d.press("BUTTON_NEXT") == SettingsDialog::Result::None);
-    ASSERT_EQ(d.credits_dialog()->page(), 1);
-    ASSERT_EQ(r.count(SoundId::Button), 2);
+    ASSERT_TRUE(c->button("BUTTON_PREV")->sprite.visible && c->button("BUTTON_NEXT")->sprite.visible);
     // PREV goes back to the original credits; OK closes from either page.
     d.press("BUTTON_PREV");
     ASSERT_EQ(d.credits_dialog()->page(), 0);
@@ -279,6 +278,62 @@ TEST(settings_credits_next_crossfades_to_the_recreation_page) {
     d.press("BUTTON_NEXT");
     ASSERT_TRUE(d.press("BUTTON_OK") == SettingsDialog::Result::None);
     ASSERT_TRUE(d.credits() == nullptr);
+}
+
+TEST(settings_credits_last_page_lists_the_software_licenses) {
+    Rig r;
+    SettingsDialog d(saved(), 7, true, r.services());
+    d.press("BUTTON_INFO");
+    d.press("BUTTON_NEXT");
+    d.press("BUTTON_NEXT");
+    ASSERT_EQ(d.credits_dialog()->page(), 2);
+    d.tick(HELP_FADE_MS);
+    const Dialog* c = d.credits();
+    ASSERT_TRUE(c->label("P2_HEADING_0")->alpha == 1.0f && c->label("P2_LINES_0")->alpha == 1.0f);
+    ASSERT_TRUE(c->label("P2_MESSAGE")->alpha == 1.0f);
+    ASSERT_TRUE(c->label("P1_LINES_0")->alpha == 0.0f && c->label("P0_MESSAGE")->alpha == 0.0f);
+    ASSERT_TRUE(c->label("P2_LINES_0")->text.find("Super-xBR upscaler by Hyllian (MIT)") != std::string::npos);
+    // NEXT is hidden on the last page: a press is ignored, silently.
+    ASSERT_TRUE(c->button("BUTTON_PREV")->sprite.visible && !c->button("BUTTON_NEXT")->sprite.visible);
+    ASSERT_TRUE(d.press("BUTTON_NEXT") == SettingsDialog::Result::None);
+    ASSERT_EQ(d.credits_dialog()->page(), 2);
+    ASSERT_EQ(r.count(SoundId::Button), 3);                                  // INFO, NEXT, NEXT
+    d.press("BUTTON_PREV");
+    ASSERT_EQ(d.credits_dialog()->page(), 1);
+}
+
+// The licences page in the placeholder fonts (the imported originals measure
+// within a few pixels of them): every glyph exists, no line overflows the
+// 708 px credits area, and the list ends above the message, which ends left
+// of PREV.
+TEST(credits_licenses_page_fits_its_fonts) {
+    auto font = [](const char* name) {
+        std::ifstream in(std::string(TT2_SOURCE_DATA_DIR) + "/placeholder/fonts/" + name + ".xml");
+        std::stringstream ss;
+        ss << in.rdbuf();
+        BitmapFont f;
+        ASSERT_TRUE(BitmapFont::parse(ss.str(), f));
+        return f;
+    };
+    const Dialog c = build_credits();
+    int lines_checked = 0;
+    auto fits = [&](const TextLabel& l, const BitmapFont& f, float max_w) {
+        std::istringstream in(l.text);
+        for (std::string line; std::getline(in, line);) {
+            for (std::uint32_t cp : utf8_decode(line)) ASSERT_TRUE(cp == ' ' || f.glyph(cp) != nullptr);
+            ASSERT_TRUE(f.measure(line) <= max_w);
+            ++lines_checked;
+        }
+    };
+    const TextLabel& heading = *c.label("P2_HEADING_0");
+    const TextLabel& lines = *c.label("P2_LINES_0");
+    const TextLabel& message = *c.label("P2_MESSAGE");
+    fits(heading, font("font_dialog_headers2"), CREDITS_AREA_W);
+    fits(lines, font("font_nextround02"), CREDITS_AREA_W);
+    const float prev_left = CREDITS_TURN_X - 119 / 2.0f;
+    fits(message, font("font_highscore_text"), prev_left - message.x);
+    ASSERT_EQ(lines_checked, 1 + 8 + 2);
+    ASSERT_TRUE(lines.y + CREDITS_LINE_H * text_line_count(lines.text) <= message.y);
 }
 
 TEST(credits_prev_is_hidden_on_the_first_page) {

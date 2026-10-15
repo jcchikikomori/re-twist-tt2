@@ -259,7 +259,7 @@ Evidence: `ev_6e6a9b2f0860f144078fced097ce2b18e6765717bf945f04e2560058f5ec86aa`,
 `ev_38cb2daaaa0e59ebc0668b0e8be3c69c97f6822ee1c9e31170fcbf13083ca9eb`.
 
 Port (`credits_dialog.hpp`, owned by `SettingsDialog`): same frame, logo, `VERSION` (the
-CMake project version) and OK, over two pages.
+CMake project version) and OK, over three pages.
 
 - **Page 1 is the original credits.** `GRA_CREDITS` and `TEXT_CREDITS0` sit where the original
   puts them. The picture loads only from the user's `imported-assets/`; without it, the
@@ -269,6 +269,11 @@ CMake project version) and OK, over two pages.
   dialog's PREV/NEXT art at (580, 535)) and crossfaded with `HelpPager` over 200 ms, credits Claude
   (Anthropic), who generated the code, the person who compiled it, the open word lists and SDL3,
   and its `MESSAGE` says the port is not affiliated with GameHouse.
+- **Page 3 is the software licences.** Also a deviation: one "Software licenses" section lists what
+  the game and its packages carry (Super-xBR, SDL3, stb, tinyfiledialogs, the placeholder fonts, the
+  MinGW / GCC and AppImage runtimes) with each licence, and its `MESSAGE` points at the `licenses/`
+  folder with the full texts. The fonts are Latin-1 without a middle dot, so the licences sit in
+  parentheses; a test measures every line against the placeholder fonts.
 
 INFERRED: a child sprite's offset scales with its parent, and the logo parts show frame 0.
 

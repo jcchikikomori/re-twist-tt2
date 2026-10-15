@@ -7,12 +7,15 @@
 // shows GRA_CREDITS (a picture of the 2008 GameHouse team), the half-size
 // logo, VERSION and one MESSAGE line ("Copyright ©2008 GameHouse, Inc.").
 //
-// Deviation: the port adds a second page for this recreation, reached with
-// NEXT and crossfaded like the HOW TO PLAY pages (HelpPager, 200 ms).
+// Deviation: the port adds two pages, reached with NEXT and crossfaded
+// like the HOW TO PLAY pages (HelpPager, 200 ms).
 //   Page 1 (P0_): the original credits. GRA_CREDITS loads from the user's
 //                 imported-assets/ only; without it the placeholder build
 //                 draws the same names as text (the P0_ORIG_ labels).
 //   Page 2 (P1_): who made this recreation possible.
+//   Page 3 (P2_): the software licences of what the game and its packages
+//                 carry; the full texts ship in the licenses/ folder
+//                 (docs/design/asset-credits.md, "What the Packages Carry").
 #pragma once
 
 #include <string>
@@ -61,12 +64,27 @@ inline constexpr Section RECREATION[] = {
     {"Built with", "SDL3, SDL3_image and SDL3_mixer"},
 };
 inline constexpr const char* RECREATION_MESSAGE = "A fan recreation of Text Twist 2,\nnot affiliated with GameHouse, Inc.";
+
+// Page 3. No middle dot or dash: the fonts are Latin-1 and lack both.
+inline constexpr Section LICENSES[] = {
+    {"Software licenses",
+     "Super-xBR upscaler by Hyllian (MIT)\n"
+     "SDL3, SDL3_image and SDL3_mixer (zlib)\n"
+     "stb_image and stb_vorbis (public domain)\n"
+     "tinyfiledialogs by Guillaume Vareille (zlib)\n"
+     "Luckiest Guy (Apache 2.0), Arimo (SIL OFL 1.1)\n"
+     "Windows: MinGW-w64 runtime (MIT, BSD)\n"
+     "Windows: GCC runtime (GPL 3, runtime exception)\n"
+     "Linux: AppImage runtime (MIT)"},
+};
+inline constexpr const char* LICENSES_MESSAGE =
+    "re-twist-tt2 is MIT licensed. Full texts are in\nthe licenses folder next to the game.";
 inline constexpr const char* VERSION_PREFIX = "VERSION ";
 }  // namespace credits_strings
 
 inline constexpr int CREDITS_W = 798;
 inline constexpr int CREDITS_H = 595;
-inline constexpr int CREDITS_PAGE_COUNT = 2;
+inline constexpr int CREDITS_PAGE_COUNT = 3;
 // GRA_CREDITS: (46, 124), 708x394.
 inline constexpr float CREDITS_AREA_LEFT = 46.0f;
 inline constexpr float CREDITS_AREA_TOP = 124.0f;
@@ -123,23 +141,29 @@ inline Dialog build_credits() {
     }
     message("P0_MESSAGE", cs::ORIGINAL_MESSAGE, 1.0f);
 
-    // Page 2: this recreation, hidden until NEXT.
-    const float cx = CREDITS_AREA_LEFT + CREDITS_AREA_W / 2.0f;
-    float y = CREDITS_AREA_TOP + 22.0f;   // clear of the logo (bottom ~130)
-    i = 0;
-    for (const auto& s : cs::RECREATION) {
-        const std::string id = std::to_string(i++);
-        TextLabel h{"P1_HEADING_" + id, "FONT_DIALOG_HEADERS2", s.heading, cx, y, TextAlign::Center, Anchor::Top, 0};
-        h.alpha = 0.0f;
-        d.labels.push_back(h);
-        y += CREDITS_HEADING_H;
-        TextLabel l{"P1_LINES_" + id, "FONT_NEXTROUND02", s.lines, cx, y, TextAlign::Center, Anchor::Top, 1};
-        l.line_height = CREDITS_LINE_H;
-        l.alpha = 0.0f;
-        d.labels.push_back(l);
-        y += CREDITS_LINE_H * text_line_count(s.lines) + CREDITS_SECTION_GAP;
-    }
-    message("P1_MESSAGE", cs::RECREATION_MESSAGE, 0.0f);
+    // Pages 2 and 3: headed sections, hidden until NEXT.
+    auto sections = [&](int page, const auto& list, const char* text) {
+        const std::string prefix = credits_page_name(page);
+        const float cx = CREDITS_AREA_LEFT + CREDITS_AREA_W / 2.0f;
+        float y = CREDITS_AREA_TOP + 22.0f;   // clear of the logo (bottom ~130)
+        int n = 0;
+        for (const auto& s : list) {
+            const std::string id = std::to_string(n++);
+            TextLabel h{prefix + "HEADING_" + id, "FONT_DIALOG_HEADERS2", s.heading, cx, y, TextAlign::Center,
+                        Anchor::Top, 0};
+            h.alpha = 0.0f;
+            d.labels.push_back(h);
+            y += CREDITS_HEADING_H;
+            TextLabel l{prefix + "LINES_" + id, "FONT_NEXTROUND02", s.lines, cx, y, TextAlign::Center, Anchor::Top, 1};
+            l.line_height = CREDITS_LINE_H;
+            l.alpha = 0.0f;
+            d.labels.push_back(l);
+            y += CREDITS_LINE_H * text_line_count(s.lines) + CREDITS_SECTION_GAP;
+        }
+        message(prefix + "MESSAGE", text, 0.0f);
+    };
+    sections(1, cs::RECREATION, cs::RECREATION_MESSAGE);
+    sections(2, cs::LICENSES, cs::LICENSES_MESSAGE);
 
     // VERSION: anchorpoint "right", right-aligned at (771, 87).
     d.labels.push_back(TextLabel{"VERSION", "FONT_FONT_HIGHSCORE_TEXT", std::string(cs::VERSION_PREFIX) + TT2_VERSION,
