@@ -226,6 +226,20 @@ the address-level walkthrough of the gameplay code is in
   prompt or SETTINGS) into a per-user folder on their machine only.
 - Commits follow Conventional Commits. **The AI only stages changes and
   drafts commit messages; the user commits and pushes.**
+- **Releases follow [SemVer 2.0.0](https://semver.org/).** Tags are
+  `vMAJOR.MINOR.PATCH` (pre-releases `v0.3.0-beta.1`); a `v*` tag makes
+  `.github/workflows/packages.yml` publish the AppImage and the Windows
+  zip as a GitHub Release. Pick the bump from the Conventional Commit
+  types since the last tag (`git log --oneline <last-tag>..HEAD`):
+  - **Before 1.0.0** (`0.y.z`): MINOR for any `feat` or breaking change
+    (save files, CLI flags, the asset folder layout), PATCH when there
+    are only `fix` / `perf` / `docs` / `build` / `ci` commits.
+  - **From 1.0.0:** MAJOR for breaking changes (`!` or a
+    `BREAKING CHANGE:` footer), MINOR for `feat`, PATCH for fixes.
+  - Release steps: bump `project(tt2 VERSION x.y.z)` in `CMakeLists.txt`
+    (CREDITS shows it) in a `chore(release): x.y.z` commit; the user
+    then tags that commit `vx.y.z` and pushes the tag. The AI proposes
+    the number and drafts the commit, but never creates or pushes tags.
 - **AI attribution is mandatory on every AI-generated commit.** Every
   commit message drafted by an LLM must end with a `Co-authored-by`
   trailer naming the actual model that generated the change, e.g.:
