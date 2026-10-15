@@ -84,16 +84,25 @@ inline Dialog build_pause_menu() {
 
 // DIALOG_YESNO: 400x180 minimum. 0x40b470 moves both buttons down by
 // the height of the MESSAGE label (lineheight 30 per line) and grows the
-// dialog to fit. INFERRED: no extra padding, so a one-line message gives
-// exactly the 180 px minimum (100 + 30 + a 50 px button row).
+// dialog by the same amount, with no margin (OBSERVED in the decompiled
+// 0x40b470: no constant is added). So in the original the 50 px button
+// row ends on the dialog's bottom edge, across the frame's bottom band.
 constexpr int YESNO_MIN_W = 400;
 constexpr int YESNO_MIN_H = 180;
 constexpr int YESNO_LINE_H = 30;
 constexpr int YESNO_BUTTON_Y = 100;
 constexpr int YESNO_BUTTON_H = 50;
-constexpr int YESNO_BOTTOM_PAD = 0;
-// MESSAGE is width="390" wrapstyle="wordwrap" (game-scene.md §6).
-constexpr int YESNO_MESSAGE_W = 390;
+// Deviation (port improvement): padding so nothing sits on the frame.
+// The frame's window onto the centre starts 22 px in from each side
+// (dialogdefault/left.png and right.png turn transparent there) and ends
+// 35 px above the bottom edge (bottom.png). The original MESSAGE is
+// width="390" (game-scene.md §6), which runs over both side borders; the
+// port keeps it 12 px inside the window. The bottom padding keeps the
+// button pill (rows 6..43 of its 50 px frame) 6 px above the window's
+// bottom edge: 50 + 34 - 35 = 49 >= 43 + 6.
+constexpr int YESNO_TEXT_INSET = 22 + 12;
+constexpr int YESNO_BOTTOM_PAD = 34;
+constexpr int YESNO_MESSAGE_W = YESNO_MIN_W - 2 * YESNO_TEXT_INSET;   // 332 (original 390)
 
 // Breaks `text` into "\n"-separated lines no wider than `max_width`;
 // main.cpp backs it with wrap_text() and the loaded FONT_SETTINGSTEXT.
@@ -107,7 +116,7 @@ inline Dialog build_yes_no(const char* header, const std::string& text, bool sin
     Dialog d;
     d.w = std::max(YESNO_MIN_W, width);
     const float cx = static_cast<float>(d.w) / 2.0f;
-    const int msg_w = YESNO_MESSAGE_W + (d.w - YESNO_MIN_W);
+    const int msg_w = d.w - 2 * YESNO_TEXT_INSET;
     const std::string message = wrap ? wrap(text, msg_w) : text;
     const int msg_h = text_line_count(message) * YESNO_LINE_H;
     const int button_y = YESNO_BUTTON_Y + msg_h;

@@ -90,14 +90,15 @@ def load_face(kind, size):
     return font
 
 
-def fit_size(kind, cap, width, space):
+def fit_size(kind, cap, width, space, extra):
     """The largest point size whose "A" is at most `cap` pixels tall and
-    whose SAMPLE is at most `width` pixels wide."""
+    whose SAMPLE is at most `width` pixels wide, with `extra` pixels added
+    to every glyph's advance."""
     best = 4
     for size in range(4, 120):
         font = load_face(kind, size)
         top, bottom = font.getbbox("A")[1::2]
-        run = sum(space if c == " " else round(font.getlength(c)) for c in SAMPLE)
+        run = sum(space if c == " " else round(font.getlength(c)) + extra for c in SAMPLE)
         if bottom - top > cap or run > width:
             break
         best = size
@@ -145,12 +146,15 @@ def build_font(spec):
     # Luckiest Guy draws lowercase as small capitals, so it runs wider than
     # the original's mixed case; 15 % extra keeps the headers legible.
     width = SAMPLE_WIDTH[name] * (115 if kind == "lg" else 100) // 100
-    font = load_face(kind, fit_size(kind, cap, width, space))
+    stroke_w = 0
+    if len(pads) > 1:
+        stroke_w = min(max(1, round(cap / 14)), pads[1] - 1)
+    # The stroke layer grows each glyph by stroke_w on both sides. Without
+    # room for it in the advance, neighbouring outlines run into each other.
+    gap = stroke_w   # the side bearings cover the other side
+    font = load_face(kind, fit_size(kind, cap, width, space, gap))
     a_bottom = font.getbbox("A")[3]   # the baseline: kept where the original's is
     notdef = glyph_bytes(font, chr(0xE000))   # a private-use code point: .notdef
-    stroke_w = max(1, round(cap / 10))
-    if len(pads) > 1:
-        stroke_w = min(stroke_w, pads[1] - 1)
     shadow_d = 0
     if len(pads) > 2:
         shadow_d = max(0, min(max(1, round(cap / 14)), pads[2] - stroke_w))
@@ -162,7 +166,7 @@ def build_font(spec):
         if not has_glyph(font, ch, notdef):
             continue
         l, t, r, b = font.getbbox(ch)
-        glyphs.append((code, ch, l, t, r - l, b - t, round(font.getlength(ch))))
+        glyphs.append((code, ch, l, t, r - l, b - t, round(font.getlength(ch)) + gap))
 
     # Pack into rows of an unpadded sheet.
     placed, x, y, row_h, ix, iy = [], 0, 0, 0, 0, 0
@@ -218,7 +222,7 @@ def build_font(spec):
     for (code, ch, l, t, sw, sh, adv), px, py, gix, giy in placed:
         lines.append(
             '      <Char c="#%02X" bx="%d" by="%d" ix="%d" iy="%d" sx="%d" sy="%d" sw="%d" sh="%d" width="%d" />'
-            % (code, l, t - a_bottom + top + cap, gix, giy, px, py, sw, sh, adv)
+            % (code, l + gap // 2, t - a_bottom + top + cap, gix, giy, px, py, sw, sh, adv)
         )
     lines += ["    </Vector>", "  </Font>", "</root>", ""]
 

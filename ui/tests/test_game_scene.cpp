@@ -1499,7 +1499,7 @@ TEST(pause_menu_layout_matches_dialog_menu) {
 
 TEST(yes_no_dialog_grows_with_its_message) {
     const Dialog one = build_yes_no("H", "one line");
-    ASSERT_EQ(one.h, YESNO_MIN_H);
+    ASSERT_EQ(one.h, YESNO_BUTTON_Y + YESNO_LINE_H + YESNO_BUTTON_H + YESNO_BOTTOM_PAD);   // 214
     ASSERT_TRUE(one.button("BUTTON_YES")->sprite.y == static_cast<float>(YESNO_BUTTON_Y + YESNO_LINE_H));
     const Dialog four = build_yes_no(game_strings::EXIT_HEADER, game_strings::EXIT_BODY);
     const int button_y = YESNO_BUTTON_Y + 4 * YESNO_LINE_H;
@@ -1511,20 +1511,48 @@ TEST(yes_no_dialog_grows_with_its_message) {
     ASSERT_TRUE(ok.button("BUTTON_YES") == nullptr);
 }
 
-// The menu's "Continue the game?" message wraps at 390 px. With the
-// placeholder FONT_SETTINGSTEXT (scale 3: glyph 15 + 3, space 9 + 3; '('
-// and ')' have no glyph) the first line "Do you want to continue" is
-// 19 * 18 + 4 * 12 - 3 = 387 <= 390, and adding " your" would make 471.
+// The menu's "Continue the game?" message wraps at 332 px (400 minus the
+// 34 px text inset on each side). With the placeholder FONT_SETTINGSTEXT
+// at scale 3, "Do you want to continue" (387 px, the original's first
+// line at 390) no longer fits, so " continue" moves to the next line.
 TEST(yes_no_message_wraps_at_the_label_width) {
     const BitmapFont font = make_placeholder_font(3);
     const LineBreaker wrap = [&font](const std::string& t, int w) { return wrap_text(font, t, w); };
     const Dialog d = build_yes_no(game_strings::SAVEGAME_HEADER, game_strings::SAVEGAME_BODY, false, wrap);
-    ASSERT_EQ(d.label("MESSAGE")->text,
-              std::string("Do you want to continue\nyour last played game?\n(Select 'No' to start\nagain.)"));
-    const int button_y = YESNO_BUTTON_Y + 4 * YESNO_LINE_H;   // 100 + 120 = 220
+    const std::string& text = d.label("MESSAGE")->text;
+    ASSERT_EQ(text.substr(0, text.find('\n')), std::string("Do you want to"));
+    std::size_t start = 0;
+    while (start <= text.size()) {   // every line fits inside the frame's window
+        const std::size_t end = std::min(text.find('\n', start), text.size());
+        ASSERT_TRUE(font.measure(text.substr(start, end - start)) <= YESNO_MESSAGE_W);
+        start = end + 1;
+    }
+    const int button_y = YESNO_BUTTON_Y + text_line_count(text) * YESNO_LINE_H;
     ASSERT_TRUE(d.button("BUTTON_YES")->sprite.y == static_cast<float>(button_y));
-    ASSERT_EQ(d.h, button_y + YESNO_BUTTON_H);                // 270
+    ASSERT_EQ(d.h, button_y + YESNO_BUTTON_H + YESNO_BOTTOM_PAD);
     ASSERT_EQ(d.label("MESSAGE")->max_width, YESNO_MESSAGE_W);
+}
+
+// Port padding: the message stays inside the frame's window and the
+// button pills end above the window's bottom edge, for any width.
+TEST(yes_no_content_stays_inside_the_frame_window) {
+    for (int width : {400, 600}) {
+        const Dialog d = build_yes_no("H", "line one\nline two\nline three", false, {}, width);
+        const TextLabel* msg = d.label("MESSAGE");
+        ASSERT_EQ(msg->max_width, width - 2 * YESNO_TEXT_INSET);
+        ASSERT_TRUE(msg->x - msg->max_width / 2.0f >= 22.0f);               // left window edge
+        ASSERT_TRUE(msg->x + msg->max_width / 2.0f <= width - 22.0f);       // right window edge
+        const float pill_bottom = d.button("BUTTON_YES")->sprite.y + 43.0f;
+        ASSERT_TRUE(pill_bottom + 6.0f <= static_cast<float>(d.h - 35));   // window bottom
+    }
+}
+
+TEST(yes_no_padding_is_a_port_deviation) {
+    // The original MESSAGE is 390 wide with no bottom margin (0x40b470);
+    // the port narrows and pads it. Guard the numbers against drift.
+    ASSERT_EQ(YESNO_MESSAGE_W, 332);
+    ASSERT_TRUE(YESNO_MESSAGE_W < 390);
+    ASSERT_EQ(YESNO_BOTTOM_PAD, 34);
 }
 
 TEST(yes_no_short_message_is_unchanged_by_the_wrap) {
@@ -1532,7 +1560,7 @@ TEST(yes_no_short_message_is_unchanged_by_the_wrap) {
     const LineBreaker wrap = [&font](const std::string& t, int w) { return wrap_text(font, t, w); };
     const Dialog d = build_yes_no("H", "one line", false, wrap);
     ASSERT_EQ(d.label("MESSAGE")->text, std::string("one line"));
-    ASSERT_EQ(d.h, YESNO_MIN_H);
+    ASSERT_EQ(d.h, build_yes_no("H", "one line").h);
 }
 
 TEST(scene_yes_no_dialogs_use_the_wrap_service) {
