@@ -1373,7 +1373,7 @@ int main(int argc, char** argv) {
     // The missing-assets prompt (import_prompt.hpp), declared here because
     // SETTINGS can start it too (IMPORT, deviation OP-7).
     std::optional<tt2ui::ImportPromptFlow> import_prompt;
-    bool import_from_settings = false;   // closing it then doesn't re-enter the menu
+    bool import_from_settings = false;   // false: the boot prompt, which holds the welcome flow
     const std::string import_dir = asset_inputs.user_dir;
     auto open_menu_settings = [&] {
         // Deviation (OP-7): the main menu's SETTINGS gains the asset row.
@@ -1432,10 +1432,9 @@ int main(int argc, char** argv) {
     };
 
     // The missing-assets prompt (import_prompt.hpp): asked once per launch,
-    // when the menu first shows and no verified import exists. It is modal;
-    // the profile dialog and --play wait until it closes.
+    // on boot, when no verified import exists (OP-9 revised). It is modal and
+    // holds the welcome flow, so the splash plays with the imported art.
     std::optional<tt2ui::AssetImportJob> import_job;
-    bool import_prompt_shown = false;
     tt2ui::ImportPromptServices import_services;
     import_services.pick_folder = [&] {
         if (!import_pick.empty()) return tt2ui::PickResult{tt2ui::PickResult::Kind::Picked, import_pick};
@@ -1459,7 +1458,7 @@ int main(int argc, char** argv) {
         if (!import_job) return false;
         assets.release();   // Windows can't rename a folder with the music file open
         const bool ok = import_job->commit();
-        if (!ok) assets.play_stream(SoundId::MusicMenu);   // still the old folder
+        if (!ok && import_from_settings) assets.play_stream(SoundId::MusicMenu);   // still the old folder
         return ok;
     };
     import_services.job_view = [&] {
@@ -1473,7 +1472,8 @@ int main(int argc, char** argv) {
     import_services.on_imported = [&] {
         asset_inputs.user_status = tt2ui::ImportStatus::Imported;   // SETTINGS shows it from now on
         assets.set_dir(import_dir);   // textures reload lazily on the live renderer
-        assets.play_stream(SoundId::MusicMenu);
+        // On boot the splash starts its own music once the prompt closes.
+        if (import_from_settings) assets.play_stream(SoundId::MusicMenu);
         std::printf("assets: reloaded from %s\n", import_dir.c_str());
     };
     import_services.play_sound = [&](SoundId id) { assets.play_sound(id); };
@@ -1511,6 +1511,12 @@ int main(int argc, char** argv) {
         else std::printf("menu: %s (not implemented yet)\n", name.c_str());
     };
     WelcomeFlow flow(services, static_cast<std::uint32_t>(SDL_GetTicks() + 1));
+    if (asset_choice.prompt) {
+        import_prompt.emplace(import_services);
+        std::printf("t=0 ms: assets: prompt shown\n");
+    }
+    // The boot prompt holds the welcome flow: no splash timer behind it.
+    auto boot_prompt_open = [&] { return import_prompt && !import_from_settings; };
     auto start_game = [&] {
         GameScene::Services gs;
         gs.play_sound = [&](SoundId id) { assets.play_sound(id); };
@@ -1799,7 +1805,7 @@ int main(int argc, char** argv) {
                 }
                 else game->type_letter(c);
             }
-        } else {
+        } else if (!boot_prompt_open()) {
             flow.update(dt);
         }
         profile.update(dt);
@@ -1809,8 +1815,7 @@ int main(int argc, char** argv) {
                 import_prompt.reset();
                 import_job.reset();
                 std::printf("t=%ld ms: assets: prompt closed\n", simulated_ms);
-                if (!import_from_settings) menu_entered();
-                import_from_settings = false;
+                import_from_settings = false;   // on boot, the flow now runs on to the menu
             }
         }
         if (menu_dialog_open) dialog_tick(menu_dialog, dt);
@@ -1820,15 +1825,7 @@ int main(int argc, char** argv) {
         if (flow.current() != last_scene) {
             last_scene = flow.current();
             std::printf("t=%ld ms: scene %d\n", simulated_ms, static_cast<int>(last_scene));
-            if (last_scene == SceneId::Selection) {
-                if (asset_choice.prompt && !import_prompt_shown) {
-                    import_prompt_shown = true;
-                    import_prompt.emplace(import_services);
-                    std::printf("t=%ld ms: assets: prompt shown\n", simulated_ms);
-                } else {
-                    menu_entered();
-                }
-            }
+            if (last_scene == SceneId::Selection) menu_entered();
         }
         const bool want_text = profile.wants_text_input() || (game && !profile.open());
         if (want_text != text_input_on) {
@@ -1841,7 +1838,7 @@ int main(int argc, char** argv) {
         SDL_RenderClear(ren);
         if (game) {
             draw_game(ren, assets, *game);
-        } else {
+        } else if (!boot_prompt_open()) {   // black behind the boot prompt
             for (const SpriteState* s : flow.draw_list()) draw_sprite(ren, assets, *s);
             if (flow.current() == SceneId::Selection) {
                 // LABEL_PLAYERNAME: FONT_FONT_UIBAR, centred at (400, 28), charspacing 2.

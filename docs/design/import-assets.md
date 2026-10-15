@@ -24,7 +24,9 @@ The work plan's open points, as approved, and what the code does today.
 
 ### The Flow
 
-1. **Launch warning.** The first time the main menu shows without a verified import, a dialog asks:
+1. **Launch warning.** On boot, before the splash, a launch without a verified import shows a dialog on a
+   black screen (OP-9, revised after the first Windows test: asking at the menu meant the logo and loading
+   screens played with placeholder art first). The welcome flow waits until it closes. The dialog asks:
 
    > **Original game required**
    >

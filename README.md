@@ -76,7 +76,7 @@ copies what it needs from your install once; your copy stays untouched.
 
 ### Import in the game
 
-1. Start the game. Once the main menu shows, it asks:
+1. Start the game. Before the logo plays, it asks:
 
    > **Original game required**
    >
