@@ -5,10 +5,12 @@
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 
 #include "tt2ui/bitmap_font.hpp"
 #include "tt2ui/improvements_dialog.hpp"
@@ -42,17 +44,34 @@ std::string read(const fs::path& p) {
     return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
-// Every glyph cell of every layer lies inside that layer's PNG.
-bool glyphs_inside_sheets(const BitmapFont& f, const fs::path& font_dir) {
+// Every glyph cell of every layer lies inside that layer's PNG; `scale` 2
+// checks a 2x layer against the 1x XML, doubled.
+bool glyphs_inside_sheets(const BitmapFont& f, const fs::path& font_dir, int scale = 1) {
     for (std::size_t li = 0; li < f.layers.size(); ++li) {
         const Size s = png_size(font_dir / f.layers[li].image);
         if (s.w == 0) return false;
         for (const auto& [cp, g] : f.glyphs) {
             const auto r = f.layer_rect(g, li, 0, 0);
-            if (r.sx < 0 || r.sy < 0 || r.sx + r.w > s.w || r.sy + r.h > s.h) return false;
+            if (r.sx < 0 || r.sy < 0 || (r.sx + r.w) * scale > s.w || (r.sy + r.h) * scale > s.h) return false;
         }
     }
     return true;
+}
+
+// 2x art (deviation UX-8): exactly twice the 1x size.
+bool twice(const Size& one, const Size& two) { return one.w > 0 && two.w == 2 * one.w && two.h == 2 * one.h; }
+
+// The 1x PNGs (paths relative to `dir`) that have no 2x twin in dir/2x.
+// background.png is the one 1x image without one, by design.
+std::vector<std::string> missing_2x(const fs::path& dir) {
+    std::vector<std::string> out;
+    for (const auto& e : fs::recursive_directory_iterator(dir)) {
+        if (!e.is_regular_file() || e.path().extension() != ".png") continue;
+        const fs::path rel = fs::relative(e.path(), dir);
+        if (*rel.begin() == "2x" || rel == fs::path("images/gui/background.png")) continue;
+        if (!fs::exists(dir / "2x" / rel)) out.push_back(rel.generic_string());
+    }
+    return out;
 }
 
 // The font ids main.cpp loads (kFontFiles).
@@ -164,4 +183,64 @@ TEST(glyphs_inside_sheets_catches_a_glyph_past_the_edge) {
     far.sx = 100000;   // off the sheet
     f.glyphs['A'] = far;
     ASSERT_TRUE(!glyphs_inside_sheets(f, kDir / "fonts"));
+}
+
+// ---- 2x art (P8, deviation UX-8) -------------------------------------------
+
+TEST(placeholder_2x_has_a_twin_for_every_1x_png) {
+    const std::vector<std::string> missing = missing_2x(kDir);
+    for (const std::string& m : missing) std::printf("missing 2x: %s\n", m.c_str());
+    ASSERT_TRUE(missing.empty());
+    ASSERT_TRUE(!fs::exists(kDir / "2x" / "images" / "gui" / "background.png"));
+}
+
+TEST(placeholder_2x_is_exactly_twice_its_1x_twin) {
+    int checked = 0;
+    for (const auto& e : fs::recursive_directory_iterator(kDir / "2x")) {
+        if (!e.is_regular_file()) continue;
+        ASSERT_TRUE(e.path().extension() == ".png");                     // no XML: fonts reuse the 1x one
+        const fs::path rel = fs::relative(e.path(), kDir / "2x");
+        ASSERT_TRUE(twice(png_size(kDir / rel), png_size(e.path())));
+        ++checked;
+    }
+    ASSERT_EQ(checked, 50);
+}
+
+TEST(placeholder_2x_glyphs_fit_the_doubled_1x_cells) {
+    for (const char* id : kFonts) {
+        BitmapFont f;
+        ASSERT_TRUE(BitmapFont::parse(read(kDir / "fonts" / (std::string(id) + ".xml")), f));
+        ASSERT_TRUE(glyphs_inside_sheets(f, kDir / "2x" / "fonts", 2));
+    }
+}
+
+TEST(placeholder_2x_dialog_frame_pieces) {
+    const fs::path d = kDir / "2x" / "images" / "gui" / "dialogdefault";
+    ASSERT_TRUE(twice({37, 86}, png_size(d / "top_left.png")));          // 74x172
+    ASSERT_TRUE(twice({4, 86}, png_size(d / "top.png")));                // 8x172
+    ASSERT_TRUE(twice({37, 53}, png_size(d / "bottom_right.png")));      // 74x106
+    ASSERT_TRUE(twice({37, 4}, png_size(d / "left.png")));               // 74x8
+}
+
+TEST(twice_rejects_anything_but_exactly_double) {
+    ASSERT_TRUE(twice({119, 200}, {238, 400}));
+    ASSERT_TRUE(!twice({119, 200}, {237, 400}));   // an odd width: resized, not redrawn
+    ASSERT_TRUE(!twice({119, 200}, {238, 401}));
+    ASSERT_TRUE(!twice({119, 200}, {119, 200}));
+    ASSERT_TRUE(!twice({0, 0}, {0, 0}));           // a missing 1x file
+}
+
+TEST(missing_2x_names_each_missing_file) {
+    const fs::path tmp = fs::temp_directory_path() / "tt2_missing_2x_test";
+    fs::remove_all(tmp);
+    fs::create_directories(tmp / "images" / "gui");
+    fs::create_directories(tmp / "2x" / "images" / "gui");
+    std::ofstream(tmp / "images" / "gui" / "button_ok.png") << "x";
+    std::ofstream(tmp / "images" / "gui" / "button_no.png") << "x";
+    std::ofstream(tmp / "images" / "gui" / "background.png") << "x";      // exempt
+    std::ofstream(tmp / "2x" / "images" / "gui" / "button_ok.png") << "x";
+    const std::vector<std::string> m = missing_2x(tmp);
+    ASSERT_EQ(m.size(), std::size_t{1});
+    ASSERT_EQ(m[0], std::string("images/gui/button_no.png"));
+    fs::remove_all(tmp);
 }

@@ -101,6 +101,7 @@ jobs:
         run: |
           test -f AppDir/usr/share/tt2/data/original-assets.sha256
           test -f AppDir/usr/share/tt2/data/placeholder/fonts/font_settingstext.xml
+          test -f AppDir/usr/share/tt2/data/placeholder/2x/fonts/font_settingstext.png   # 2x art (UX-8)
           app=$(ls "$PWD"/Re-Twist_TT2-*-x86_64.AppImage)
           "$app" --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/empty-assets" --player CI \
             --type '~' --exit-after 8000 > bundled.log
@@ -179,6 +180,7 @@ jobs:
         run: |
           test -f dist/data/original-assets.sha256
           test -f dist/data/placeholder/fonts/font_settingstext.xml
+          test -f dist/data/placeholder/2x/fonts/font_settingstext.png   # 2x art (UX-8)
           ./dist/tt2.exe --save-dir "$RUNNER_TEMP/save" --asset-dir "$RUNNER_TEMP/empty-assets" --player CI \
             --type '~' --exit-after 8000 > bundled.log
           cat bundled.log

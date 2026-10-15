@@ -469,15 +469,19 @@ void render_outline(SDL_Renderer* ren, const SDL_Rect* r) {
 }
 
 struct Image {
-    SDL_Surface* surface = nullptr;   // kept for alpha hit tests
+    SDL_Surface* surface = nullptr;   // kept for alpha hit tests; always the 1x file
     SDL_Texture* texture = nullptr;
     bool placeholder = true;
+    // Texture pixels per canvas pixel: 2 for data/placeholder/2x/ (UX-8),
+    // whose textures are always sampled linearly (Assets::apply_filter).
+    float density = 1.0f;
 };
 
 struct Font {
-    BitmapFont font;
+    BitmapFont font;                    // the 1x XML, also for 2x layers
     std::vector<SDL_Texture*> layers;   // one per font.layers entry
     bool placeholder = true;
+    float density = 1.0f;               // 2: layers from data/placeholder/2x/fonts/
 };
 
 class Assets {
@@ -495,11 +499,18 @@ public:
     // SDL_SCALEMODE_PIXELART gets Smooth (render_options.hpp).
     tt2::TextureFilter set_filter(tt2::TextureFilter f) {
         filter_ = f;
-        for (auto& [k, img] : images_) apply_filter(img.texture);
+        for (auto& [k, img] : images_)
+            if (img.density == 1.0f) apply_filter(img.texture);
         for (auto& [k, font] : fonts_)
-            for (SDL_Texture* t : font.layers) apply_filter(t);
+            if (font.density == 1.0f)
+                for (SDL_Texture* t : font.layers) apply_filter(t);
         return filter_;
     }
+
+    // Deviation UX-8 (P8): load placeholder art from data/placeholder/2x/
+    // where it exists, for files the asset folder lacks. Call it before the
+    // first image or font is loaded; the software renderer leaves it off.
+    void set_hires_art(bool on) { hires_art_ = on; }
 
     // Switches folders at run time (after an import). Frees everything from
     // the old folder first; textures come back lazily on the same renderer.
@@ -535,8 +546,11 @@ public:
         if (it != images_.end()) return it->second;
         Image img;
         auto f = kImageFiles.find(spec.image_id);
+        SDL_Surface* hires = nullptr;
         if (f != kImageFiles.end()) {
             const std::string path = find_art(f->second);
+            const std::string path_2x = placeholder_2x(f->second);
+            if (!path_2x.empty()) hires = IMG_Load(path_2x.c_str());
             if (file_exists(path)) {
                 img.surface = IMG_Load(path.c_str());
                 if (img.surface) {
@@ -550,7 +564,12 @@ public:
             }
         }
         if (!img.surface) img.surface = make_placeholder(spec);
-        return store(spec.image_id, img);
+        if (hires && img.surface && (hires->w != 2 * img.surface->w || hires->h != 2 * img.surface->h)) {
+            std::fprintf(stderr, "warning: 2x %s is not twice the 1x size; using 1x\n", f->second.c_str());
+            SDL_DestroySurface(hires);
+            hires = nullptr;
+        }
+        return store(spec.image_id, img, hires);
     }
 
     // Font by resources.xml id; falls back to the procedural 5x5 font.
@@ -565,13 +584,22 @@ public:
         const std::string xml_path = spec != kFontFiles.end() ? find_art(spec->second.xml) : std::string();
         if (!xml_path.empty() && read_text(xml_path, xml) && BitmapFont::parse(xml, f.font)) {
             f.placeholder = false;
-            // The layers sit next to the XML they came with.
-            const std::string font_dir = xml_path.substr(0, xml_path.find_last_of('/'));
+            // The layers sit next to the XML they came with; a placeholder
+            // font takes all of its layers from 2x/fonts/ when every one is there.
+            std::string font_dir = xml_path.substr(0, xml_path.find_last_of('/'));
+            bool all_2x = !f.font.layers.empty();
+            for (const FontLayer& layer : f.font.layers)
+                all_2x = all_2x && !placeholder_2x("fonts/" + layer.image).empty() &&
+                         font_dir == placeholder_dir_ + "/fonts";
+            if (all_2x) {
+                font_dir = placeholder_dir_ + "/2x/fonts";
+                f.density = 2.0f;
+            }
             for (const FontLayer& layer : f.font.layers) {
                 const std::string path = font_dir + "/" + layer.image;
                 SDL_Surface* s = file_exists(path) ? IMG_Load(path.c_str()) : nullptr;
                 if (!s) std::fprintf(stderr, "warning: font layer %s missing\n", path.c_str());
-                f.layers.push_back(texture_of(s));
+                f.layers.push_back(texture_of(s, f.density));
                 if (s) SDL_DestroySurface(s);
             }
         } else {
@@ -618,25 +646,41 @@ public:
     }
 
 private:
-    Image& store(const std::string& key, Image img) {
+    // `hires` (taken over) is the 2x texture source; img.surface stays the
+    // 1x file for the alpha hit tests (pixel_alpha).
+    Image& store(const std::string& key, Image img, SDL_Surface* hires = nullptr) {
         if (img.surface) {
             SDL_Surface* conv = SDL_ConvertSurface(img.surface, SDL_PIXELFORMAT_RGBA32);
             if (conv) {
                 SDL_DestroySurface(img.surface);
                 img.surface = conv;
             }
-            img.texture = upload(renderer_, img.surface);
-            if (img.texture) SDL_SetTextureBlendMode(img.texture, SDL_BLENDMODE_BLEND);
-            apply_filter(img.texture);
+            if (hires) img.density = 2.0f;
+            img.texture = texture_of(hires ? hires : img.surface, img.density);
         }
+        if (hires) SDL_DestroySurface(hires);
         return images_.emplace(key, img).first->second;
     }
-    SDL_Texture* texture_of(SDL_Surface* s) {
+    SDL_Texture* texture_of(SDL_Surface* s, float density = 1.0f) {
         if (!s) return nullptr;
         SDL_Texture* t = upload(renderer_, s);
-        if (t) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
-        apply_filter(t);
+        if (!t) return nullptr;
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+        // 2x art is drawn at 0.9 of its size at 1080p and 0.5 at 800x600:
+        // nearest sampling would drop whole rows of it, so it is always
+        // linear. Everything else follows TEXTURE FILTER.
+        if (density != 1.0f) SDL_SetTextureScaleMode(t, SDL_SCALEMODE_LINEAR);
+        else apply_filter(t);
         return t;
+    }
+    // data/placeholder/2x/<rel> when 2x art is on and the asset folder
+    // lacks <rel>; empty otherwise.
+    std::string placeholder_2x(const std::string& rel) const {
+        if (!hires_art_ || placeholder_dir_.empty()) return {};
+        const std::string own = in_dir(rel);
+        if (!own.empty() && file_exists(own)) return {};
+        const std::string p = placeholder_dir_ + "/2x/" + rel;
+        return file_exists(p) ? p : std::string();
     }
     void apply_filter(SDL_Texture* t) {
         if (!t) return;
@@ -676,6 +720,7 @@ private:
     std::map<std::string, Image> images_;
     std::map<std::string, Font> fonts_;
     tt2::TextureFilter filter_ = tt2::TextureFilter::Sharp;
+    bool hires_art_ = false;
     std::map<SoundId, MIX_Audio*> music_;
     std::map<SoundId, MIX_Audio*> chunks_;
     SoundId current_stream_ = SoundId::Button;
@@ -739,7 +784,8 @@ void draw_sprite(SDL_Renderer* ren, Assets& assets, const SpriteState& s, float 
     SDL_SetTextureAlphaMod(img.texture, static_cast<Uint8>(s.alpha * 255));
     SDL_SetTextureColorMod(img.texture, (s.tint >> 16) & 0xFF, (s.tint >> 8) & 0xFF, s.tint & 0xFF);
     SDL_SetTextureBlendMode(img.texture, s.additive ? SDL_BLENDMODE_ADD : SDL_BLENDMODE_BLEND);
-    const SDL_FRect srcf = frect(src);
+    const float d = img.density;   // source in texture pixels, destination in canvas pixels
+    const SDL_FRect srcf{src.x * d, src.y * d, src.w * d, src.h * d};
     SDL_RenderTextureRotated(ren, img.texture, &srcf, &dst, 0.0, nullptr, static_cast<SDL_FlipMode>(flip));
     SDL_SetTextureColorMod(img.texture, 255, 255, 255);
     SDL_SetTextureBlendMode(img.texture, SDL_BLENDMODE_BLEND);
@@ -762,9 +808,11 @@ SDL_Rect draw_text(SDL_Renderer* ren, Assets& assets, const std::string& font_id
         if (!tex) continue;
         for (const auto& p : run) {
             const auto r = f.font.layer_rect(*p.glyph, li, left + p.x, top);
-            SDL_Rect src{r.sx, r.sy, r.w, r.h};
-            SDL_Rect dst{r.dx, r.dy, r.w, r.h};
-            render_copy(ren, tex, &src, &dst);
+            const float d = f.density;
+            const SDL_FRect src{r.sx * d, r.sy * d, r.w * d, r.h * d};
+            const SDL_FRect dst{static_cast<float>(r.dx), static_cast<float>(r.dy), static_cast<float>(r.w),
+                                static_cast<float>(r.h)};
+            SDL_RenderTexture(ren, tex, &src, &dst);
         }
     }
     return SDL_Rect{left, top, width, height};
@@ -799,7 +847,10 @@ void draw_dialog_frame(SDL_Renderer* ren, Assets& assets, const Dialog& d) {
         if (std::strcmp(id, "BORDER_CENTER") == 0) { src.w = dw; src.h = dh; }
         SDL_Rect dst{dx, dy, dw, dh};
         SDL_SetTextureAlphaMod(img.texture, 255);
-        render_copy(ren, img.texture, &src, &dst);
+        const float d = img.density;
+        const SDL_FRect srcf{src.x * d, src.y * d, src.w * d, src.h * d};
+        const SDL_FRect dstf = frect(dst);
+        SDL_RenderTexture(ren, img.texture, &srcf, &dstf);
     };
     // Centre first so the ornate borders overlap it. The borders fade to
     // transparent on their inner side, so the fill runs under the whole
@@ -1550,6 +1601,7 @@ int main(int argc, char** argv) {
     // Deviation UX-8: the filter and hi-res dialog layers; the software
     // renderer keeps Sharp and 800x600 layers (render_options.hpp).
     EffectiveOptions render_opts = effective(improvements, render_caps);
+    assets.set_hires_art(render_opts.hires_art);   // before any art loads
     auto apply_render_options = [&](const tt2::Improvements& imp) {
         render_opts = effective(imp, render_caps);
         render_opts.filter = assets.set_filter(render_opts.filter);
@@ -1558,8 +1610,9 @@ int main(int argc, char** argv) {
     };
     apply_render_options(improvements);
     assets.set_placeholder_dir(data_dir + "/placeholder");
-    std::printf("placeholders: %s/placeholder%s\n", data_dir.c_str(),
-                file_exists(data_dir + "/placeholder/fonts/font_settingstext.xml") ? "" : " (missing)");
+    std::printf("placeholders: %s/placeholder%s, %s\n", data_dir.c_str(),
+                file_exists(data_dir + "/placeholder/fonts/font_settingstext.xml") ? "" : " (missing)",
+                render_opts.hires_art ? "2x" : "1x");
     AudioOut audio_out;
     const bool audio = audio_out.open();
     assets.set_audio(audio ? &audio_out : nullptr);

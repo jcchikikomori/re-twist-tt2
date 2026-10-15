@@ -20,6 +20,7 @@ TEST(software_forces_sharp_and_800x600_layers) {
         const EffectiveOptions o = effective(with_filter(f), sw);
         ASSERT_TRUE(o.filter == TextureFilter::Sharp);
         ASSERT_TRUE(!o.hires_layers);
+        ASSERT_TRUE(!o.hires_art);   // the 1x placeholder files
     }
 }
 
@@ -37,6 +38,7 @@ TEST(gpu_backends_keep_each_choice) {
             const EffectiveOptions o = effective(with_filter(f), RenderCaps::of(b, 16384));
             ASSERT_TRUE(o.filter == f);
             ASSERT_TRUE(o.hires_layers);
+            ASSERT_TRUE(o.hires_art);
         }
 }
 

@@ -44,7 +44,7 @@ ctest --test-dir build --output-on-failure    # unit tests
 | `src/main.cpp` | The driver / smoke test for the engine. |
 | `tools/tree_cli.cpp` | Dictionary tool: `decode`, `encode`, `merge`, `diff`, `verify`. Replaces the old `tools/tree-cli.ts`. |
 | `tools/assets_cli.cpp` | `tt2-assets`: `manifest <install>` writes the original-asset manifest (paths + SHA-256 only), `verify <dir> <manifest>` checks a folder. |
-| `tools/gen_placeholders.py` | Writes the open placeholder art into `data/placeholder/` (bitmap fonts from `third_party/fonts/`, dialog frame, buttons; palette sampled from the original). Re-run and commit the output after changing it. |
+| `tools/gen_placeholders.py` | Writes the open placeholder art into `data/placeholder/` (bitmap fonts from `third_party/fonts/`, dialog frame, buttons; palette sampled from the original), plus a copy drawn at twice the size in `data/placeholder/2x/` for GPU renderers. Run it with `/usr/bin/python3` (Pillow 9.0.1 reproduces the committed bytes); re-run and commit the output after changing it. |
 | `third_party/fonts/` | Luckiest Guy (Apache 2.0) and Arimo (OFL), unaltered; read only by the generator. |
 | `third_party/tinyfiledialogs/` | Vendored, unaltered (zlib): the native folder picker for the importer. Its own C target, outside `-Werror`. |
 | `data/` | Runtime dictionaries. The open-license `open-common.tree` + `open-full.tree` are committed; the original GameHouse `common.tree` + `full.tree` are gitignored. |

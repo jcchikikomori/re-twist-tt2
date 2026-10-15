@@ -14,6 +14,13 @@ ui/src/main.cpp finds them with the paths it already uses. The fonts are
 GF2 bitmap fonts (ui/include/tt2ui/bitmap_font.hpp): an XML of glyph
 rectangles plus up to three PNG layers (face, stroke, shadow).
 
+GPU renderers load a second copy at twice the size from data/placeholder/2x/
+(deviation UX-8): the same files and names, every PNG exactly twice the 1x
+width and height, drawn again at 2x geometry rather than resized. Fonts keep
+the 1x XML; each 2x glyph is rendered from a font twice the size at twice
+the 1x cell origin. background.png has no 2x copy: its soft rings scale up
+cleanly.
+
 Run from the repository root, then commit data/placeholder/:
 
     python3 tools/gen_placeholders.py
@@ -29,6 +36,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "data", "placeholder")
+OUT_2X = os.path.join(OUT, "2x")
 FONT_DIR = os.path.join(ROOT, "third_party", "fonts")
 LUCKIEST = os.path.join(FONT_DIR, "luckiest-guy", "LuckiestGuy-Regular.ttf")
 ARIMO = os.path.join(FONT_DIR, "arimo", "Arimo[wght].ttf")
@@ -119,6 +127,13 @@ def has_glyph(font, ch, notdef):
     return g is not None and g != notdef
 
 
+def kbox(k, box):
+    """An inclusive pixel box scaled by `k`: (x0, y0, x1, y1) covers x0..x1,
+    so its scaled twin covers k*x0 .. k*(x1 + 1) - 1. The identity at k = 1."""
+    x0, y0, x1, y1 = box
+    return (x0 * k, y0 * k, (x1 + 1) * k - 1, (y1 + 1) * k - 1)
+
+
 def lighter(rgb, t):
     return tuple(int(c + (255 - c) * t) for c in rgb)
 
@@ -153,7 +168,8 @@ def build_font(spec):
     # The stroke layer grows each glyph by stroke_w on both sides. Without
     # room for it in the advance, neighbouring outlines run into each other.
     gap = stroke_w   # the side bearings cover the other side
-    font = load_face(kind, fit_size(kind, cap, width, space, gap))
+    size = fit_size(kind, cap, width, space, gap)
+    font = load_face(kind, size)
     a_bottom = font.getbbox("A")[3]   # the baseline: kept where the original's is
     notdef = glyph_bytes(font, chr(0xE000))   # a private-use code point: .notdef
     shadow_d = 0
@@ -191,24 +207,37 @@ def build_font(spec):
         return w, y + row_h + 2 * p * rows
 
     layer_names = [name + ".png", name + "_stroke.png", name + "_shadow.png"][: len(pads)]
-    layers = [Image.new("RGBA", layer_size(p), (0, 0, 0, 0)) for p in pads]
-    for (code, ch, l, t, sw, sh, adv), px, py, gix, giy in placed:
-        for li, p in enumerate(pads):
-            cell_w, cell_h = sw + 2 * p, sh + 2 * p
-            origin = (p - l, p - t)
-            if li == 0:
-                mask = glyph_mask(font, ch, origin, (cell_w, cell_h))
-                cell = gradient_fill(mask, lighter(fill, 0.45), fill)
-            elif li == 1:
-                mask = glyph_mask(font, ch, origin, (cell_w, cell_h), stroke_w)
-                cell = Image.new("RGBA", (cell_w, cell_h), stroke_rgb + (255,))
-                cell.putalpha(mask)
-            else:
-                mask = glyph_mask(font, ch, (origin[0] + shadow_d, origin[1] + shadow_d), (cell_w, cell_h), stroke_w)
-                mask = mask.point(lambda v: v * SHADOW[3] // 255)
-                cell = Image.new("RGBA", (cell_w, cell_h), SHADOW[:3] + (255,))
-                cell.putalpha(mask)
-            layers[li].alpha_composite(cell, (px + 2 * p * gix, py + 2 * p * giy))
+
+    def render_layers(k):
+        """The layers at scale `k`: the 1x layout, every cell k times as big,
+        each glyph drawn by a k-times font at k times the 1x pen origin and
+        clipped to its cell (so the 1x XML still describes the 2x sheet)."""
+        face = font if k == 1 else load_face(kind, size * k)
+        layers = []
+        for p in pads:
+            w, h = layer_size(p)
+            layers.append(Image.new("RGBA", (w * k, h * k), (0, 0, 0, 0)))
+        for (code, ch, l, t, sw, sh, adv), px, py, gix, giy in placed:
+            for li, p in enumerate(pads):
+                cell_w, cell_h = (sw + 2 * p) * k, (sh + 2 * p) * k
+                origin = ((p - l) * k, (p - t) * k)
+                if li == 0:
+                    mask = glyph_mask(face, ch, origin, (cell_w, cell_h))
+                    cell = gradient_fill(mask, lighter(fill, 0.45), fill)
+                elif li == 1:
+                    mask = glyph_mask(face, ch, origin, (cell_w, cell_h), stroke_w * k)
+                    cell = Image.new("RGBA", (cell_w, cell_h), stroke_rgb + (255,))
+                    cell.putalpha(mask)
+                else:
+                    d = shadow_d * k
+                    mask = glyph_mask(face, ch, (origin[0] + d, origin[1] + d), (cell_w, cell_h), stroke_w * k)
+                    mask = mask.point(lambda v: v * SHADOW[3] // 255)
+                    cell = Image.new("RGBA", (cell_w, cell_h), SHADOW[:3] + (255,))
+                    cell.putalpha(mask)
+                layers[li].alpha_composite(cell, ((px + 2 * p * gix) * k, (py + 2 * p * giy) * k))
+        return layers
+
+    layers = render_layers(1)
 
     lines = [
         "<root>",
@@ -232,6 +261,8 @@ def build_font(spec):
         f.write("\n".join(lines))
     for img, img_name in zip(layers, layer_names):
         save(img, os.path.join(font_out, img_name))
+    for img, img_name in zip(render_layers(2), layer_names):
+        save(img, os.path.join(OUT_2X, "fonts", img_name))
     return len(placed)
 
 
@@ -267,47 +298,53 @@ def vertical(size, stops):
     return col.resize((w, h))
 
 
-def build_dialog():
-    size = (DLG_W, DLG_H)
-    body = (6, 1, DLG_W - 8, DLG_H - 17)           # opaque frame, inclusive box
+def build_dialog(k, out):
+    """The frame at scale `k` (1 or 2): every box, radius and blur times k."""
+    size = (DLG_W * k, DLG_H * k)
+    body = (6, 1, DLG_W - 8, DLG_H - 17)           # opaque frame, inclusive box (1x units)
     inner = (22, 70, DLG_W - 24, DLG_H - 33)        # the window onto the centre
+
+    def box(b):
+        return kbox(k, b)
 
     img = Image.new("RGBA", size, (0, 0, 0, 0))
     # Outer glow (left/top/right) and the drop shadow (bottom).
-    glow = rounded(size, (3, 0, DLG_W - 4, DLG_H - 11), 18, 90).filter(ImageFilter.GaussianBlur(2))
-    shade = rounded(size, (8, 8, DLG_W - 6, DLG_H - 2), 18, 120).filter(ImageFilter.GaussianBlur(4))
+    glow = rounded(size, box((3, 0, DLG_W - 4, DLG_H - 11)), 18 * k, 90).filter(ImageFilter.GaussianBlur(2 * k))
+    shade = rounded(size, box((8, 8, DLG_W - 6, DLG_H - 2)), 18 * k, 120).filter(ImageFilter.GaussianBlur(4 * k))
     img.alpha_composite(Image.merge("RGBA", (*Image.new("RGB", size, DEEP).split(), ImageChops.lighter(glow, shade))))
 
     # Gold trim, then the blue body inside it.
     trim = vertical(size, [(0, YELLOW), (1, GOLD)]).convert("RGBA")
-    trim.putalpha(rounded(size, body, 16, 255))
+    trim.putalpha(rounded(size, box(body), 16 * k, 255))
     img.alpha_composite(trim)
     blue = vertical(size, [(0, (0x18, 0x48, 0xC8)), (0.35, ROYAL), (1, ROYAL_DARK)]).convert("RGBA")
-    blue.putalpha(rounded(size, (body[0] + 3, body[1] + 3, body[2] - 3, body[3] - 3), 13, 255))
+    blue.putalpha(rounded(size, box((body[0] + 3, body[1] + 3, body[2] - 3, body[3] - 3)), 13 * k, 255))
     img.alpha_composite(blue)
     # A soft highlight along the top of the header band.
     hi = Image.new("RGBA", size, (255, 255, 255, 0))
-    hi.putalpha(rounded(size, (body[0] + 8, body[1] + 6, body[2] - 8, body[1] + 26), 10, 38))
+    hi.putalpha(rounded(size, box((body[0] + 8, body[1] + 6, body[2] - 8, body[1] + 26)), 10 * k, 38))
     img.alpha_composite(hi)
 
     # Cut the window, then paint its inner shadow (dark at the rim,
     # transparent within 8 px) so the centre looks set in.
-    hole = rounded(size, inner, 12, 255)
+    hole = rounded(size, box(inner), 12 * k, 255)
     a = ImageChops.subtract(img.getchannel("A"), hole)
     img.putalpha(a)
-    rim = rounded(size, inner, 12, 255)
-    inset = ImageChops.subtract(rim, rounded(size, (inner[0] + 2, inner[1] + 2, inner[2] - 2, inner[3] - 2), 10, 255))
-    soft = ImageChops.subtract(rim, rounded(size, (inner[0] + 8, inner[1] + 8, inner[2] - 8, inner[3] - 6), 8, 255))
-    soft = soft.filter(ImageFilter.GaussianBlur(3))
+    rim = rounded(size, box(inner), 12 * k, 255)
+    inset = ImageChops.subtract(rim, rounded(size, box((inner[0] + 2, inner[1] + 2, inner[2] - 2, inner[3] - 2)),
+                                             10 * k, 255))
+    soft = ImageChops.subtract(rim, rounded(size, box((inner[0] + 8, inner[1] + 8, inner[2] - 8, inner[3] - 6)),
+                                            8 * k, 255))
+    soft = soft.filter(ImageFilter.GaussianBlur(3 * k))
     soft = ImageChops.multiply(soft, rim).point(lambda v: v * 110 // 255)
     shadow = Image.new("RGBA", size, NAVY + (0,))
     shadow.putalpha(ImageChops.lighter(soft, inset.point(lambda v: v * 200 // 255)))
     img.alpha_composite(shadow)
 
-    gui = os.path.join(OUT, "images", "gui", "dialogdefault")
+    gui = os.path.join(out, "images", "gui", "dialogdefault")
     cx = DLG_W // 2
     my = (TOP_H + DLG_H - BOTTOM_H) // 2
-    pieces = {
+    pieces = {   # crop boxes (exclusive right / bottom), 1x units
         "top_left": (0, 0, SIDE_W, TOP_H),
         "top": (cx, 0, cx + 4, TOP_H),
         "top_right": (DLG_W - SIDE_W, 0, DLG_W, TOP_H),
@@ -317,8 +354,8 @@ def build_dialog():
         "bottom": (cx, DLG_H - BOTTOM_H, cx + 4, DLG_H),
         "bottom_right": (DLG_W - SIDE_W, DLG_H - BOTTOM_H, DLG_W, DLG_H),
     }
-    for piece, box in pieces.items():
-        save(img.crop(box), os.path.join(gui, piece + ".png"))
+    for piece, b in pieces.items():
+        save(img.crop(tuple(v * k for v in b)), os.path.join(gui, piece + ".png"))
 
 
 def build_background():
@@ -371,27 +408,30 @@ def text_width(font, text, spacing):
     return sum(round(font.getlength(c)) for c in text) + spacing * (len(text) - 1)
 
 
-def build_button(name, fw, fh, label):
-    sheet = Image.new("RGBA", (fw, fh * 4), (0, 0, 0, 0))
-    pill = (4, 6, fw - 5, fh - 7)
+def build_button(name, fw, fh, label, k, out):
+    W, H = fw * k, fh * k
+    sheet = Image.new("RGBA", (W, H * 4), (0, 0, 0, 0))
+    pill = (4, 6, fw - 5, fh - 7)   # 1x units
     for row, (top_rgb, bottom_rgb, rim, ink, outline) in enumerate(STATES):
-        frame = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
+        frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         r = (pill[3] - pill[1]) // 2
-        drop = Image.new("RGBA", (fw, fh), DEEP + (0,))
-        drop.putalpha(rounded((fw, fh), (pill[0] + 1, pill[1] + 2, pill[2] + 1, pill[3] + 2), r, 110)
-                      .filter(ImageFilter.GaussianBlur(1.5)))
+        drop = Image.new("RGBA", (W, H), DEEP + (0,))
+        drop.putalpha(rounded((W, H), kbox(k, (pill[0] + 1, pill[1] + 2, pill[2] + 1, pill[3] + 2)), r * k, 110)
+                      .filter(ImageFilter.GaussianBlur(1.5 * k)))
         frame.alpha_composite(drop)
-        rim_img = Image.new("RGBA", (fw, fh), rim + (255,))
-        rim_img.putalpha(rounded((fw, fh), pill, r, 255))
+        rim_img = Image.new("RGBA", (W, H), rim + (255,))
+        rim_img.putalpha(rounded((W, H), kbox(k, pill), r * k, 255))
         frame.alpha_composite(rim_img)
         inner = (pill[0] + 2, pill[1] + 2, pill[2] - 2, pill[3] - 2)
-        body = vertical((fw, fh), [(0, top_rgb), (1, bottom_rgb)]).convert("RGBA")
-        body.putalpha(rounded((fw, fh), inner, r - 2, 255))
+        body = vertical((W, H), [(0, top_rgb), (1, bottom_rgb)]).convert("RGBA")
+        body.putalpha(rounded((W, H), kbox(k, inner), (r - 2) * k, 255))
         frame.alpha_composite(body)
-        gloss = Image.new("RGBA", (fw, fh), (255, 255, 255, 0))
-        gloss.putalpha(rounded((fw, fh), (inner[0] + 6, inner[1] + 2, inner[2] - 6, inner[1] + 10), 5, 60))
+        gloss = Image.new("RGBA", (W, H), (255, 255, 255, 0))
+        gloss.putalpha(rounded((W, H), kbox(k, (inner[0] + 6, inner[1] + 2, inner[2] - 6, inner[1] + 10)), 5 * k, 60))
         frame.alpha_composite(gloss)
 
+        # The label is sized at 1x, then drawn by a k-times font at k times
+        # the 1x pen positions, so both copies break and centre alike.
         size = 17
         font = load_face("ar", size)
         while size > 9 and text_width(font, label, 1) > inner[2] - inner[0] - 14:
@@ -401,12 +441,13 @@ def build_button(name, fw, fh, label):
         a_top, a_bottom = font.getbbox("A")[1::2]
         x = (fw - tw) // 2
         y = (inner[1] + inner[3]) // 2 - (a_top + a_bottom) // 2
+        face = font if k == 1 else load_face("ar", size * k)
         draw = ImageDraw.Draw(frame)
         for c in label:
-            draw.text((x, y), c, font=font, fill=ink + (255,), stroke_width=1, stroke_fill=outline + (255,))
+            draw.text((x * k, y * k), c, font=face, fill=ink + (255,), stroke_width=k, stroke_fill=outline + (255,))
             x += round(font.getlength(c)) + 1
-        sheet.alpha_composite(frame, (0, row * fh))
-    save(sheet, os.path.join(OUT, "images", "gui", name + ".png"))
+        sheet.alpha_composite(frame, (0, row * H))
+    save(sheet, os.path.join(out, "images", "gui", name + ".png"))
 
 
 # ---------------------------------------------------------------------------
@@ -422,7 +463,7 @@ MENU_BADGE = (115, 100)
 ARROW = 36
 
 
-def gear_mask(size, centre, outer, inner, teeth, hole):
+def gear_mask(size, centre, outer, inner, teeth, hole, k=1):
     """L mask of a gear: a disc of radius `inner` with `teeth` square teeth out to `outer`, minus a hole."""
     import math
     m = Image.new("L", size, 0)
@@ -433,7 +474,7 @@ def gear_mask(size, centre, outer, inner, teeth, hole):
     for i in range(teeth):
         a = 2 * math.pi * i / teeth
         pts = [(cx + r * math.cos(a + s * half), cy + r * math.sin(a + s * half))
-               for r, s in ((inner - 2, -1), (outer, -0.8), (outer, 0.8), (inner - 2, 1))]
+               for r, s in ((inner - 2 * k, -1), (outer, -0.8), (outer, 0.8), (inner - 2 * k, 1))]
         d.polygon(pts, fill=255)
     d.ellipse((cx - hole, cy - hole, cx + hole, cy + hole), fill=0)
     return m
@@ -455,33 +496,34 @@ def paint(frame, mask, rgb):
     frame.alpha_composite(layer)
 
 
-def outlined(frame, mask, fill, outline):
-    """Paint `mask` in `fill` over a 1 px `outline` ring."""
-    paint(frame, mask.filter(ImageFilter.MaxFilter(3)), outline)
+def outlined(frame, mask, fill, outline, k=1):
+    """Paint `mask` in `fill` over a `k` px `outline` ring."""
+    paint(frame, mask.filter(ImageFilter.MaxFilter(2 * k + 1)), outline)
     paint(frame, mask, fill)
 
 
-def build_menu_badge():
+def build_menu_badge(k, out):
     fw, fh = MENU_BADGE
-    sheet = Image.new("RGBA", (fw, fh * 4), (0, 0, 0, 0))
-    badge = (19, 4, fw - 20, 72)
+    W, H = fw * k, fh * k
+    sheet = Image.new("RGBA", (W, H * 4), (0, 0, 0, 0))
+    badge = (19, 4, fw - 20, 72)   # 1x units
     for row, (top_rgb, bottom_rgb, rim, ink, outline) in enumerate(STATES):
-        frame = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
-        drop = Image.new("RGBA", (fw, fh), DEEP + (0,))
-        drop.putalpha(rounded((fw, fh), (badge[0] + 1, badge[1] + 3, badge[2] + 1, badge[3] + 3), 16, 120)
-                      .filter(ImageFilter.GaussianBlur(2)))
+        frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        drop = Image.new("RGBA", (W, H), DEEP + (0,))
+        drop.putalpha(rounded((W, H), kbox(k, (badge[0] + 1, badge[1] + 3, badge[2] + 1, badge[3] + 3)), 16 * k, 120)
+                      .filter(ImageFilter.GaussianBlur(2 * k)))
         frame.alpha_composite(drop)
-        paint(frame, rounded((fw, fh), badge, 16, 255), rim)
+        paint(frame, rounded((W, H), kbox(k, badge), 16 * k, 255), rim)
         inner = (badge[0] + 3, badge[1] + 3, badge[2] - 3, badge[3] - 3)
-        body = vertical((fw, fh), [(0, top_rgb), (1, bottom_rgb)]).convert("RGBA")
-        body.putalpha(rounded((fw, fh), inner, 13, 255))
+        body = vertical((W, H), [(0, top_rgb), (1, bottom_rgb)]).convert("RGBA")
+        body.putalpha(rounded((W, H), kbox(k, inner), 13 * k, 255))
         frame.alpha_composite(body)
-        gloss = Image.new("RGBA", (fw, fh), (255, 255, 255, 0))
-        gloss.putalpha(rounded((fw, fh), (inner[0] + 6, inner[1] + 3, inner[2] - 6, inner[1] + 16), 7, 55))
+        gloss = Image.new("RGBA", (W, H), (255, 255, 255, 0))
+        gloss.putalpha(rounded((W, H), kbox(k, (inner[0] + 6, inner[1] + 3, inner[2] - 6, inner[1] + 16)), 7 * k, 55))
         frame.alpha_composite(gloss)
         cx, cy = fw // 2 - 3, (badge[1] + badge[3]) // 2 + 2
-        outlined(frame, gear_mask((fw, fh), (cx, cy), 21, 16, 8, 6), ink, outline)
-        outlined(frame, spark_mask((fw, fh), (cx + 21, cy - 19), 9), ink, outline)
+        outlined(frame, gear_mask((W, H), (cx * k, cy * k), 21 * k, 16 * k, 8, 6 * k, k), ink, outline, k)
+        outlined(frame, spark_mask((W, H), ((cx + 21) * k, (cy - 19) * k), 9 * k), ink, outline, k)
 
         label = "IMPROVEMENTS"
         size = 14
@@ -493,39 +535,42 @@ def build_menu_badge():
         a_top, a_bottom = font.getbbox("A")[1::2]
         x = (fw - tw) // 2
         y = 86 - (a_top + a_bottom) // 2
+        face = font if k == 1 else load_face("ar", size * k)
         draw = ImageDraw.Draw(frame)
         label_ink, label_outline = (ink, outline) if row else (CREAM, NAVY)
         for c in label:
-            draw.text((x, y), c, font=font, fill=label_ink + (255,), stroke_width=2, stroke_fill=label_outline + (255,))
+            draw.text((x * k, y * k), c, font=face, fill=label_ink + (255,), stroke_width=2 * k,
+                      stroke_fill=label_outline + (255,))
             x += round(font.getlength(c))
-        sheet.alpha_composite(frame, (0, row * fh))
-    save(sheet, os.path.join(OUT, "images", "selectionscene", "button_improvements.png"))
+        sheet.alpha_composite(frame, (0, row * H))
+    save(sheet, os.path.join(out, "images", "selectionscene", "button_improvements.png"))
 
 
-def build_arrow(name, pointing_right):
+def build_arrow(name, pointing_right, k, out):
     fw = fh = ARROW
-    sheet = Image.new("RGBA", (fw, fh * 4), (0, 0, 0, 0))
-    disc = (3, 3, fw - 4, fh - 4)
+    W = H = ARROW * k
+    sheet = Image.new("RGBA", (W, H * 4), (0, 0, 0, 0))
+    disc = (3, 3, fw - 4, fh - 4)   # 1x units
     for row, (top_rgb, bottom_rgb, rim, ink, outline) in enumerate(STATES):
-        frame = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
-        drop = Image.new("RGBA", (fw, fh), DEEP + (0,))
-        drop.putalpha(rounded((fw, fh), (disc[0] + 1, disc[1] + 2, disc[2] + 1, disc[3] + 2), 15, 110)
-                      .filter(ImageFilter.GaussianBlur(1.2)))
+        frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        drop = Image.new("RGBA", (W, H), DEEP + (0,))
+        drop.putalpha(rounded((W, H), kbox(k, (disc[0] + 1, disc[1] + 2, disc[2] + 1, disc[3] + 2)), 15 * k, 110)
+                      .filter(ImageFilter.GaussianBlur(1.2 * k)))
         frame.alpha_composite(drop)
-        paint(frame, rounded((fw, fh), disc, 15, 255), rim)
+        paint(frame, rounded((W, H), kbox(k, disc), 15 * k, 255), rim)
         inner = (disc[0] + 2, disc[1] + 2, disc[2] - 2, disc[3] - 2)
-        body = vertical((fw, fh), [(0, top_rgb), (1, bottom_rgb)]).convert("RGBA")
-        body.putalpha(rounded((fw, fh), inner, 13, 255))
+        body = vertical((W, H), [(0, top_rgb), (1, bottom_rgb)]).convert("RGBA")
+        body.putalpha(rounded((W, H), kbox(k, inner), 13 * k, 255))
         frame.alpha_composite(body)
-        tri = Image.new("L", (fw, fh), 0)
-        cx, cy = fw / 2, fh / 2
-        pts = [(cx - 5, cy - 8), (cx + 7, cy), (cx - 5, cy + 8)]
+        tri = Image.new("L", (W, H), 0)
+        cx, cy = W / 2, H / 2
+        pts = [(cx - 5 * k, cy - 8 * k), (cx + 7 * k, cy), (cx - 5 * k, cy + 8 * k)]
         if not pointing_right:
-            pts = [(fw - x, y) for x, y in pts]
+            pts = [(W - x, y) for x, y in pts]
         ImageDraw.Draw(tri).polygon(pts, fill=255)
-        outlined(frame, tri, ink, outline)
-        sheet.alpha_composite(frame, (0, row * fh))
-    save(sheet, os.path.join(OUT, "images", "gui", name + ".png"))
+        outlined(frame, tri, ink, outline, k)
+        sheet.alpha_composite(frame, (0, row * H))
+    save(sheet, os.path.join(out, "images", "gui", name + ".png"))
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +594,9 @@ loads these files only when the player has not imported their own Text Twist 2 i
     font_dialog_headers2, font_uibar_labels.
   - Arimo Bold (SIL OFL 1.1, `OFL-Arimo.txt`): font_settingstext, font_uibar_numbers,
     font_nextround02, font_tutorial01, font_highscore_text, and the button labels.
+- **`2x/`:** the same fonts and images drawn again at twice the size (not resized), for GPU
+  renderers at high resolutions. Fonts there are only PNG layers; they use the 1x XML.
+  `background.png` has no 2x copy.
 - **License of the rest:** MIT, like the code.
 """
 
@@ -560,15 +608,17 @@ def main():
     for spec in FONTS:
         n = build_font(spec)
         print("fonts/%s.xml: %d glyphs" % (spec[0], n))
-    build_dialog()
     build_background()
-    for name, fw, fh, label in BUTTONS:
-        build_button(name, fw, fh, label)
+    for k, out in ((1, OUT), (2, OUT_2X)):
+        build_dialog(k, out)
+        for name, fw, fh, label in BUTTONS:
+            build_button(name, fw, fh, label, k, out)
+        build_menu_badge(k, out)
+        build_arrow("button_arrow_left", False, k, out)
+        build_arrow("button_arrow_right", True, k, out)
     print("images/gui: dialog frame, background, %d buttons" % len(BUTTONS))
-    build_menu_badge()
-    build_arrow("button_arrow_left", False)
-    build_arrow("button_arrow_right", True)
     print("images: the IMPROVEMENTS badge and the row arrows")
+    print("2x/: every font layer and image above but background.png, at twice the size")
     shutil.copyfile(os.path.join(FONT_DIR, "luckiest-guy", "LICENSE.txt"), os.path.join(OUT, "LICENSE-LuckiestGuy.txt"))
     shutil.copyfile(os.path.join(FONT_DIR, "arimo", "OFL.txt"), os.path.join(OUT, "OFL-Arimo.txt"))
     with open(os.path.join(OUT, "README.md"), "w", newline="\n") as f:

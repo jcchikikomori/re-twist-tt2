@@ -135,6 +135,14 @@ the monitor does the scaling, because the game switches the display to 800x600 (
   GPU's largest texture, the target stays 800x600.
 - **Software renderer:** Sharp and 800x600 layers, whatever the file says. The file keeps the choice for the
   next GPU launch, and IMPROVEMENTS greys the row out with "Not available with the software renderer".
+- **2x placeholder art (P8):** `tools/gen_placeholders.py` draws the fonts, dialog frame, buttons, IMPROVEMENTS
+  badge and arrows a second time at twice the geometry into `data/placeholder/2x/` (every PNG exactly twice the
+  1x size; `background.png` has none). Fonts keep the 1x XML: each 2x glyph comes from a font twice the size at
+  twice the 1x cell origin. On a GPU renderer a file the asset folder lacks loads from `2x/` with a density of 2:
+  source rectangles are doubled, destinations stay in canvas units, and the hit masks still read the 1x file.
+  2x textures are always sampled linearly, since they are drawn below their size (0.9 at 1080p, 0.5 at 800x600)
+  where nearest would drop rows; so at 800x600 on a GPU the placeholder art is a little softer than 1x. The log
+  says `placeholders: ..., 2x` or `1x`.
 - **Sprite sheets under Smooth:** linear sampling can pull in a neighbouring frame at a frame's edge; checked on
   the 4-frame arrow buttons at 1600x900, where none shows.
 
@@ -170,5 +178,5 @@ borderless fullscreen, vsync, `dt` clamped to 100 ms).
 | UX-5 | Window sizes from 800x600 to 1920x1080 (4:3 and 16:9) that fit the display; Windowed, Borderless (desktop size) or Native (an exact display mode at the desktop's refresh rate, else the fastest; Borderless when the switch fails); `window=`, `resolution=` and `fullscreen_mode=` in `improvements.txt` | 800x600 only; exclusive 800x600 mode (1, 3) | 0.3.0 (P5) |
 | UX-6 | Side bars beside the 4:3 game filled with a generated gradient, faint rings and a gold edge in the placeholder palette (`widescreen_fill=` in `improvements.txt`, on by default; off: black); top and bottom bars stay black | No widescreen (1) | 0.3.0 (P6) |
 | UX-7 | No 60 fps cap by default; vsync (on by default) and a frame limit (60, 120, 144, 165 or 240) in `improvements.txt`; a nanosecond clock whose whole-ms steps keep the leftover fraction; the 100 ms clamp is kept | 60 fps cap with `Sleep`; vsync always on (4) | 0.3.0 (P4) |
-| UX-8 | Sharp (nearest, the default), Smooth (linear) or Pixel art filtering (`filter=` in `improvements.txt`); dialog layers drawn at the 4:3 rectangle's pixel size; both off on the software renderer; 2x placeholder art still to come | No scaling (1) | 0.3.0 (P7; 2x art in P8) |
+| UX-8 | Sharp (nearest, the default), Smooth (linear) or Pixel art filtering (`filter=` in `improvements.txt`); dialog layers drawn at the 4:3 rectangle's pixel size; placeholder art from `data/placeholder/2x/`; all off on the software renderer | No scaling (1) | 0.3.0 (P7, P8) |
 | UX-9 | Optional texture upscaler | None | |

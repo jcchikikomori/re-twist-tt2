@@ -20,6 +20,8 @@ page: [dictionary-sources.md](../dictionary-sources.md).
 - **Shipped:** none from Text Twist 2. `data/placeholder/` holds generated stand-ins for the fonts, the dialog
   frame and the dialog buttons, written by `tools/gen_placeholders.py`. The shapes are new; only the colour values
   were sampled from the original. Anything else still draws as a procedural placeholder in code.
+  `data/placeholder/2x/` is the same set drawn again at twice the size (the fonts rendered from the same open
+  fonts at twice the point size), loaded on GPU renderers; same sources, same licences.
 
 | Font | License | Where | Used for |
 | --- | --- | --- | --- |

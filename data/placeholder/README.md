@@ -12,4 +12,7 @@ loads these files only when the player has not imported their own Text Twist 2 i
     font_dialog_headers2, font_uibar_labels.
   - Arimo Bold (SIL OFL 1.1, `OFL-Arimo.txt`): font_settingstext, font_uibar_numbers,
     font_nextround02, font_tutorial01, font_highscore_text, and the button labels.
+- **`2x/`:** the same fonts and images drawn again at twice the size (not resized), for GPU
+  renderers at high resolutions. Fonts there are only PNG layers; they use the 1x XML.
+  `background.png` has no 2x copy.
 - **License of the rest:** MIT, like the code.

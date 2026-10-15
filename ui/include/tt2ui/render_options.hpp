@@ -13,14 +13,17 @@ namespace tt2ui {
 struct EffectiveOptions {
     tt2::TextureFilter filter = tt2::TextureFilter::Sharp;
     bool hires_layers = false;   // dialog layers at output resolution, not 800x600
+    bool hires_art = false;      // placeholder art from data/placeholder/2x/ (P8)
 };
 
-// The software renderer keeps the 0.2.x look: Sharp and 800x600 layers.
+// The software renderer keeps the 0.2.x look: Sharp, 800x600 layers and
+// the 1x placeholder art.
 inline EffectiveOptions effective(const tt2::Improvements& imp, const RenderCaps& caps) {
     EffectiveOptions o;
     if (!caps.enhancements) return o;
     o.filter = imp.filter;
     o.hires_layers = true;
+    o.hires_art = true;
     return o;
 }
 
