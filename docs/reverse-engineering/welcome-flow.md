@@ -199,7 +199,7 @@ Background `images/selectionscene/background.png`. Sprite sheets with
 | `BUTTON_PLAY_WOD` | `button_wotd.png` 157×596 ×4 | 85,378 | `disabledsound="SOUND_button_wordoftheday"` |
 | `BUTTON_BLITZ` | `button_lightning.png` 170×536 ×4 | 320,393 | |
 | `BUTTON_CRISSCROSS` | `button_crossword.png` 206×536 ×4 | 528,393 | |
-| `BUTTON_GH` (URL) | `button_gh.png` 115×400 ×4 | 653,210 | opens gamehouse.com |
+| `BUTTON_GH` (URL) | `button_gh.png` 115×400 ×4 | 653,210 | opens gamehouse.com (see below) |
 | `BUTTON_SETTINGS` | `button_settings.png` 157×208 ×4 | 3,539 | bottom bar, `hitmaskthreshold="100"` |
 | `BUTTON_HOWTOPLAY` | `button_howtoplay.png` | 163,539 | |
 | `BUTTON_HIGHSCORES` | `button_highscores.png` | 323,539 | |
@@ -220,6 +220,16 @@ REA batch A, 2026-10-14):
 
 So no button in any scene or dialog plays `SOUND_button_rollover`. `hitmaskthreshold` is the
 alpha threshold for hit testing against the sprite's pixels (**INFERRED** from the name).
+
+`BUTTON_GH` is a `GF2::ButtonURL` (CONFIRMED, 2026-10-15): `dialogs.xml` declares
+`<ButtonURL name="BUTTON_GH" … url="http://www.gamehouse.com"/>`, and the class's click slot
+`0x477b80` (vtable `0x596f84`, slot 3) runs `ShellExecuteA(GetDesktopWindow(), "open", url, NULL,
+NULL, SW_SHOW)`, then the button callback. Nothing else happens on click
+(`ev_5da37f5f6ba54321e4a1da549681683e4196592bea62bba85d6312b6f0c33ca5`,
+`ev_745a890effe2c0cb57dcd84542b12430d2c0f2a3614f35bf9cd7c45f1a842286`). Whether the `moregamesurl` /
+`showmoregames` registry values override the URL is UNKNOWN (strings:
+`ev_5dff76359aae16ea7d8e064a5367c4a9cd8d835a58184e80c7da4939777cdfac`). The port does not open
+this URL; the slot is planned for the port's own IMPROVEMENTS button (`docs/design/improve-ui-ux.md`).
 
 ### Enter (`0x42d9b0`) and init (`0x42d220`) — CONFIRMED
 

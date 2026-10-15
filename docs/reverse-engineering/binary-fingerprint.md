@@ -107,8 +107,20 @@ The interesting ones for understanding the game:
 - `cabinet`: ships the installer stub (the game itself is not a cabinet).
 - `oleaut32`, `ole32`: variant / BSTR support.
 
-No `d3d*` or `opengl32` import — rendering goes through GameHouse's own
-software/GF2 renderer.
+No `d3d*` or `opengl32` **static** import, but the game does not render in
+software: `RendererD3D::init` (`0x492d10`) loads **Direct3D 9** at run time with
+`LoadLibraryA("d3d9.dll")` and `Direct3DCreate9`, and refuses to start without
+a HAL device (`0x482400`). There is no OpenGL path and no software fallback.
+The only `ddraw.dll` / `DirectDrawCreateEx` use (`0x508f70`) is the audio
+library's DirectX version probe, not the renderer. CONFIRMED, 2026-10-15:
+`ev_2ef08d51235b50c43d034a2d8de01404060bdcaea5ee72df0ae1425d600a1fd3`,
+`ev_3b0a6d631b6ec95463e8542198409475b51f3edfb85482e8955ea9978f94bad4`,
+`ev_dc79ce4373edcfc85e8814d25d42e444a3064863092d02860b5d16e9dba22767`,
+`ev_1d0696b365009e96f09ebf193ad38c7f2e7664e0cd5cc469af922c9e011c91f6`
+(`Direct3DCreate9` string xrefs). An earlier version of this section said
+"rendering goes through GameHouse's own software/GF2 renderer", which was
+wrong. Display size, fullscreen and frame timing are in
+[`display-and-timing.md`](display-and-timing.md).
 
 ## 5. C++ class hierarchy (recovered from RTTI)
 

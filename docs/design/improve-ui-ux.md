@@ -37,3 +37,57 @@
 
 - The original game only supports 60hz.
 - This game should support high refresh rate.
+
+## Corrections and decisions
+
+> Added by Claude on 2026-10-15 from the reverse-engineering pass and the planning answers. The text above is
+> the original brief, left as written.
+
+### Corrections to the brief
+
+- **Resolution:** the original runs at **800x600** only, not 1024x768. Its window cannot be resized, and its
+  fullscreen switches the display to 800x600 ([`display-and-timing.md`](../reverse-engineering/display-and-timing.md)).
+  1080p is therefore a 1.8x scale (1440x1080), with 240 px bars on each side of a 16:9 screen.
+- **Graphics API:** the original uses **Direct3D 9**, loaded at run time, not DirectX 7/8. There is no OpenGL or
+  software path.
+- **Refresh rate:** the original caps at about 62.5 fps (`Sleep` to a 16 ms period) with vsync on, and clamps
+  each frame's time step to 100 ms. Its game timers are millisecond deltas, so they do not depend on 60 Hz.
+
+### Decisions (2026-10-15)
+
+| Topic | Decision |
+| --- | --- |
+| Render stack | Migrate from SDL2 to **SDL3**; try Vulkan, then OpenGL, then software. The software renderer turns the enhancements off |
+| Upscaling | Smooth / sharp / pixel-art filtering for the imported art, our own placeholder art regenerated at 2x, and an optional texture upscaler (self-written, off by default) |
+| Options file | A new `improvements.txt`, so `settings.txt` stays readable by older builds |
+| Dialog | **IMPROVEMENTS**, opened from a new main-menu button in place of "GameHouse - More Great Games" |
+| Resolution, window mode | Both live in IMPROVEMENTS; SETTINGS hides its FULLSCREEN switch (main menu and pause menu) |
+| Renderer change | Applies on the next launch |
+| Borderless | Always the desktop size; the resolution setting applies to windowed and native fullscreen |
+| Side fill | Any left/right bar is filled (16:10 and 21:9 too); 16:9 is the supported target |
+| Frame rate | VSync on/off plus a frame limit: Off, 60 (original), 120, 144, 165, 240 |
+
+### Tech stack
+
+| Component | Version | License | Source |
+| --- | --- | --- | --- |
+| SDL3 | 3.4.18 | zlib | Linux: built from the `release-3.4.18` tag; Windows: MSYS2 `mingw-w64-ucrt-x86_64-sdl3` |
+| SDL3_image | 3.4.8 | zlib | Linux: `release-3.4.8`; Windows: `mingw-w64-ucrt-x86_64-sdl3-image` |
+| SDL3_mixer | 3.2.4 | zlib | Linux: `release-3.2.4`; Windows: `mingw-w64-ucrt-x86_64-sdl3-mixer` |
+| Vulkan loader | the player's system | Apache 2.0 | Loaded by SDL at run time; never bundled |
+
+### Port deviations
+
+Each row is filled in by the phase that ships it.
+
+| ID | Deviation from the original | Shipped in |
+| --- | --- | --- |
+| UX-1 | Vulkan / OpenGL / software through SDL3 instead of Direct3D 9 | |
+| UX-2 | IMPROVEMENTS button in place of the GameHouse link | |
+| UX-3 | SETTINGS hides its FULLSCREEN switch | |
+| UX-4 | Display options saved in `improvements.txt` | |
+| UX-5 | Window sizes up to 1080p; borderless and native fullscreen | |
+| UX-6 | Side bars filled in the original palette | |
+| UX-7 | No 60 fps cap by default; vsync or a chosen limit | |
+| UX-8 | Filtering, 2x placeholder art, full-resolution dialog layers | |
+| UX-9 | Optional texture upscaler | |

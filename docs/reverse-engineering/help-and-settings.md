@@ -153,7 +153,8 @@ window object is the "fullscreen supported" flag. The fullscreen setter is the w
 
 - **There is no Alt+Enter.** The translator's only modifier check is Ctrl+P (`0x5d3114` = `VK_CONTROL`,
   message `0x601`). The window procedure handles no `WM_SYSKEYDOWN` / `WM_SYSCOMMAND` of its own. The
-  renderer loads `d3d9.dll` / `ddraw.dll`, neither of which adds Alt+Enter. A scan of the whole
+  renderer loads `d3d9.dll` (the only `ddraw.dll` use is the audio library's DirectX version probe,
+  `0x508f70`; see `display-and-timing.md`), and neither adds Alt+Enter. A scan of the whole
   executable found no other caller of the setter through `[0x5fdea0]`.
 - **Port deviation:** Alt+Enter toggles the window mode and saves it to `settings.txt` (the user's choice
   on 2026-10-14). The original Esc and maximize shortcuts are not ported: Esc keeps opening the pause menu.
