@@ -115,10 +115,16 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   1020×1560, 17 columns × 26 rows of 60×60); the row is the letter, frame
   `(letter - 'a') * 17`. The ctor also builds an `IMAGE_LETTERBALL_50` / `_40` sprite and
   an `IMAGE_CHICKLET_SHEEN` overlay; the Classic scene does not show them (not drawn here).
-- Round-start flip (CONFIRMED, `0x43c940` → `0x43a820`): ball `i` waits `i * 120` ms, then a
-  `ModifierFrame` runs frames `first .. first + 11` at **60 ms** per frame and plays
-  `SOUND_letter_load` when it ends (`0x43a940`). The ball **rests on frame 11**, the round
-  pearl; frames 12–16 morph it into the square chicklet and are not used by this scene.
+- Round-start flip (CONFIRMED, `0x43c940` → `0x43a820`, asm
+  `ev_9f22df41a5ed62aa5bf0d677398226019b913c49dc3ae323e413c9ad9593d8ef`): ball `i` waits
+  `i * 120` ms (a `ModifierDelay`), then a `ModifierFrame` runs frames `first .. first + 11`
+  at **60 ms** per frame. When the flag argument is 1 (the round start `0x425c50` pushes 1 at
+  `0x426264`), a `ModifierMethod` calling `0x43a940` (`SOUND_letter_load`) is added under
+  the **same** delay as the frames (`EDI` still holds the delay at `0x43a91e`), so the two run
+  side by side: the sound plays as the flip **starts**, at `i * 120` ms, not when it ends.
+  An earlier reading here said "when it ends", which put the last of 8 balls' sound
+  `720 + 7 × 120 = 1560` ms late. The ball **rests on frame 11**, the round pearl; frames
+  12–16 morph it into the square chicklet and are not used by this scene.
 - Move (CONFIRMED, `0x43a4c0`): into a container a ball slides with `ModifierLocationLine`
   in **300 ms** (plus a `ModifierScale`); the twist relayout (`0x43c370`) uses **400 ms**.
   The easing `0x4513d0` (a label, so it does not decompile) is **smoothstep**
@@ -183,8 +189,29 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   via its set-text slot `+0xc4`. There is **no count-up**: the label jumps to the new total
   (`ev_e7f08e2c9eafb9f3ee109e9c87349a34776e6be1dafadff3ee385925c698ea1a`,
   `ev_488899f05a1dfe7dbf4db291b05209127fbc1f4dfe54b84d557d940a73f9db53`).
-- Twist: INFERRED as a `std::random_shuffle` of the available balls with the game LCG
-  (`0x43d950`); counted in `TRACKER/TWISTS`.
+- Twist (CONFIRMED, `0x425240` → `0x43c370` → `0x43c280`,
+  `ev_bfa0944e936a11f348afc9cdac9a277ab17e10857d8a5de693f0051c9eb97b3d`,
+  `ev_292da96dc327f2dfd9d293bf89fe259e8daf6902abcaa53a56ccabe8f0584d9c`): the key (`0x427560`,
+  key code `0x11`) and the button (`0x425b60`) both call `0x425240`, which plays
+  `SOUND_word_twist` **first** and then asks `0x43c280` whether the available row may move.
+  It may not when fewer than two letters are available, when every available letter is the
+  same, or when **any available ball is still sliding**: `0x43a4c0` keeps the running move in
+  the ball's `+0x184` and chains `0x43a2f0` after it, whose bytes are
+  `MOV dword [ECX+0x184], 0` (`ev_3de15ad48fac8e2d6ad29d2fedb98d731b178ada69e4e0dad31d19f6ff146fea`).
+  There is no timer: a held key (the key translator `0x484770` passes every `WM_KEYDOWN`
+  repeat through) moves the rack once per finished 400 ms slide and sounds on every repeat.
+  When allowed, `0x43c370` shuffles (`0x439370`) and shuffles again while the new order equals
+  the order before or a second string (INFERRED: the rack word). The shuffle's random source
+  is INFERRED to be the game LCG. Counted in `TRACKER/TWISTS` (the port counts only twists
+  that move the rack). **Port deviation:** the port plays `SOUND_word_twist` only when the
+  rack moves, so a held key doesn't click on every repeat while the balls slide.
+- Sound playback (CONFIRMED, `0x4634b0`,
+  `ev_d92c44a24f8b39b08f4a98e21e4f6a48caf6f2a9f1b520a78e3c8c24a3984158`): every `SOUND_*` is
+  played on a **free voice** (`-1`), with volume `0..255`, pan `128 ± 127` and the frequency
+  clamped to `100..705600`. These match FMOD 3's `FSOUND_PlaySoundEx(FSOUND_FREE, …)` /
+  `FSOUND_SetVolume` / `FSOUND_SetPan` / `FSOUND_SetFrequency` (INFERRED from the argument
+  shapes; the library is linked statically). A sound never waits for or cuts off an earlier
+  copy of itself, which is what SDL_mixer's `Mix_PlayChannel(-1, …)` does too.
 
 ## 5. Round flow
 
@@ -425,7 +452,7 @@ All are `autocenter` and `dodarkenbackground="true"`.
   so G = 500 ms, T = 1300 ms, J = 1700 ms, B = 2100 ms. Every ball also bursts 8
   `IMAGE_PARTICLEBALL` particles: random angle, distance `75 + rand % 50` px, alpha fade
   over `600 + rand % 90` ms, linear easing. Each ball runs the round-start flip `0x43a820`
-  with its flag argument 1, so `SOUND_letter_load` (`0x43a940`) plays as each one lands;
+  with its flag argument 1, so `SOUND_letter_load` (`0x43a940`) plays as each one appears;
   like the rack, a waiting ball shows its first (blank) frame. Slot positions:
 
   | Slot | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
@@ -491,7 +518,11 @@ All are `autocenter` and `dodarkenbackground="true"`.
 | `0x439d00` | `LetterBall` ctor: `IMAGE_LETTERBALL_ANIM` frame = letter × 17 |
 | `0x43bad0` | Put a ball into a container cell (first free cell for index −1) |
 | `0x43c370` / `0x43c940` | Container relayout / reveal animation |
-| `0x43a820` / `0x43a940` | Ball flip (12 frames, 60 ms) / its `SOUND_letter_load` |
+| `0x43a820` / `0x43a940` | Ball flip (12 frames, 60 ms) / its `SOUND_letter_load`, as the flip starts |
+| `0x425240` / `0x43c280` | Twist (sound, then relayout) / may the rack twist now |
+| `0x43a2f0` | End of a ball move: clears `+0x184` |
+| `0x4634b0` | Play a sound on a free voice (FMOD 3 shape) |
+| `0x484770` / `0x46de50` | `WM_KEY*` / `WM_CHAR` → key events (repeats kept) / main message loop |
 | `0x43a4c0` | Ball move: 300 ms into a container, 400 ms on relayout |
 | `0x407f40` / `0x408320` | Pause menu ctor / "Exit Game?" confirmation |
 | `0x40b470` | Yes/no dialog: buttons below the message, height grows |

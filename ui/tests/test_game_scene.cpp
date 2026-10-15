@@ -240,18 +240,26 @@ TEST(scene_starts_round_one_with_rack_and_board) {
     // Board slots sit on the centred table.
     ASSERT_TRUE(s.table_x() == 400.0f - s.table().width * 0.5f);
     ASSERT_EQ(s.slots()[0].y, 15);
-    // The balls flip in one after another (0x43c940); each flip ends with
-    // SOUND_letter_load on the resting pearl frame.
+    // The balls flip in one after another (0x43c940); SOUND_letter_load
+    // plays as each flip starts, since 0x43a820 runs the frames and the
+    // sound side by side under the ball's delay.
     ASSERT_TRUE(!f.played(SoundId::LetterLoad));
     ASSERT_EQ(s.balls()[0].frame, 0);
+    auto loads = [&f] {
+        int n = 0;
+        for (auto id : f.sounds) if (id == SoundId::LetterLoad) ++n;
+        return n;
+    };
+    s.update(1);
+    ASSERT_EQ(loads(), 1);                             // ball 0 at 0 ms
+    s.update(BALL_REVEAL_STAGGER_MS - 2);
+    ASSERT_EQ(loads(), 1);                             // 119 ms: ball 1 still waits
+    s.update(1);
+    ASSERT_EQ(loads(), 2);                             // 120 ms: ball 1 starts
+    s.update(BALL_REVEAL_STAGGER_MS * 3);
+    ASSERT_EQ(loads(), 5);                             // 480 ms: the last ball starts
     s.update(BALL_REVEAL_FRAME_MS * (BALL_IDLE_FRAME + 1));
-    int loads = 0;
-    for (auto id : f.sounds) if (id == SoundId::LetterLoad) ++loads;
-    ASSERT_EQ(loads, 1);
-    s.update(BALL_REVEAL_STAGGER_MS * 4);
-    loads = 0;
-    for (auto id : f.sounds) if (id == SoundId::LetterLoad) ++loads;
-    ASSERT_EQ(loads, 5);
+    ASSERT_EQ(loads(), 5);                             // the flips end without a sound
     for (const auto& b : s.balls()) ASSERT_EQ(b.frame, BALL_IDLE_FRAME);
     ASSERT_EQ(f.saves, 1);                             // bag state persisted
     ASSERT_EQ(f.profile.bag.index, std::uint32_t{1});
@@ -390,6 +398,7 @@ TEST(clear_lastword_and_twist_buttons) {
     s.press("BUTTON_LastWord");
     ASSERT_EQ(s.typed(), std::string("car"));
     s.press("BUTTON_Clear");
+    s.update(BALL_MOVE_MS);                                // the letters land back in the rack
     // Twist: same multiset of letters in the rack row, counted on the profile.
     const int twists = f.profile.twists;
     s.press("BUTTON_Twist");
@@ -404,8 +413,104 @@ TEST(clear_lastword_and_twist_buttons) {
     std::sort(sorted_rack.begin(), sorted_rack.end());
     std::sort(sorted_order.begin(), sorted_order.end());
     ASSERT_EQ(sorted_order, sorted_rack);
+    s.update(BALL_RELAYOUT_MS);
     s.key_space();                                         // space twists too
     ASSERT_EQ(f.profile.twists, twists + 2);
+}
+
+// The rack order (left to right) of the balls in the available row.
+static std::string rack_row(const GameScene& s) {
+    std::vector<const LetterBall*> row;
+    for (const auto& b : s.balls()) if (!b.played) row.push_back(&b);
+    std::sort(row.begin(), row.end(), [](const LetterBall* a, const LetterBall* b) { return a->slot < b->slot; });
+    std::string out;
+    for (auto* b : row) out.push_back(b->letter);
+    return out;
+}
+
+// 0x43c280: a held TWIST key only moves the rack once the last slide has
+// landed. Key repeats in between leave the balls and the counter alone,
+// and (a port deviation from 0x425240) make no sound either.
+TEST(twist_waits_for_the_balls_to_land) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    const int twists = f.profile.twists;
+    s.key_space();
+    ASSERT_EQ(f.profile.twists, twists + 1);
+    const std::string moved = rack_row(s);
+    int sounds = 0;
+    for (auto id : f.sounds) if (id == SoundId::WordTwist) ++sounds;
+    ASSERT_EQ(sounds, 1);
+    // Key repeats every 33 ms while the 400 ms slide runs: refused.
+    for (int t = 33; t < BALL_RELAYOUT_MS; t += 33) {
+        s.update(33);
+        s.key_space();
+    }
+    ASSERT_EQ(f.profile.twists, twists + 1);
+    ASSERT_EQ(rack_row(s), moved);
+    sounds = 0;
+    for (auto id : f.sounds) if (id == SoundId::WordTwist) ++sounds;
+    ASSERT_EQ(sounds, 1);                                  // the 12 refused repeats are silent
+    s.update(BALL_RELAYOUT_MS);                            // landed
+    for (const auto& b : s.balls()) ASSERT_TRUE(!b.moving());
+    s.key_space();
+    ASSERT_EQ(f.profile.twists, twists + 2);
+    sounds = 0;
+    for (auto id : f.sounds) if (id == SoundId::WordTwist) ++sounds;
+    ASSERT_EQ(sounds, 2);
+}
+
+// 0x43c370 shuffles again until the order changes, so a twist always
+// moves something.
+TEST(twist_always_changes_the_order) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    for (int i = 0; i < 20; ++i) {
+        const std::string before = rack_row(s);
+        s.key_space();
+        ASSERT_TRUE(rack_row(s) != before);
+        ASSERT_TRUE(rack_row(s) != s.rack());              // never hands over the rack word
+        s.update(BALL_RELAYOUT_MS);
+    }
+}
+
+// 0x43c280: one letter left in the rack row cannot be twisted.
+TEST(twist_needs_two_letters_in_the_row) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type(s.rack().substr(0, s.rack().size() - 1));      // all but one letter played
+    s.update(BALL_MOVE_MS);
+    const int twists = f.profile.twists;
+    s.key_space();
+    ASSERT_EQ(f.profile.twists, twists);
+    ASSERT_TRUE(!f.played(SoundId::WordTwist));            // a refused press is silent
+}
+
+// LetterBall::tick reports the start of the flip once, and a ball that is
+// not flipping never reports it.
+TEST(letter_ball_reports_the_flip_start_once) {
+    LetterBall b;
+    b.letter = 'a';
+    b.frame = 0;
+    b.reveal_delay_ms = 100;
+    b.reveal_elapsed_ms = 0;
+    ASSERT_TRUE(!b.tick(99));
+    ASSERT_TRUE(b.tick(1));                                // the delay ran out
+    ASSERT_EQ(b.frame, 0);
+    ASSERT_TRUE(!b.tick(BALL_REVEAL_FRAME_MS));
+    ASSERT_EQ(b.frame, 1);
+    ASSERT_TRUE(!b.tick(BALL_REVEAL_FRAME_MS * BALL_IDLE_FRAME));
+    ASSERT_EQ(b.frame, BALL_IDLE_FRAME);
+    ASSERT_TRUE(!b.revealing());
+    LetterBall idle;
+    idle.letter = 'b';
+    ASSERT_TRUE(!idle.tick(1000));
+    LetterBall now;                                        // no delay: starts on the first tick
+    now.letter = 'c';
+    now.frame = 0;
+    now.reveal_elapsed_ms = 0;
+    ASSERT_TRUE(now.tick(16));
+    ASSERT_TRUE(!now.tick(16));
 }
 
 // 0x424730 -> 0x449c90: the score label is set with sprintf("%d") right
@@ -812,6 +917,10 @@ TEST(next_round_balls_spell_great_job) {
     }
     ASSERT_EQ(balls[0].sheet_frame(), ('g' - 'a') * BALL_FRAMES_PER_LETTER);   // 102, first flip frame
     ASSERT_TRUE(balls[2].x == 192.0f && balls[2].y == -8.0f);                  // slot 3 pokes above the frame
+    // SOUND_letter_load goes with the ball appearing at 500 ms.
+    LetterBall g = balls[0];
+    ASSERT_TRUE(!g.tick(NEXT_ROUND_BALL_DELAY_MS - 1));
+    ASSERT_TRUE(g.tick(1));
 }
 
 TEST(next_round_balls_skip_spaces_and_stop_at_eight) {
@@ -916,7 +1025,9 @@ TEST(next_round_dialog_flips_its_balls_with_sound) {
     s.update(500 + 12 * BALL_REVEAL_FRAME_MS);             // G is done, R is still flipping
     ASSERT_EQ(s.dialog_balls()[0].frame, BALL_IDLE_FRAME);
     ASSERT_TRUE(s.dialog_balls()[1].revealing());
-    ASSERT_EQ(static_cast<int>(std::count(f.sounds.begin(), f.sounds.end(), SoundId::LetterLoad)), 1);
+    // 1220 ms: G, R, E and A (500, 700, 900, 1100 ms) have each sounded
+    // as they started; T waits until 1300 ms.
+    ASSERT_EQ(static_cast<int>(std::count(f.sounds.begin(), f.sounds.end(), SoundId::LetterLoad)), 4);
     s.update(2100);                                        // past B's 2100 + 720 ms
     int loads = 0;
     for (auto id : f.sounds) if (id == SoundId::LetterLoad) ++loads;
@@ -1437,9 +1548,9 @@ TEST(ball_flip_runs_frames_0_to_11_then_rests_as_a_pearl) {
     ASSERT_TRUE(b.revealing());
     ASSERT_TRUE(!b.tick(100));                             // still waiting
     ASSERT_EQ(b.frame, 0);
-    ASSERT_TRUE(!b.tick(20 + 3 * BALL_REVEAL_FRAME_MS));   // 3 frames in
+    ASSERT_TRUE(b.tick(20 + 3 * BALL_REVEAL_FRAME_MS));    // started (the sound cue), 3 frames in
     ASSERT_EQ(b.frame, 3);
-    ASSERT_TRUE(b.tick(9 * BALL_REVEAL_FRAME_MS));         // last frame reached
+    ASSERT_TRUE(!b.tick(9 * BALL_REVEAL_FRAME_MS));        // last frame reached, no second cue
     ASSERT_EQ(b.frame, BALL_IDLE_FRAME);
     ASSERT_TRUE(!b.revealing());
     ASSERT_TRUE(!b.tick(1000));                            // only once

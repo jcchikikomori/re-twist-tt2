@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "tt2/bag.hpp"
@@ -165,6 +166,7 @@ constexpr int BALL_REVEAL_FRAME_MS = 60;     // 0x43a820: ModifierFrame(60 ms)
 constexpr int BALL_REVEAL_STAGGER_MS = 120;  // 0x43c940: delay += 0x78 per ball
 constexpr int BALL_MOVE_MS = 300;            // 0x43a4c0: ModifierLocationLine(0x12c) for place / take back
 constexpr int BALL_RELAYOUT_MS = 400;        // 0x43a4c0 (no container): 0x190, used by the twist relayout
+constexpr int TWIST_MAX_SHUFFLES = 16;       // port guard on 0x43c370's reshuffle-until-different loop
 
 // x of the left edge of a row holding `n` letters (0x4396e0: 400 - n*69/2).
 inline float row_left(int n) { return 400.0f - static_cast<float>(n) * BALL_PITCH * 0.5f; }
@@ -214,10 +216,17 @@ struct LetterBall {
     int frame = BALL_IDLE_FRAME;   // offset inside the letter's 17-frame row
     int reveal_delay_ms = 0;
     int reveal_elapsed_ms = -1;    // -1: not flipping
+    bool reveal_started = false;   // the delay ran out and the frames began
     bool revealing() const { return reveal_elapsed_ms >= 0; }
+    // Still sliding to its cell (0x43a4c0 keeps the move in +0x184 until
+    // the method 0x43a2f0 clears it at the end of the slide).
+    bool moving() const { return move_ms > 0 && move_elapsed_ms < move_ms; }
     // Frame index in IMAGE_LETTERBALL_ANIM.
     int sheet_frame() const { return (letter - 'a') * BALL_FRAMES_PER_LETTER + frame; }
-    // Advance the slide and the flip; true when the flip just finished.
+    // Advance the slide and the flip; true on the tick the flip starts.
+    // 0x43a820 adds the ModifierFrame and the SOUND_letter_load method
+    // (0x43a940) as siblings under the same ModifierDelay, so the sound
+    // plays as the frames begin, not after the 12th frame.
     bool tick(int dt) {
         if (move_ms > 0 && move_elapsed_ms < move_ms) {
             move_elapsed_ms = std::min(move_ms, move_elapsed_ms + dt);
@@ -236,15 +245,17 @@ struct LetterBall {
             left -= used;
             if (reveal_delay_ms > 0) return false;
         }
+        const bool started = !reveal_started;
+        reveal_started = true;
         reveal_elapsed_ms += left;
         const int last = BALL_IDLE_FRAME;
         if (reveal_elapsed_ms >= (last + 1) * BALL_REVEAL_FRAME_MS) {
             frame = last;
             reveal_elapsed_ms = -1;
-            return true;
+        } else {
+            frame = reveal_elapsed_ms / BALL_REVEAL_FRAME_MS;
         }
-        frame = reveal_elapsed_ms / BALL_REVEAL_FRAME_MS;
-        return false;
+        return started;
     }
 };
 
@@ -824,7 +835,7 @@ public:
         if (settings_) settings_->tick(dt_ms);
         else if (dialog_open()) dialog_tick(dialog_, dt_ms);
         for (auto& b : dialog_balls_)
-            if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43a820 flag 1 -> 0x43a940
+            if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43a820 flag 1 -> 0x43a940 as the flip starts
         for (auto& p : dialog_particles_) p.tick(dt_ms);
         if (paused()) return;
         const int round_before = round_number_;
@@ -839,7 +850,7 @@ public:
         for (auto& v : slots_)
             if (v.flipping()) v.flip_ms += dt_ms;
         for (auto& b : balls_)
-            if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43a940 after each flip
+            if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43c940(1): 0x43a940 as each flip starts
         // Timer (0x426d59: only CLASSIC_TIMED / WOTD tick).
         // A round started by the queue this frame begins at a full 2:00.
         if (phase_ == GamePhase::Playing && timed_ && round_number_ == round_before) {
@@ -1270,20 +1281,58 @@ private:
         return_all_letters();
         for (char c : last_word_) type_letter(c);
     }
-    // INFERRED: the shipped twist shuffles the available balls with the
-    // game LCG (std::random_shuffle semantics via 0x43d950).
+    // 0x425240 plays SOUND_word_twist on every press, then 0x43c370 asks
+    // 0x43c280 whether the rack may move. DEVIATION: the port plays the
+    // sound only when the rack moves, so a held key doesn't stack a click
+    // per key repeat while the balls are still sliding. It refuses while fewer than two
+    // letters are available, while every available letter is the same, or
+    // while any ball in the available row is still sliding (its +0x184
+    // move is set until 0x43a2f0 clears it), so a held key twists once per
+    // finished slide instead of once per key repeat. Otherwise it shuffles
+    // again until the order differs from the one before and from the rack
+    // word (0x43c370's two string compares; the second string is INFERRED
+    // to be the rack word). INFERRED: the shuffle itself uses the game LCG
+    // (std::random_shuffle semantics via 0x439370).
     void twist() {
         if (phase_ != GamePhase::Playing) return;
+        if (!can_twist()) return;
+        play(SoundId::WordTwist);
         std::vector<std::size_t> avail;
         for (std::size_t i = 0; i < balls_.size(); ++i) if (!balls_[i].played) avail.push_back(i);
-        if (avail.size() < 2) return;
         std::vector<int> slots;
         for (std::size_t i : avail) slots.push_back(balls_[i].slot);
-        rng_.shuffle(slots);
+        const std::string before = available_order(avail, slots);
+        // The original loops until the order changes; the cap only guards
+        // against a rack the RNG cannot reorder.
+        for (int tries = 0; tries < TWIST_MAX_SHUFFLES; ++tries) {
+            rng_.shuffle(slots);
+            const std::string now = available_order(avail, slots);
+            if (now != before && now != rack_) break;
+        }
         // 0x43c370: the relayout slides every ball to its new cell in 400 ms.
         for (std::size_t k = 0; k < avail.size(); ++k) move_to(balls_[avail[k]], false, slots[k], BALL_RELAYOUT_MS);
         profile_.twists += 1;
-        play(SoundId::WordTwist);
+    }
+    // 0x43c280: may the available row be twisted now?
+    bool can_twist() const {
+        std::string letters;
+        for (const auto& b : balls_) {
+            if (b.played) continue;
+            if (b.moving()) return false;
+            letters.push_back(b.letter);
+        }
+        if (letters.size() < 2) return false;
+        return letters.find_first_not_of(letters[0]) != std::string::npos;
+    }
+    // The available letters read left to right if ball avail[k] sat in slots[k].
+    // The row can have empty cells, so this sorts by cell, not by index.
+    std::string available_order(const std::vector<std::size_t>& avail, const std::vector<int>& slots) const {
+        std::vector<std::pair<int, char>> cells;
+        for (std::size_t k = 0; k < avail.size(); ++k) cells.emplace_back(slots[k], balls_[avail[k]].letter);
+        std::sort(cells.begin(), cells.end());
+        std::string out;
+        for (const auto& c : cells) out.push_back(c.second);
+        return out;
     }
 
     // ---- presentation helpers --------------------------------------
