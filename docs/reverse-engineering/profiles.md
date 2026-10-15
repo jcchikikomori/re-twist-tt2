@@ -142,6 +142,21 @@ player's button is highlighted and its y is remembered (+0x204).
 Remove asks `CTEXT_REMOVE_PLAYER_HEADER` / `CTEXT_REMOVE_PLAYER` first
 (yes/no dialog, INFERRED from the strings; the confirm path is `0x40aef0`).
 
+### 3.1.1 Buttons (`GF2::Button`, CONFIRMED loader)
+
+Every profile button uses `setup="DEFAULT_BUTTON"` (`clicksound="SOUND_BUTTON"`) and a 4-row sheet
+(`rowcount="4"`: normal / hover / pressed / disabled, the row order the welcome flow already uses). The
+Button XML loader `0x48d390` (`ev_9868528458dbaeab13eb36a04bd7b1af6768b2b2cb5d6673cf84ed1484f9bbf4`) reads
+`enabled`, `clicksound` (event `click`), `oversound` (event `over`), `disabledsound` (event `disabled`),
+`soundsection` and `firekey`; the optional pixel hit mask (`hitmask`, `hitmaskthreshold`) is
+`0x48c9c0`. No profile button sets `oversound`, so hovering plays nothing; the tooltips
+(`CTOOLTIP_NAMESELECT_*`, text in `commontext.xml`) come from the shared `tooltip` attribute and a
+`GF2::Tooltip` (`DEFAULT_TOOLTIP`: `FONT_TOOLTIP`, black, padding 3, alpha 220, max width 200).
+UNKNOWN: the code that picks the row from the state, and the tooltip's delay and placement.
+
+**Port:** every profile dialog (player select, name input, yes / no, message) now shows the hover,
+pressed and disabled rows; before, only the name input refreshed them. Tooltips are not drawn yet.
+
 ### 3.2 `DIALOG_NEWPLAYER` (`DialogNameInput`) 402 × 223, centred
 
 | Component | Image / text | Position |

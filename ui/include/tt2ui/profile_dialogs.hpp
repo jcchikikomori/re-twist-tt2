@@ -249,10 +249,12 @@ public:
             b.hover = over;
             if (!over) b.pressed = false;
         }
+        refresh_frames();
     }
     void mouse_down(float x, float y) {
         if (!open()) return;
         for (auto& b : dialog_.buttons) b.pressed = hit(b, x, y);
+        refresh_frames();
     }
     void mouse_up(float x, float y) {
         if (!open()) return;
@@ -262,9 +264,11 @@ public:
             b.pressed = false;
         }
         if (!clicked.empty()) press(clicked);
+        refresh_frames();
     }
 
     void update(int dt_ms) {
+        refresh_frames();   // every dialog, not only the name input
         if (dialog_.kind != DialogKind::NewPlayer) return;
         cursor_ms_ += dt_ms;
         const int period = cursor_on_ ? CURSOR_ON_MS : CURSOR_OFF_MS;
@@ -272,7 +276,6 @@ public:
             cursor_ms_ -= period;
             cursor_on_ = !cursor_on_;
         }
-        for (auto& b : dialog_.buttons) b.sprite.frame = b.frame_for_state();
     }
 
     // Button handler, also used by the keyboard shortcuts.
@@ -449,6 +452,10 @@ private:
         if (i < 0 || i >= pm_.count()) return;
         pm_.select(pm_.players()[static_cast<std::size_t>(i)].name);   // 0x460e60
         changed();
+    }
+    // The sheet row each button shows: normal, hover, pressed, disabled.
+    void refresh_frames() {
+        for (auto& b : dialog_.buttons) b.sprite.frame = b.frame_for_state();
     }
     static int row_y(int row) { return NAME_ROW_Y + row * NAME_ROW_SPACING; }
     static MenuButton button(const char* name, const char* image, float x, float y, Anchor a, int w = 119,

@@ -345,6 +345,43 @@ TEST(mouse_outside_buttons_and_disabled_buttons_do_nothing) {
     ASSERT_EQ(f.flow.input_text(), std::string());
 }
 
+// Every profile dialog shows its buttons' hover / pressed / disabled
+// rows, not only the name input (update() used to skip the others).
+TEST(player_select_buttons_show_hover_pressed_and_disabled_frames) {
+    Fixture f;
+    f.pm.add("A", 1);
+    f.pm.clear_current();                                   // Remove disabled
+    f.flow.open_player_select();
+    f.flow.update(16);
+    const Dialog& d = f.flow.dialog();
+    ASSERT_EQ(d.button("BUTTON_OK")->sprite.frame, 0);
+    ASSERT_EQ(d.button("BUTTON_REMOVE")->sprite.frame, 3);  // disabled row
+    auto [x, y] = f.centre("BUTTON_OK");
+    f.flow.mouse_move(x, y);
+    ASSERT_EQ(d.button("BUTTON_OK")->sprite.frame, 1);      // hover row
+    f.flow.mouse_down(x, y);
+    ASSERT_EQ(d.button("BUTTON_OK")->sprite.frame, 2);      // pressed row
+    f.flow.mouse_move(1, 1);                                // dragged off: back to normal
+    ASSERT_EQ(d.button("BUTTON_OK")->sprite.frame, 0);
+    auto [nx, ny] = f.centre("NAME_0");
+    f.flow.mouse_move(nx, ny);
+    ASSERT_EQ(d.button("NAME_0")->sprite.frame, 1);         // a name row highlights too
+    f.flow.update(16);
+    ASSERT_EQ(d.button("NAME_0")->sprite.frame, 1);         // and update() keeps it
+}
+
+TEST(confirm_dialog_buttons_show_their_hover_frame) {
+    Fixture f;
+    f.pm.add("A", 1);
+    f.flow.open_player_select();
+    f.click("BUTTON_REMOVE");                               // "remove this player?"
+    ASSERT_TRUE(f.flow.dialog().kind == DialogKind::Confirm);
+    auto [x, y] = f.centre("BUTTON_YES");
+    f.flow.mouse_move(x, y);
+    ASSERT_EQ(f.flow.dialog().button("BUTTON_YES")->sprite.frame, 1);
+    ASSERT_EQ(f.flow.dialog().button("BUTTON_NO")->sprite.frame, 0);
+}
+
 TEST(pointer_hot_tracks_clickable_hover) {
     Fixture f;
     f.pm.add("A", 1);
