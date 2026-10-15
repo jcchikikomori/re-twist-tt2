@@ -13,7 +13,11 @@
 //
 // Every rule here decides from the path alone, before any file is opened.
 
+#include <algorithm>
 #include <cstddef>
+#include <filesystem>
+#include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -170,5 +174,79 @@ struct AssetManifest {
         return true;
     }
 };
+
+// Hashes one file; scan_install and verify_files take it as a parameter so
+// tests can count which files get opened.
+using HashFile = std::function<std::optional<Sha256::Digest>(const std::filesystem::path&)>;
+
+inline std::vector<std::string> default_import_roots() { return {std::begin(IMPORT_ROOTS), std::end(IMPORT_ROOTS)}; }
+
+struct InstallScan {
+    enum class Status { Ok, NotAnInstall, Unreadable };
+    Status status = Status::Ok;
+    std::string detail;   // Unreadable: the file that failed
+    AssetManifest manifest;
+};
+
+// Builds a manifest from an install: every file under `roots`, sorted by
+// path. Excluded names are skipped before `hash` is ever called on them,
+// symlinks are not followed, and a missing root folder is skipped like the
+// script does. The folder must contain INSTALL_PROBE.
+inline InstallScan scan_install(const std::filesystem::path& install, const HashFile& hash = sha256_file,
+                                const std::vector<std::string>& roots = default_import_roots()) {
+    namespace fs = std::filesystem;
+    InstallScan scan;
+    std::error_code ec;
+    if (!fs::is_regular_file(install / INSTALL_PROBE, ec)) {
+        scan.status = InstallScan::Status::NotAnInstall;
+        return scan;
+    }
+    std::vector<std::string> paths;
+    for (const std::string& root : roots) {
+        if (!fs::is_directory(install / root, ec)) continue;
+        fs::recursive_directory_iterator it(install / root, fs::directory_options::skip_permission_denied, ec), end;
+        for (; !ec && it != end; it.increment(ec)) {
+            if (it->is_symlink(ec) || !it->is_regular_file(ec)) continue;
+            const std::string rel = it->path().lexically_relative(install).generic_u8string();
+            if (!is_safe_relative(rel) || !under_import_root(rel) || is_excluded(rel)) continue;
+            paths.push_back(rel);
+        }
+        if (ec) {
+            scan.status = InstallScan::Status::Unreadable;
+            scan.detail = root;
+            return scan;
+        }
+    }
+    std::sort(paths.begin(), paths.end());
+    for (const std::string& rel : paths) {
+        const std::optional<Sha256::Digest> d = hash(install / fs::u8path(rel));
+        if (!d) {
+            scan.status = InstallScan::Status::Unreadable;
+            scan.detail = rel;
+            return scan;
+        }
+        scan.manifest.entries.push_back({rel, *d});
+    }
+    return scan;
+}
+
+struct FileProblem {
+    enum class Kind { Missing, Mismatch };
+    Kind kind;
+    std::string path;
+};
+
+// Checks `dir` against a manifest; an empty result means every file is
+// present with the right hash. Files the manifest doesn't list are ignored.
+inline std::vector<FileProblem> verify_files(const std::filesystem::path& dir, const AssetManifest& m,
+                                             const HashFile& hash = sha256_file) {
+    std::vector<FileProblem> problems;
+    for (const AssetManifest::Entry& e : m.entries) {
+        const std::optional<Sha256::Digest> d = hash(dir / std::filesystem::u8path(e.path));
+        if (!d) problems.push_back({FileProblem::Kind::Missing, e.path});
+        else if (*d != e.sha256) problems.push_back({FileProblem::Kind::Mismatch, e.path});
+    }
+    return problems;
+}
 
 }  // namespace tt2

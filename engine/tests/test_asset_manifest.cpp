@@ -1,6 +1,10 @@
 // The original-asset manifest: format, path rules and exclusions.
 #include "test_harness.hpp"
 
+#include <filesystem>
+#include <fstream>
+#include <random>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -19,6 +23,41 @@ AssetManifest sample() {
     m.entries.push_back({"music/music_menu.ogg", sha256("")});
     m.entries.push_back({"images/gamescene/tt_gameover.PNG", sha256("png-1")});
     return m;
+}
+
+namespace fs = std::filesystem;
+
+fs::path temp_dir(const char* tag) {
+    std::random_device rd;
+    const auto p = fs::temp_directory_path() / ("tt2_manifest_test_" + std::string(tag) + "_" + std::to_string(rd()));
+    fs::remove_all(p);
+    fs::create_directories(p);
+    return p;
+}
+
+void put(const fs::path& file, const std::string& bytes) {
+    fs::create_directories(file.parent_path());
+    std::ofstream out(file, std::ios::binary);
+    out << bytes;
+}
+
+// A fake install made of synthetic bytes, plus files that must never be
+// opened: DRM / licensing files at the root and inside images/gui.
+fs::path fake_install(const char* tag) {
+    const fs::path root = temp_dir(tag);
+    put(root / INSTALL_PROBE, "<resources/>");
+    put(root / "images/gui/button_ok.png", "png-1");
+    put(root / "images/gui/sub/deep.png", "png-2");
+    put(root / "images/gamescene/tt_gameover.PNG", "png-3");
+    put(root / "fonts/font_score.xml", "xml-1");
+    put(root / "sound/click.ogg", "ogg-1");
+    put(root / "texttwist2_RADRM.dll", "never");
+    put(root / "readme.nfo", "never");
+    put(root / "images/gui/texttwist2_RADRM.dll", "never");
+    put(root / "images/gui/x.nfo", "never");
+    put(root / "images/gamescene/Thumbs.db", "never");
+    put(root / "Text Twist 2.exe", "never");
+    return root;
 }
 
 // Parses `text` into a manifest pre-filled with a marker entry, and checks
@@ -155,4 +194,92 @@ TEST(parse_hex_digest_round_trips_to_hex) {
     ASSERT_TRUE(!parse_hex_digest("", d));
     ASSERT_TRUE(!parse_hex_digest(std::string(64, 'z'), d));
     ASSERT_TRUE(d == before);   // untouched on failure
+}
+
+TEST(scan_install_lists_the_files_under_the_roots_sorted) {
+    const fs::path root = fake_install("scan");
+    const InstallScan scan = scan_install(root);
+    ASSERT_TRUE(scan.status == InstallScan::Status::Ok);
+    std::vector<std::string> paths;
+    for (const auto& e : scan.manifest.entries) paths.push_back(e.path);
+    const std::vector<std::string> want = {"fonts/font_score.xml", "images/gamescene/tt_gameover.PNG",
+                                           "images/gui/button_ok.png", "images/gui/sub/deep.png", "sound/click.ogg"};
+    ASSERT_TRUE(paths == want);
+    ASSERT_TRUE(scan.manifest.entries[2].sha256 == sha256("png-1"));
+    ASSERT_TRUE(scan.manifest.entries[4].sha256 == sha256("ogg-1"));
+    AssetManifest back;   // what the tool prints parses again
+    ASSERT_TRUE(AssetManifest::parse(scan.manifest.serialize(), back));
+    ASSERT_TRUE(back == scan.manifest);
+    fs::remove_all(root);
+}
+
+TEST(scan_install_never_opens_excluded_files) {
+    const fs::path root = fake_install("excluded");
+    std::set<std::string> opened;
+    const HashFile counting = [&](const fs::path& p) {
+        opened.insert(p.lexically_relative(root).generic_string());
+        return sha256_file(p);
+    };
+    const InstallScan scan = scan_install(root, counting);
+    ASSERT_TRUE(scan.status == InstallScan::Status::Ok);
+    ASSERT_EQ(opened.size(), std::size_t{5});
+    for (const std::string& name : opened) {
+        ASSERT_TRUE(!is_excluded(name));
+        ASSERT_TRUE(name.find("RADRM") == std::string::npos);
+        ASSERT_TRUE(name.find(".nfo") == std::string::npos);
+    }
+    fs::remove_all(root);
+}
+
+TEST(scan_install_rejects_a_folder_without_the_probe) {
+    const fs::path root = fake_install("probe");
+    fs::remove(root / INSTALL_PROBE);
+    int calls = 0;
+    const InstallScan scan = scan_install(root, [&](const fs::path& p) {
+        ++calls;
+        return sha256_file(p);
+    });
+    ASSERT_TRUE(scan.status == InstallScan::Status::NotAnInstall);
+    ASSERT_TRUE(scan.manifest.entries.empty());
+    ASSERT_EQ(calls, 0);
+    ASSERT_TRUE(scan_install(root / "does-not-exist").status == InstallScan::Status::NotAnInstall);
+    fs::remove_all(root);
+}
+
+TEST(scan_install_with_no_roots_is_empty_and_skips_missing_roots) {
+    const fs::path root = fake_install("roots");
+    const InstallScan none = scan_install(root, sha256_file, {});
+    ASSERT_TRUE(none.status == InstallScan::Status::Ok);
+    ASSERT_TRUE(none.manifest.entries.empty());
+    const InstallScan missing = scan_install(root, sha256_file, {"music", "images/trophyscene"});
+    ASSERT_TRUE(missing.status == InstallScan::Status::Ok);   // the script skips them too
+    ASSERT_TRUE(missing.manifest.entries.empty());
+    fs::remove_all(root);
+}
+
+TEST(scan_install_reports_an_unreadable_file) {
+    const fs::path root = fake_install("unreadable");
+    const InstallScan scan = scan_install(root, [&](const fs::path& p) -> std::optional<Sha256::Digest> {
+        if (p.filename() == "click.ogg") return std::nullopt;
+        return sha256_file(p);
+    });
+    ASSERT_TRUE(scan.status == InstallScan::Status::Unreadable);
+    ASSERT_EQ(scan.detail, std::string("sound/click.ogg"));
+    fs::remove_all(root);
+}
+
+TEST(verify_files_reports_missing_and_mismatched_files) {
+    const fs::path root = fake_install("verify");
+    const AssetManifest m = scan_install(root).manifest;
+    ASSERT_TRUE(verify_files(root, m).empty());
+    put(root / "images/gui/button_ok.png", "png-X");   // same size, other bytes
+    fs::remove(root / "sound/click.ogg");
+    put(root / "images/gui/extra.png", "not listed");  // ignored
+    const auto problems = verify_files(root, m);
+    ASSERT_EQ(problems.size(), std::size_t{2});
+    ASSERT_TRUE(problems[0].kind == FileProblem::Kind::Mismatch);
+    ASSERT_EQ(problems[0].path, std::string("images/gui/button_ok.png"));
+    ASSERT_TRUE(problems[1].kind == FileProblem::Kind::Missing);
+    ASSERT_EQ(problems[1].path, std::string("sound/click.ogg"));
+    fs::remove_all(root);
 }

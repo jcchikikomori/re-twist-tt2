@@ -71,6 +71,10 @@ add_executable(tt2_tree tools/tree_cli.cpp)
 target_link_libraries(tt2_tree PRIVATE tt2_engine tt2_platform)
 set_target_properties(tt2_tree PROPERTIES OUTPUT_NAME tt2-tree)
 
+add_executable(tt2_assets tools/assets_cli.cpp)
+target_link_libraries(tt2_assets PRIVATE tt2_engine tt2_platform)
+set_target_properties(tt2_assets PROPERTIES OUTPUT_NAME tt2-assets)
+
 # ----------------------------------------------------------------------------
 # Desktop UI (SDL2). `tt2_ui_logic` is the header-only scene model used by
 # both the app and the tests; `tt2` is the playable binary.
