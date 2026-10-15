@@ -1499,7 +1499,8 @@ int main(int argc, char** argv) {
                                // '!' fullscreen switch, '^' Alt+Enter,
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND;
                                // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
-                               // '&' the main menu SETTINGS' IMPORT (re-import, deviation OP-7)
+                               // '&' the main menu SETTINGS' IMPORT (re-import, deviation OP-7),
+                               // '"' the main menu's CHANGE NAME, then '-' its REMOVE
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     std::vector<std::string> probe_files;   // --probe-media FILE (repeatable): decode, report, exit
     std::string renderer_flag;              // --renderer auto|vulkan|opengl|software: this run only
@@ -1795,6 +1796,9 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "warning: could not write %s\n", store.highscores_path().string().c_str());
     };
     pservices.seed_millis = [&] { return seed_ticks(); };   // timeGetTime()
+    pservices.wrap = [&assets](const std::string& text, int max_width) {
+        return wrap_text(assets.font("FONT_SETTINGSTEXT").font, text, max_width);
+    };
     ProfileFlow profile(players, pservices);
 
     bool running = true;
@@ -2266,7 +2270,20 @@ int main(int argc, char** argv) {
                 menu_dialog_press(c == '|' ? "BUTTON_YES" : "BUTTON_NO");
             }
         }
+        // --type with a player dialog up: '-' REMOVE, '|' Return, '~' Esc.
+        if (profile.open() && !auto_type.empty() && flow.current() == SceneId::Selection) {
+            auto_type_ms += dt;
+            if (auto_type_ms >= 300) {
+                auto_type_ms = 0;
+                const char c = auto_type.front();
+                auto_type.erase(0, 1);
+                if (c == '-') profile.press("BUTTON_REMOVE");
+                else if (c == '|') profile.key_return();
+                else if (c == '~') profile.key_escape();
+            }
+        }
         // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL;
+        // '"' CHANGE NAME (player select);
         // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter;
         // '=' IMPROVEMENTS, then '<' / '>' its display mode, '(' / ')' its resolution, '[' / ']' its filter,
         // '*' its upscaler, '{' its renderer, '|' OK (then OK on "Restart needed"), '~' CANCEL.
@@ -2277,7 +2294,8 @@ int main(int argc, char** argv) {
                 auto_type_ms = 0;
                 const char c = auto_type.front();
                 auto_type.erase(0, 1);
-                if (menu_improvements && (c == '<' || c == '>'))
+                if (c == '"' && !menu_improvements && !menu_settings && !menu_help) profile.open_player_select();
+                else if (menu_improvements && (c == '<' || c == '>'))
                     menu_improvements->press(c == '<' ? "BUTTON_WINDOW_PREV" : "BUTTON_WINDOW_NEXT");
                 else if (menu_improvements && (c == '(' || c == ')'))
                     menu_improvements->press(c == '(' ? "BUTTON_RESOLUTION_PREV" : "BUTTON_RESOLUTION_NEXT");

@@ -141,6 +141,9 @@ The five name buttons are created from the `namebutton` template
 player's button is highlighted and its y is remembered (+0x204).
 Remove asks `CTEXT_REMOVE_PLAYER_HEADER` / `CTEXT_REMOVE_PLAYER` first
 (yes/no dialog, INFERRED from the strings; the confirm path is `0x40aef0`).
+That `DIALOG_YESNO` word-wraps its `MESSAGE` (`width="390"`, `wrapstyle="wordwrap"`) and moves
+YES / NO below it (`0x40b470`, `game-scene.md`); the port builds it with the same `build_yes_no()`
+as the in-game confirms, so the question takes two lines above the buttons.
 
 ### 3.1.1 Buttons (`GF2::Button`, CONFIRMED loader)
 

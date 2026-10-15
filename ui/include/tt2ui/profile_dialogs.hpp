@@ -95,6 +95,75 @@ inline MenuButton make_dialog_button(const char* name, const char* image, float 
     return b;
 }
 
+inline int text_line_count(const std::string& s) {
+    int n = 1;
+    for (char c : s) if (c == '\n') ++n;
+    return n;
+}
+
+// Where a label's first line goes. `anchorpoint="center"` centres the
+// whole block of lines on (x, y), so the first line moves up by half the
+// extra lines; every other anchor starts the block at y. INFERRED from
+// DIALOG_TUTORIAL: its 4-line BODY_TEXT is centred at y 155 with line
+// height 32, and a block starting there would put line 4 at 251, below
+// the top of its buttons (235). Centred, the lines sit at 107..203.
+inline float first_line_y(const TextLabel& l, int lines, int line_height) {
+    if (l.anchor != Anchor::Center || lines <= 1) return l.y;
+    return l.y - static_cast<float>((lines - 1) * line_height) / 2.0f;
+}
+
+// DIALOG_YESNO: 400x180 minimum. 0x40b470 moves both buttons down by
+// the height of the MESSAGE label (lineheight 30 per line) and grows the
+// dialog by the same amount, with no margin (OBSERVED in the decompiled
+// 0x40b470: no constant is added). So in the original the 50 px button
+// row ends on the dialog's bottom edge, across the frame's bottom band.
+constexpr int YESNO_MIN_W = 400;
+constexpr int YESNO_MIN_H = 180;
+constexpr int YESNO_LINE_H = 30;
+constexpr int YESNO_BUTTON_Y = 100;
+constexpr int YESNO_BUTTON_H = 50;
+// Deviation (port improvement): padding so nothing sits on the frame.
+// The frame's window onto the centre starts 22 px in from each side
+// (dialogdefault/left.png and right.png turn transparent there) and ends
+// 35 px above the bottom edge (bottom.png). The original MESSAGE is
+// width="390" (game-scene.md §6), which runs over both side borders; the
+// port keeps it 12 px inside the window. The bottom padding keeps the
+// button pill (rows 6..43 of its 50 px frame) 6 px above the window's
+// bottom edge: 50 + 34 - 35 = 49 >= 43 + 6.
+constexpr int YESNO_TEXT_INSET = 22 + 12;
+constexpr int YESNO_BOTTOM_PAD = 34;
+constexpr int YESNO_MESSAGE_W = YESNO_MIN_W - 2 * YESNO_TEXT_INSET;   // 332 (original 390)
+
+// Breaks `text` into "\n"-separated lines no wider than `max_width`;
+// main.cpp backs it with wrap_text() and the loaded FONT_SETTINGSTEXT.
+using LineBreaker = std::function<std::string(const std::string& text, int max_width)>;
+
+// Without a breaker only the message's own "\n" break lines. `width`
+// widens the dialog for port-only dialogs with longer text (the original
+// ones all use 400); everything stays centred.
+inline Dialog build_yes_no(const char* header, const std::string& text, bool single_ok = false,
+                           const LineBreaker& wrap = {}, int width = YESNO_MIN_W) {
+    Dialog d;
+    d.w = std::max(YESNO_MIN_W, width);
+    const float cx = static_cast<float>(d.w) / 2.0f;
+    const int msg_w = d.w - 2 * YESNO_TEXT_INSET;
+    const std::string message = wrap ? wrap(text, msg_w) : text;
+    const int msg_h = text_line_count(message) * YESNO_LINE_H;
+    const int button_y = YESNO_BUTTON_Y + msg_h;
+    d.h = std::max(YESNO_MIN_H, button_y + YESNO_BUTTON_H + YESNO_BOTTOM_PAD);
+    d.labels.push_back(TextLabel{"HEADER", "FONT_DIALOG_HEADERS2", header, cx, 13, TextAlign::Center, Anchor::Top, -1});
+    TextLabel msg{"MESSAGE", "FONT_SETTINGSTEXT", message, cx, 87, TextAlign::Center, Anchor::Top, -1, msg_w};
+    msg.line_height = YESNO_LINE_H;
+    d.labels.push_back(msg);
+    if (single_ok) {
+        d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", cx, static_cast<float>(button_y), Anchor::Top));
+    } else {
+        d.buttons.push_back(make_dialog_button("BUTTON_YES", "BUTTON_YES", cx - 10, static_cast<float>(button_y), Anchor::TopRight));
+        d.buttons.push_back(make_dialog_button("BUTTON_NO", "BUTTON_NO", cx + 10, static_cast<float>(button_y), Anchor::TopLeft));
+    }
+    return d;
+}
+
 // DEFAULT_PAINTER frame fill. The nine border PNGs are opaque only in a
 // thin outer band and fade to transparent towards the inside (an inner
 // shadow that is meant to fall on the centre image), so the centre must
@@ -164,6 +233,7 @@ public:
         std::function<void(SoundId)> play_sound;
         std::function<void()> on_change;
         std::function<std::uint32_t()> seed_millis = [] { return 0u; };   // timeGetTime for a new player
+        LineBreaker wrap;   // word-wraps MESSAGE (wrapstyle="wordwrap"); empty: "\n" only
     };
 
     ProfileFlow(tt2::PlayerManager& pm, Services s) : pm_(pm), services_(std::move(s)) {}
@@ -400,14 +470,10 @@ private:
 
     // ---- DIALOG_YESNO 400x180 -----------------------------------------
     void build_confirm(const char* header, const char* message) {
-        Dialog d;
+        // DIALOG_YESNO wraps MESSAGE (width 390, wordwrap) and moves the
+        // buttons below it (0x40b470), the same as the in-game confirms.
+        Dialog d = build_yes_no(header, message, false, services_.wrap);
         d.kind = DialogKind::Confirm;
-        d.w = 400;
-        d.h = 180;
-        d.labels.push_back(TextLabel{"HEADER", "FONT_DIALOG_HEADERS2", header, 200, 13, TextAlign::Center, Anchor::Top, -1});
-        d.labels.push_back(TextLabel{"MESSAGE", "FONT_SETTINGSTEXT", message, 200, 87, TextAlign::Center, Anchor::Top, -1, 390});
-        d.buttons.push_back(button("BUTTON_YES", "BUTTON_YES", 190, 100, Anchor::TopRight));
-        d.buttons.push_back(button("BUTTON_NO", "BUTTON_NO", 210, 100, Anchor::TopLeft));
         dialog_ = std::move(d);
     }
     void confirm_press(const std::string& name) {
@@ -426,13 +492,8 @@ private:
 
     // ---- message (DIALOG_YESNO frame with a single OK) ------------------
     void build_message(const char* header, const char* message, DialogKind back) {
-        Dialog d;
+        Dialog d = build_yes_no(header, message, true, services_.wrap);
         d.kind = DialogKind::Message;
-        d.w = 400;
-        d.h = 180;
-        d.labels.push_back(TextLabel{"HEADER", "FONT_DIALOG_HEADERS2", header, 200, 13, TextAlign::Center, Anchor::Top, -1});
-        d.labels.push_back(TextLabel{"MESSAGE", "FONT_SETTINGSTEXT", message, 200, 87, TextAlign::Center, Anchor::Top, -1, 390});
-        d.buttons.push_back(button("BUTTON_OK", "BUTTON_OK", 200, 100, Anchor::Top));
         message_back_ = back;
         dialog_ = std::move(d);
     }

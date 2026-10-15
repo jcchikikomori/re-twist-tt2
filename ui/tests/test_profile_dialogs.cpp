@@ -22,7 +22,8 @@ struct Fixture {
     Fixture()
         : flow(pm, ProfileFlow::Services{[this](SoundId s) { sounds.push_back(s); },
                                          [this] { ++changes; },
-                                         [] { return 0x1234u; }}) {}
+                                         [] { return 0x1234u; },
+                                         {}}) {}
 
     // Screen position of a dialog button's centre.
     std::pair<float, float> centre(const char* name) const {
@@ -380,6 +381,57 @@ TEST(confirm_dialog_buttons_show_their_hover_frame) {
     f.flow.mouse_move(x, y);
     ASSERT_EQ(f.flow.dialog().button("BUTTON_YES")->sprite.frame, 1);
     ASSERT_EQ(f.flow.dialog().button("BUTTON_NO")->sprite.frame, 0);
+}
+
+namespace {
+// A fake FONT_SETTINGSTEXT: every character is 10 px wide; greedy word wrap.
+std::string wrap_10px(const std::string& text, int max_width) {
+    const std::size_t max_chars = static_cast<std::size_t>(max_width / 10);
+    std::string out, line, word;
+    auto flush_word = [&] {
+        if (word.empty()) return;
+        if (!line.empty() && line.size() + 1 + word.size() > max_chars) { out += line + "\n"; line.clear(); }
+        line += (line.empty() ? "" : " ") + word;
+        word.clear();
+    };
+    for (char c : text) { if (c == ' ') flush_word(); else word += c; }
+    flush_word();
+    return out + line;
+}
+}  // namespace
+
+// DIALOG_YESNO's MESSAGE is width 390, wordwrap: the remove-player
+// question wraps inside the frame and pushes YES / NO below it (0x40b470),
+// instead of one line wider than the dialog running over the buttons.
+TEST(remove_player_question_wraps_above_its_buttons) {
+    tt2::PlayerManager pm;
+    pm.add("A", 1);
+    ProfileFlow::Services s;
+    s.wrap = wrap_10px;
+    ProfileFlow flow(pm, s);
+    flow.open_player_select();
+    flow.press("BUTTON_REMOVE");
+    const Dialog& d = flow.dialog();
+    ASSERT_TRUE(d.kind == DialogKind::Confirm);
+    const TextLabel& msg = *d.label("MESSAGE");
+    ASSERT_EQ(msg.text, std::string("Are you sure you want to remove\nthe selected player?"));
+    ASSERT_EQ(msg.max_width, YESNO_MESSAGE_W);                         // inside the frame's window
+    const float text_bottom = msg.y + static_cast<float>(text_line_count(msg.text) * YESNO_LINE_H);
+    ASSERT_TRUE(d.button("BUTTON_YES")->sprite.y >= text_bottom);       // buttons under the text
+    ASSERT_TRUE(d.button("BUTTON_NO")->sprite.y >= text_bottom);
+    ASSERT_TRUE(d.button("BUTTON_YES")->sprite.y + YESNO_BUTTON_H <= static_cast<float>(d.h));
+    ASSERT_TRUE(d.h > YESNO_MIN_H);                                      // grew for the second line
+}
+
+TEST(profile_message_without_a_wrapper_keeps_its_own_lines) {
+    // No breaker (headless tests): only "\n" breaks, the dialog stays 400 wide.
+    Fixture f;
+    f.pm.add("A", 1);
+    f.flow.open_player_select();
+    f.click("BUTTON_REMOVE");
+    ASSERT_EQ(text_line_count(f.flow.dialog().label("MESSAGE")->text), 1);
+    ASSERT_EQ(f.flow.dialog().w, YESNO_MIN_W);
+    ASSERT_TRUE(f.flow.dialog().button("BUTTON_YES")->sprite.y == static_cast<float>(YESNO_BUTTON_Y + YESNO_LINE_H));
 }
 
 TEST(pointer_hot_tracks_clickable_hover) {

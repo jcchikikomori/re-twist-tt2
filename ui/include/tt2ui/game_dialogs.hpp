@@ -61,23 +61,6 @@ enum class GameDialog {
     PassRound, Tutorial
 };
 
-inline int text_line_count(const std::string& s) {
-    int n = 1;
-    for (char c : s) if (c == '\n') ++n;
-    return n;
-}
-
-// Where a label's first line goes. `anchorpoint="center"` centres the
-// whole block of lines on (x, y), so the first line moves up by half the
-// extra lines; every other anchor starts the block at y. INFERRED from
-// DIALOG_TUTORIAL: its 4-line BODY_TEXT is centred at y 155 with line
-// height 32, and a block starting there would put line 4 at 251, below
-// the top of its buttons (235). Centred, the lines sit at 107..203.
-inline float first_line_y(const TextLabel& l, int lines, int line_height) {
-    if (l.anchor != Anchor::Center || lines <= 1) return l.y;
-    return l.y - static_cast<float>((lines - 1) * line_height) / 2.0f;
-}
-
 // DIALOG_MENU 322x390 (0x407f40 wires the four buttons).
 inline Dialog build_pause_menu() {
     Dialog d;
@@ -90,58 +73,6 @@ inline Dialog build_pause_menu() {
     d.buttons.push_back(make_dialog_button("BUTTON_SETTINGS", "BUTTON_PAUSE_SETTINGS", 163, 155, Anchor::Top, 181, 208));
     d.buttons.push_back(make_dialog_button("BUTTON_STOP", "BUTTON_PAUSE_END", 163, 224, Anchor::Top, 181, 208));
     d.buttons.push_back(make_dialog_button("BUTTON_RESUME", "BUTTON_PAUSE_RESUME", 163, 290, Anchor::Top, 181, 208));
-    return d;
-}
-
-// DIALOG_YESNO: 400x180 minimum. 0x40b470 moves both buttons down by
-// the height of the MESSAGE label (lineheight 30 per line) and grows the
-// dialog by the same amount, with no margin (OBSERVED in the decompiled
-// 0x40b470: no constant is added). So in the original the 50 px button
-// row ends on the dialog's bottom edge, across the frame's bottom band.
-constexpr int YESNO_MIN_W = 400;
-constexpr int YESNO_MIN_H = 180;
-constexpr int YESNO_LINE_H = 30;
-constexpr int YESNO_BUTTON_Y = 100;
-constexpr int YESNO_BUTTON_H = 50;
-// Deviation (port improvement): padding so nothing sits on the frame.
-// The frame's window onto the centre starts 22 px in from each side
-// (dialogdefault/left.png and right.png turn transparent there) and ends
-// 35 px above the bottom edge (bottom.png). The original MESSAGE is
-// width="390" (game-scene.md §6), which runs over both side borders; the
-// port keeps it 12 px inside the window. The bottom padding keeps the
-// button pill (rows 6..43 of its 50 px frame) 6 px above the window's
-// bottom edge: 50 + 34 - 35 = 49 >= 43 + 6.
-constexpr int YESNO_TEXT_INSET = 22 + 12;
-constexpr int YESNO_BOTTOM_PAD = 34;
-constexpr int YESNO_MESSAGE_W = YESNO_MIN_W - 2 * YESNO_TEXT_INSET;   // 332 (original 390)
-
-// Breaks `text` into "\n"-separated lines no wider than `max_width`;
-// main.cpp backs it with wrap_text() and the loaded FONT_SETTINGSTEXT.
-using LineBreaker = std::function<std::string(const std::string& text, int max_width)>;
-
-// Without a breaker only the message's own "\n" break lines. `width`
-// widens the dialog for port-only dialogs with longer text (the original
-// ones all use 400); everything stays centred.
-inline Dialog build_yes_no(const char* header, const std::string& text, bool single_ok = false,
-                           const LineBreaker& wrap = {}, int width = YESNO_MIN_W) {
-    Dialog d;
-    d.w = std::max(YESNO_MIN_W, width);
-    const float cx = static_cast<float>(d.w) / 2.0f;
-    const int msg_w = d.w - 2 * YESNO_TEXT_INSET;
-    const std::string message = wrap ? wrap(text, msg_w) : text;
-    const int msg_h = text_line_count(message) * YESNO_LINE_H;
-    const int button_y = YESNO_BUTTON_Y + msg_h;
-    d.h = std::max(YESNO_MIN_H, button_y + YESNO_BUTTON_H + YESNO_BOTTOM_PAD);
-    d.labels.push_back(TextLabel{"HEADER", "FONT_DIALOG_HEADERS2", header, cx, 13, TextAlign::Center, Anchor::Top, -1});
-    TextLabel msg{"MESSAGE", "FONT_SETTINGSTEXT", message, cx, 87, TextAlign::Center, Anchor::Top, -1, msg_w};
-    msg.line_height = YESNO_LINE_H;
-    d.labels.push_back(msg);
-    if (single_ok) {
-        d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", cx, static_cast<float>(button_y), Anchor::Top));
-    } else {
-        d.buttons.push_back(make_dialog_button("BUTTON_YES", "BUTTON_YES", cx - 10, static_cast<float>(button_y), Anchor::TopRight));
-        d.buttons.push_back(make_dialog_button("BUTTON_NO", "BUTTON_NO", cx + 10, static_cast<float>(button_y), Anchor::TopLeft));
-    }
     return d;
 }
 
