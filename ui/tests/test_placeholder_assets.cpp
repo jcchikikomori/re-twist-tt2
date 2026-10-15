@@ -77,7 +77,7 @@ std::vector<std::string> missing_2x(const fs::path& dir) {
 // The font ids main.cpp loads (kFontFiles).
 const char* const kFonts[] = {
     "font_uibar", "font_settingstext", "font_dialog_headers", "font_dialog_headers2", "font_uibar_labels",
-    "font_uibar_numbers", "font_nextround02", "font_tutorial01", "font_highscore_text",
+    "font_uibar_numbers", "font_nextround02", "font_tutorial01", "font_highscore_text", "arial12",
 };
 
 }  // namespace
@@ -226,7 +226,7 @@ TEST(placeholder_2x_is_exactly_twice_its_1x_twin) {
         ASSERT_TRUE(twice(png_size(kDir / rel), png_size(e.path())));
         ++checked;
     }
-    ASSERT_EQ(checked, 51);
+    ASSERT_EQ(checked, 52);   // 51 + arial12 (FONT_TOOLTIP)
 }
 
 TEST(placeholder_2x_glyphs_fit_the_doubled_1x_cells) {

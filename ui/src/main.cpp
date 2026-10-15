@@ -21,6 +21,8 @@
 //                      window opens; for smoke tests and frame dumps
 //   --renderer NAME    auto, vulkan, opengl or software: the first renderer to
 //                      try, for this run only (IMPROVEMENTS saves it)
+//   --hover X,Y        keep the cursor at canvas point (X, Y) every frame, so
+//                      frame dumps show hover frames and tooltips (smoke tests)
 
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
@@ -62,6 +64,7 @@
 #include "tt2ui/render_options.hpp"
 #include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/side_fill.hpp"
+#include "tt2ui/tooltip.hpp"
 #include "tt2ui/upscale.hpp"
 #include "tt2ui/profile_dialogs.hpp"
 #include "audio.hpp"
@@ -209,6 +212,7 @@ const std::map<std::string, FontFile> kFontFiles = {
     {"FONT_NEXTROUND02", {"fonts/font_nextround02.xml", 4}},
     {"FONT_TUTORIAL", {"fonts/font_tutorial01.xml", 3}},
     {"FONT_FONT_HIGHSCORE_TEXT", {"fonts/font_highscore_text.xml", 2}},
+    {"FONT_TOOLTIP", {"fonts/arial12.xml", 2}},
 };
 
 const std::map<SoundId, std::string> kSoundFiles = {
@@ -651,6 +655,7 @@ public:
                 const std::string path = font_dir + "/" + layer.image;
                 SDL_Surface* s = file_exists(path) ? IMG_Load(path.c_str()) : nullptr;
                 if (!s) std::fprintf(stderr, "warning: font layer %s missing\n", path.c_str());
+                if (s && layer.mask) s = tint_mask(s, layer.color);
                 f.layers.push_back(texture_of(s, f.density));
                 sources.push_back(s);
             }
@@ -728,6 +733,19 @@ private:
         if (hires) SDL_DestroySurface(hires);
         return images_.emplace(key, img).first->second;
     }
+    // A `mask=` font layer (arial12): grey coverage -> the layer colour with
+    // that coverage as alpha (bitmap_font.hpp apply_mask_color). Takes `s`.
+    static SDL_Surface* tint_mask(SDL_Surface* s, std::uint32_t color) {
+        SDL_Surface* rgba = SDL_ConvertSurface(s, SDL_PIXELFORMAT_RGBA32);
+        SDL_DestroySurface(s);
+        if (!rgba || !SDL_LockSurface(rgba)) return rgba;
+        for (int y = 0; y < rgba->h; ++y)
+            apply_mask_color(static_cast<std::uint8_t*>(rgba->pixels) + static_cast<std::size_t>(y) * rgba->pitch,
+                             static_cast<std::size_t>(rgba->w), color);
+        SDL_UnlockSurface(rgba);
+        return rgba;
+    }
+
     SDL_Texture* texture_of(SDL_Surface* s, float density = 1.0f) {
         if (!s) return nullptr;
         SDL_Texture* t = upload(renderer_, s);
@@ -1148,6 +1166,42 @@ void draw_stretched(SDL_Renderer* ren, Assets& assets, const char* id, int w, in
     render_copy(ren, img.texture, nullptr, &dst);
 }
 
+// DEFAULT_TOOLTIP (tooltip.hpp): FONT_TOOLTIP text wrapped at maxwidth,
+// padding 3 inside a #FFFFE1 box with a black border, all at alpha 220,
+// placed by tooltip_place() from where the cursor was when it appeared.
+void draw_tooltip(SDL_Renderer* ren, Assets& assets, const TooltipTracker& tip) {
+    if (!tip.visible()) return;
+    Font& f = assets.font("FONT_TOOLTIP");
+    const std::string text = wrap_text(f.font, tip.text(), TOOLTIP_MAX_W - 2 * TOOLTIP_PADDING);
+    std::vector<std::string> lines;
+    std::string cur;
+    for (char c : text) { if (c == '\n') { lines.push_back(cur); cur.clear(); } else cur.push_back(c); }
+    if (!cur.empty() || lines.empty()) lines.push_back(cur);
+    const int line_h = f.font.line_height > 0 ? f.font.line_height : f.font.glyph_height();
+    int text_w = 0;
+    for (const auto& l : lines) text_w = std::max(text_w, f.font.measure(l));
+    const int w = text_w + 2 * TOOLTIP_PADDING;
+    const int h = static_cast<int>(lines.size()) * line_h + 2 * TOOLTIP_PADDING;
+    const TooltipPlace at = tooltip_place(tip.anchor_x(), tip.anchor_y(), static_cast<float>(w),
+                                          static_cast<float>(h), SCREEN_W, SCREEN_H);
+    const SDL_Rect box{static_cast<int>(at.x), static_cast<int>(at.y), w, h};
+    const Uint8 a = static_cast<Uint8>(TOOLTIP_ALPHA);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ren, (TOOLTIP_BACKGROUND >> 16) & 0xFF, (TOOLTIP_BACKGROUND >> 8) & 0xFF,
+                           TOOLTIP_BACKGROUND & 0xFF, a);
+    render_fill(ren, &box);
+    SDL_SetRenderDrawColor(ren, (TOOLTIP_BORDER >> 16) & 0xFF, (TOOLTIP_BORDER >> 8) & 0xFF, TOOLTIP_BORDER & 0xFF, a);
+    render_outline(ren, &box);
+    for (SDL_Texture* t : f.layers) if (t) SDL_SetTextureAlphaMod(t, a);
+    float y = static_cast<float>(box.y + TOOLTIP_PADDING);
+    for (const auto& l : lines) {
+        draw_text(ren, assets, "FONT_TOOLTIP", l, static_cast<float>(box.x + TOOLTIP_PADDING), y, TextAlign::Left,
+                  Anchor::Top, -1);
+        y += static_cast<float>(line_h);
+    }
+    for (SDL_Texture* t : f.layers) if (t) SDL_SetTextureAlphaMod(t, 255);
+}
+
 void draw_text_lines(SDL_Renderer* ren, Assets& assets, const std::string& font_id, const std::string& text,
                      float cx, float cy, int line_h) {
     std::vector<std::string> lines;
@@ -1510,6 +1564,8 @@ int main(int argc, char** argv) {
     std::string data_dir = TT2_DATA_DIR;
     bool data_dir_given = false;
     std::string auto_play;     // --play untimed|timed: start a game as soon as the menu is up
+    bool hover_set = false;    // --hover X,Y: the cursor parked on one point (smoke tests)
+    float hover_x = 0, hover_y = 0;
     std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
                                // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP, '>' NEXT ROUND,
                                // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages,
@@ -1541,6 +1597,8 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--data-dir") && i + 1 < argc) { data_dir = argv[++i]; data_dir_given = true; }
         else if (!std::strcmp(argv[i], "--play") && i + 1 < argc) auto_play = argv[++i];
         else if (!std::strcmp(argv[i], "--type") && i + 1 < argc) auto_type = argv[++i];
+        else if (!std::strcmp(argv[i], "--hover") && i + 1 < argc)
+            hover_set = std::sscanf(argv[++i], "%f,%f", &hover_x, &hover_y) == 2;
         else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc) debug_seed = std::atol(argv[++i]);
         else if (!std::strcmp(argv[i], "--probe-media") && i + 1 < argc) probe_files.push_back(argv[++i]);
         else if (!std::strcmp(argv[i], "--renderer") && i + 1 < argc) renderer_flag = argv[++i];
@@ -2110,12 +2168,80 @@ int main(int argc, char** argv) {
     bool text_input_on = false;
     int auto_type_ms = 0;
     SceneId last_scene = flow.current();
+    // Tooltips: the cursor in canvas units, and the one tooltip on screen.
+    float mouse_x = 0, mouse_y = 0;
+    TooltipTracker tooltip;
+    // 0x474ae0: the widget with a tooltip under the cursor, on the surface
+    // that takes the input now. A dialog hides what is under it; the top
+    // hovered button decides, with or without a tooltip.
+    auto tooltip_target = [&](std::string& key, std::string& text) {
+        key.clear();
+        text.clear();
+        auto pick = [&](const std::vector<MenuButton>& buttons, TooltipSurface surface, const char* tag) {
+            for (auto it = buttons.rbegin(); it != buttons.rend(); ++it) {
+                if (!it->hover || !it->sprite.visible) continue;
+                text = tooltip_text(surface, it->sprite.name);
+                if (!text.empty()) key = std::string(tag) + "/" + it->sprite.name;
+                return;
+            }
+        };
+        auto pick_settings = [&](const SettingsDialog& sd, const char* tag) {
+            if (sd.credits()) return;
+            for (const auto& sl : sd.sliders())
+                if (sl.hover) {
+                    text = tooltip_text(TooltipSurface::Settings, sl.name);
+                    key = std::string(tag) + "/" + sl.name;
+                    return;
+                }
+            pick(sd.dialog().buttons, TooltipSurface::Settings, tag);
+        };
+        if (import_prompt) return;
+        if (profile.open()) {
+            if (profile.dialog().kind == DialogKind::PlayerSelect)
+                pick(profile.dialog().buttons, TooltipSurface::PlayerSelect, "players");
+            return;
+        }
+        if (game) {
+            if (const SettingsDialog* sd = game->settings_dialog()) { pick_settings(*sd, "game-settings"); return; }
+            switch (game->dialog_kind()) {
+                case GameDialog::None: pick(game->buttons(), TooltipSurface::Game, "game"); break;
+                case GameDialog::PauseMenu: pick(game->dialog().buttons, TooltipSurface::PauseMenu, "pause"); break;
+                case GameDialog::Tutorial:
+                case GameDialog::NextRound:
+                case GameDialog::PassRound:
+                case GameDialog::EndGame:
+                case GameDialog::Congrats: pick(game->dialog().buttons, TooltipSurface::RoundDialog, "round"); break;
+                default: break;
+            }
+            return;
+        }
+        if (menu_dialog_open || menu_improvements || menu_help) return;
+        if (menu_settings) { pick_settings(*menu_settings, "settings"); return; }
+        if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
+            pick(flow.selection()->buttons(), TooltipSurface::Selection, "menu");
+    };
     while (running) {
+        // --hover: a motion event at that canvas point every frame, handed
+        // straight to the loop below (the dummy driver drops pushed motion).
+        bool hover_pending = hover_set;
         SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            // Mouse positions in the 800x600 canvas, whatever the window size
-            // (SDL2's logical size did this on its own).
-            SDL_ConvertEventToRenderCoordinates(ren, &e);
+        while (hover_pending || SDL_PollEvent(&e)) {
+            if (hover_pending) {
+                e = SDL_Event{};
+                e.type = SDL_EVENT_MOUSE_MOTION;
+                e.motion.windowID = SDL_GetWindowID(win);
+                e.motion.x = hover_x;
+                e.motion.y = hover_y;
+                hover_pending = false;
+            } else {
+                // Mouse positions in the 800x600 canvas, whatever the window size
+                // (SDL2's logical size did this on its own).
+                SDL_ConvertEventToRenderCoordinates(ren, &e);
+            }
+            if (e.type == SDL_EVENT_MOUSE_MOTION) {
+                mouse_x = e.motion.x;
+                mouse_y = e.motion.y;
+            }
             if (e.type == SDL_EVENT_QUIT) {
                 running = false;
                 if (game) game->leave();   // 0x427b20: closing the window saves a running round
@@ -2520,6 +2646,12 @@ int main(int argc, char** argv) {
         });
         const int import_id = import_prompt ? 1 + static_cast<int>(import_prompt->state()) : 0;
         draw_dialog_layer(ren, layer_px, import_layer, import_id, dt, [&] { draw_dialog(ren, assets, import_prompt->dialog()); });
+        {
+            std::string tip_key, tip_text;
+            tooltip_target(tip_key, tip_text);
+            tooltip.update(tip_key, tip_text, mouse_x, mouse_y, dt);
+            draw_tooltip(ren, assets, tooltip);
+        }
         float black = flow.black_alpha();
         if (game_fade_out > 0) black = std::max(black, 1.0f - static_cast<float>(game_fade_out) / GAME_FADE_HALF_MS);
         if (game_fade_in > 0) black = std::max(black, static_cast<float>(game_fade_in) / GAME_FADE_HALF_MS);

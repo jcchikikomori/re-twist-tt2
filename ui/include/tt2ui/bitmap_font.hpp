@@ -25,8 +25,13 @@
 //
 // Layers are drawn last-to-first (shadow, then stroke, then face), each
 // shifted by -padding so all three line up on the pen position.
+//
+// A layer may name a `mask` instead of an `image` (fonts/arial12.xml,
+// FONT_TOOLTIP): a grey sheet whose brightness is the coverage, drawn in
+// the layer's `color`. apply_mask_color() turns it into a coloured sheet.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <map>
@@ -38,7 +43,23 @@ namespace tt2ui {
 struct FontLayer {
     std::string image;   // file name relative to the font XML's directory
     int padding = 0;
+    bool mask = false;          // `mask=`: brightness is coverage, drawn in `color`
+    std::uint32_t color = 0;    // 0xRRGGBB, from color="#RRGGBB"
 };
+
+// A mask layer, in place: every pixel takes the layer colour, and its
+// brightness (the red channel of the grey sheet) becomes its alpha.
+// `rgba` holds `count` pixels as R, G, B, A bytes.
+inline void apply_mask_color(std::uint8_t* rgba, std::size_t count, std::uint32_t color) {
+    for (std::size_t i = 0; i < count; ++i) {
+        std::uint8_t* p = rgba + i * 4;
+        const std::uint8_t coverage = p[0];
+        p[0] = static_cast<std::uint8_t>((color >> 16) & 0xFF);
+        p[1] = static_cast<std::uint8_t>((color >> 8) & 0xFF);
+        p[2] = static_cast<std::uint8_t>(color & 0xFF);
+        p[3] = static_cast<std::uint8_t>(coverage * p[3] / 255);
+    }
+}
 
 struct Glyph {
     int bx = 0, by = 0;      // pen offset
@@ -177,7 +198,14 @@ public:
             } else if (starts_with(tag, "Layer ")) {
                 FontLayer l;
                 l.image = attr(tag, "image");
+                if (l.image.empty()) {
+                    l.image = attr(tag, "mask");
+                    l.mask = !l.image.empty();
+                }
                 l.padding = attr_int(tag, "padding", 0);
+                const std::string color = attr(tag, "color");
+                if (color.size() == 7 && color[0] == '#')
+                    l.color = static_cast<std::uint32_t>(std::strtoul(color.c_str() + 1, nullptr, 16));
                 f.layers.push_back(l);
             } else if (starts_with(tag, "Char ")) {
                 const std::string c = attr(tag, "c");

@@ -74,6 +74,9 @@ FONTS = [
     ("font_nextround02",    "ar",   21,  5, (4, 8, 10),    4, 0,  0, (0x00, 0x50, 0xB0), (0xF0, 0xF0, 0xE0)),
     ("font_tutorial01",     "ar",   16,  4, (4, 4, 8),     4, 1,  0, (0xF0, 0xE0, 0x80), (0x00, 0x40, 0x80)),
     ("font_highscore_text", "ar",   12,  2, (4,),          4, 0,  0, (0xF0, 0xD0, 0x00), None),
+    # FONT_TOOLTIP: the original is a black mask layer (arial12_.png); the
+    # placeholder draws black glyphs in an ordinary image layer instead.
+    ("arial12",             "arr",  11,  3, (0,),          3, 0,  0, (0x00, 0x00, 0x00), None),
 ]
 
 # Advance width of SAMPLE in each original font (spaces at spacewidth).
@@ -83,7 +86,7 @@ SAMPLE = "The quick brown fox jumps over the lazy dog 0123456789"
 SAMPLE_WIDTH = {
     "font_uibar": 625, "font_dialog_headers": 974, "font_dialog_headers2": 703, "font_uibar_labels": 527,
     "font_settingstext": 516, "font_uibar_numbers": 632, "font_nextround02": 641, "font_tutorial01": 498,
-    "font_highscore_text": 340,
+    "font_highscore_text": 340, "arial12": 316,
 }
 
 # Printable ASCII plus Latin-1 (the GF2 `c="#HH"` codes are Latin-1).
@@ -95,7 +98,7 @@ def load_face(kind, size):
     if kind == "lg":
         return ImageFont.truetype(LUCKIEST, size)
     font = ImageFont.truetype(ARIMO, size)
-    font.set_variation_by_axes([700])   # Bold
+    font.set_variation_by_axes([400 if kind == "arr" else 700])   # "arr": Regular, "ar": Bold
     return font
 
 
@@ -243,7 +246,7 @@ def build_font(spec):
         "<root>",
         '  <Font id="font" spacewidth="%d" charspacing="%d" lineheight="%d">' % (space, charsp, lineh),
         '    <Text id="description" value="Generated placeholder (%s), tools/gen_placeholders.py" />'
-        % ("Luckiest Guy, Apache 2.0" if kind == "lg" else "Arimo Bold, SIL OFL 1.1"),
+        % {"lg": "Luckiest Guy, Apache 2.0", "arr": "Arimo Regular, SIL OFL 1.1"}.get(kind, "Arimo Bold, SIL OFL 1.1"),
         '    <Vector id="layers">',
     ]
     for img_name, p in zip(layer_names, pads):
@@ -600,6 +603,7 @@ loads these files only when the player has not imported their own Text Twist 2 i
     font_dialog_headers2, font_uibar_labels.
   - Arimo Bold (SIL OFL 1.1, `OFL-Arimo.txt`): font_settingstext, font_uibar_numbers,
     font_nextround02, font_tutorial01, font_highscore_text, and the button labels.
+  - Arimo Regular (the same file, weight 400): arial12 (FONT_TOOLTIP).
 - **`2x/`:** the same fonts and images drawn again at twice the size (not resized), for GPU
   renderers at high resolutions. Fonts there are only PNG layers; they use the 1x XML.
   `background.png` has no 2x copy.

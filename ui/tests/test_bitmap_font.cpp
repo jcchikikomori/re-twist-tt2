@@ -2,6 +2,7 @@
 
 #include "test_harness.hpp"
 
+#include <cstdint>
 #include <string>
 
 #include "tt2ui/bitmap_font.hpp"
@@ -201,4 +202,44 @@ TEST(placeholder_font_covers_the_import_dialogs) {
     for (char c : std::string("%/\"<>")) ASSERT_TRUE(f.glyph(static_cast<std::uint32_t>(c)) != nullptr);
     ASSERT_EQ(std::string(placeholder_glyph_rows('%')), std::string("##..###.#...#...#.###..##"));
     ASSERT_TRUE(placeholder_glyph_rows('\\') == nullptr);
+}
+
+// fonts/arial12.xml (FONT_TOOLTIP) has one `mask=` layer drawn in its colour.
+TEST(font_parse_reads_mask_layers_and_their_colour) {
+    const char* xml = R"(<root>
+  <Font id="font" spacewidth="3" charspacing="0" lineheight="0">
+    <Vector id="layers">
+      <Layer mask="arial12_.png" padding="0" color="#102030" />
+    </Vector>
+    <Vector id="chars">
+      <Char c="#41" bx="0" by="3" ix="0" iy="0" sx="0" sy="0" sw="8" sh="11" width="8" />
+    </Vector>
+  </Font>
+</root>)";
+    BitmapFont f;
+    ASSERT_TRUE(BitmapFont::parse(xml, f));
+    ASSERT_EQ(f.layers.size(), std::size_t{1});
+    ASSERT_EQ(f.layers[0].image, std::string("arial12_.png"));
+    ASSERT_TRUE(f.layers[0].mask);
+    ASSERT_EQ(f.layers[0].color, std::uint32_t{0x102030});
+}
+
+TEST(font_parse_image_layers_are_not_masks) {
+    BitmapFont f;
+    ASSERT_TRUE(BitmapFont::parse(kFontXml, f));
+    ASSERT_TRUE(!f.layers[0].mask);
+    ASSERT_EQ(f.layers[0].color, std::uint32_t{0});   // "#000000"
+}
+
+TEST(apply_mask_color_turns_brightness_into_alpha) {
+    // Two grey pixels: full coverage and none, then a half-covered one
+    // whose own alpha is half too.
+    std::uint8_t px[] = {255, 255, 255, 255, 0, 0, 0, 255, 128, 128, 128, 128};
+    apply_mask_color(px, 3, 0xFFFFE1);
+    ASSERT_EQ(int{px[0]}, 0xFF);
+    ASSERT_EQ(int{px[2]}, 0xE1);
+    ASSERT_EQ(int{px[3]}, 255);
+    ASSERT_EQ(int{px[7]}, 0);                 // no coverage: transparent
+    ASSERT_EQ(int{px[4]}, 0xFF);              // still takes the colour
+    ASSERT_EQ(int{px[11]}, 128 * 128 / 255);  // 64
 }

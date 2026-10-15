@@ -229,7 +229,8 @@ the address-level walkthrough of the gameplay code is in
   renderer does with the filter and hi-res dialog layers (software keeps
   Sharp, 800x600), `credits_dialog.hpp` for CREDITS, `asset_import.hpp` /
   `import_prompt.hpp` / `folder_picker.hpp` for importing the original
-  assets, `dialog_fade.hpp` for the
+  assets, `tooltip.hpp` for the hover tooltips
+  (`docs/reverse-engineering/tooltips.md`), `dialog_fade.hpp` for the
   dialog backdrop and show / hide fades),
   `ui/src/main.cpp` is the SDL3 front end (`ui/src/audio.cpp` wraps
   SDL3_mixer, its rules in `audio_mix.hpp`), and `ui/tests/` holds the
