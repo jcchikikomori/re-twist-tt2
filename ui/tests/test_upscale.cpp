@@ -1,6 +1,7 @@
 // The texture upscaler (upscale.hpp: Super-xBR 2x; deviation UX-9).
 #include "test_harness.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <sstream>
@@ -33,11 +34,15 @@ void set(Img& px, int w, int x, int y, std::uint8_t r, std::uint8_t g, std::uint
 const std::uint8_t* at(const Img& px, int w, int x, int y) {
     return &px[(static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)) * 4];
 }
+// Without the CRs a Windows checkout adds (core.autocrlf), so the lines
+// compare the same on every runner.
 std::string slurp(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
     std::stringstream ss;
     ss << in.rdbuf();
-    return ss.str();
+    std::string s = ss.str();
+    s.erase(std::remove(s.begin(), s.end(), '\r'), s.end());
+    return s;
 }
 }  // namespace
 
