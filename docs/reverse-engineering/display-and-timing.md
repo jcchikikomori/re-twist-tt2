@@ -86,6 +86,25 @@ the monitor does the scaling, because the game switches the display to 800x600 (
   so the rules do not depend on the refresh rate. What `frame_by_frame="true"` (vtable `+0x44`) does is
   UNKNOWN.
 
+### How the port sizes the window (UX-5)
+
+`ui/include/tt2ui/display.hpp` holds the rules and `ui/src/display.cpp` applies them:
+
+- **Sizes:** 800x600, 1024x768, 1280x960, 1440x1080, 1280x720, 1600x900 and 1920x1080. Windowed offers those
+  that fit the display's usable bounds minus the window frame; a saved size that no longer fits steps down to
+  the largest one that does. Native offers those with an exact display mode.
+- **Borderless** is SDL3's fullscreen with no display mode: the desktop size, whatever the resolution says.
+- **Native** switches the display mode like the original (section 3), keeping the desktop's refresh rate when
+  the size has a mode at that rate. When the switch fails the window goes Borderless, the log says why and
+  IMPROVEMENTS shows "Native unavailable, using Borderless". Wayland compositors (WSLg, gamescope) only emulate
+  the switch: the output stays desktop-sized and the compositor scales.
+- **The canvas stays 800x600.** SDL's letterbox presentation scales it into the output; `fit_4x3` repeats
+  SDL 3.4's arithmetic (width floored, the rectangle centred, half pixels kept), and the log compares the two
+  at start and on every pixel-size change. At 1920x1080 the game is 1440x1080 at x = 240; on a Steam Deck
+  (1280x800) it is 1066x800 at x = 107.
+- **High pixel density:** the window asks for real pixels (`SDL_WINDOW_HIGH_PIXEL_DENSITY`), so a scaled
+  desktop gets a sharp canvas; sizes are in window points, output sizes in pixels.
+
 ### How the port keeps time (UX-7)
 
 `ui/include/tt2ui/frame_clock.hpp` replaces the 16 ms `Sleep` cap:
@@ -115,7 +134,7 @@ borderless fullscreen, vsync, `dt` clamped to 100 ms).
 | ID | The port | The original (section) | Shipped in |
 | --- | --- | --- | --- |
 | UX-1 | Renders with Vulkan, then OpenGL, then software, through SDL3; `renderer=` in `improvements.txt` or `--renderer` picks the first to try; never Direct3D | Direct3D 9 only (2) | 0.3.0 (P1 SDL3, P3 order) |
-| UX-5 | Window sizes up to 1080p; borderless and native fullscreen | 800x600 only; exclusive 800x600 mode (1, 3) | |
+| UX-5 | Window sizes from 800x600 to 1920x1080 (4:3 and 16:9) that fit the display; Windowed, Borderless (desktop size) or Native (an exact display mode at the desktop's refresh rate, else the fastest; Borderless when the switch fails); `window=`, `resolution=` and `fullscreen_mode=` in `improvements.txt` | 800x600 only; exclusive 800x600 mode (1, 3) | 0.3.0 (P5) |
 | UX-6 | Side bars beside the 4:3 game filled in the original palette | No widescreen (1) | |
 | UX-7 | No 60 fps cap by default; vsync (on by default) and a frame limit (60, 120, 144, 165 or 240) in `improvements.txt`; a nanosecond clock whose whole-ms steps keep the leftover fraction; the 100 ms clamp is kept | 60 fps cap with `Sleep`; vsync always on (4) | 0.3.0 (P4) |
 | UX-8 | Smooth or pixel-art filtering, 2x placeholder art, full-resolution dialog layers | No scaling (1) | |

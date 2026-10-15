@@ -93,7 +93,8 @@ struct SettingsSlider {
     int knob_frame() const { return held ? 2 : (hover ? 1 : 0); }
 };
 
-// Alt+Enter flips the window mode. Deliberate deviation: the original has
+// Alt+Enter flips between a window and the last fullscreen mode picked in
+// IMPROVEMENTS (Borderless or Native, UX-5). Deliberate deviation: the original has
 // no such shortcut; its key translator 0x484770 only sends Esc to windowed
 // mode, and WM_SIZE / SIZE_MAXIMIZED (0x484036) to fullscreen
 // (help-and-settings.md §3.4). A held key's auto-repeat does not toggle.

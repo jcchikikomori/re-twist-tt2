@@ -5,7 +5,8 @@
 // It reuses the DIALOG_SETTINGS building blocks (Dialog, MenuButton,
 // TextLabel), so the renderer draws it like any other dialog. Each row is
 // a cycle control: a label, the value text, and left / right arrows that
-// step through the choices (wrapping round). A row can be disabled, with
+// step through the choices (wrapping round, past any the display can't
+// offer). A row can be disabled, with
 // a reason line under it, and any row can carry a note line (the RENDERER
 // row names the renderer in use). OK keeps the edited values and CANCEL restores
 // the saved ones, the same contract as SETTINGS; the host owns saving and
@@ -18,6 +19,7 @@
 #include <vector>
 
 #include "tt2/improvements.hpp"
+#include "tt2ui/display.hpp"
 #include "tt2ui/game_dialogs.hpp"
 #include "tt2ui/render_backend.hpp"
 
@@ -28,6 +30,12 @@ inline constexpr const char* HEADER = "IMPROVEMENTS";
 inline constexpr const char* WINDOW = "DISPLAY MODE";
 inline constexpr const char* WINDOWED = "Windowed";
 inline constexpr const char* BORDERLESS = "Borderless";
+inline constexpr const char* NATIVE = "Native";
+inline constexpr const char* NATIVE_FAILED = "Native unavailable, using Borderless";
+inline constexpr const char* RESOLUTION = "RESOLUTION";
+inline constexpr const char* DESKTOP_SIZE = "Borderless uses the desktop size";
+inline constexpr const char* NO_LARGER_SIZE = "No larger size fits this display";
+inline constexpr const char* NO_NATIVE_SIZE = "No display mode of an offered size";
 inline constexpr const char* RENDERER = "RENDERER";
 inline constexpr const char* AUTO = "Auto";
 inline constexpr const char* USING = "Using ";
@@ -70,6 +78,8 @@ public:
     struct Context {
         Backend active = Backend::Software;
         tt2::RendererPref launched = tt2::RendererPref::Auto;
+        DisplayInfo display;          // the sizes and modes this display allows (UX-5)
+        bool native_failed = false;   // Native was asked for but fell back to Borderless
     };
 
     // One cycle row. `id` names its buttons and labels: LABEL_<id>,
@@ -82,6 +92,7 @@ public:
         bool enabled = true;
         std::string reason;   // shown while disabled
         std::string note;     // shown while enabled
+        std::vector<bool> skip;   // choices the arrows step over (same length as choices, or empty)
     };
 
     ImprovementsDialog(const tt2::Improvements& saved, Services services)
@@ -121,7 +132,10 @@ public:
             const int step = name == "BUTTON_" + r.id + "_NEXT" ? 1 : name == "BUTTON_" + r.id + "_PREV" ? -1 : 0;
             if (step == 0 || !r.enabled || r.choices.empty()) continue;
             const int n = static_cast<int>(r.choices.size());
-            r.index = (r.index + step + n) % n;
+            for (int tries = 0; tries < n; ++tries) {
+                r.index = (r.index + step + n) % n;
+                if (r.skip.empty() || !r.skip[static_cast<std::size_t>(r.index)]) break;
+            }
             store(r);
             refresh();
         }
@@ -142,8 +156,8 @@ public:
     // The window mode changed outside the dialog (Alt+Enter): show it, and
     // keep it on CANCEL and OK. Silent, like SettingsDialog::sync_fullscreen.
     void sync_window(tt2::WindowMode m) {
-        saved_.window = m;
-        values_.window = m;
+        saved_.set_window(m);
+        values_.set_window(m);
         refresh();
     }
 
@@ -153,18 +167,21 @@ public:
 private:
     void build() {
         rows_.push_back(Row{"WINDOW", improvements_strings::WINDOW,
-                            {improvements_strings::WINDOWED, improvements_strings::BORDERLESS}, 0, true, {}, {}});
+                            {improvements_strings::WINDOWED, improvements_strings::BORDERLESS,
+                             improvements_strings::NATIVE},
+                            0, true, {}, {}, {}});
+        rows_.push_back(Row{"RESOLUTION", improvements_strings::RESOLUTION, {}, 0, true, {}, {}, {}});
         rows_.push_back(Row{"RENDERER", improvements_strings::RENDERER,
                             {improvements_strings::AUTO, backend_title(Backend::Vulkan), backend_title(Backend::OpenGL),
                              backend_title(Backend::Software)},
-                            0, true, {}, {}});
+                            0, true, {}, {}, {}});
         rows_.push_back(Row{"VSYNC", improvements_strings::VSYNC,
-                            {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}, {}});
+                            {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}, {}, {}});
         std::vector<std::string> limits;
         for (int fps : tt2::FRAME_LIMITS)
             limits.push_back(fps == 0 ? std::string(improvements_strings::UNLIMITED)
                                       : std::to_string(fps) + improvements_strings::FPS);
-        rows_.push_back(Row{"FRAME_LIMIT", improvements_strings::FRAME_LIMIT, std::move(limits), 0, true, {}, {}});
+        rows_.push_back(Row{"FRAME_LIMIT", improvements_strings::FRAME_LIMIT, std::move(limits), 0, true, {}, {}, {}});
         Dialog d;
         d.w = IMPROVEMENTS_W;
         d.h = improvements_dialog_height(static_cast<int>(rows_.size()));
@@ -200,10 +217,31 @@ private:
     static constexpr tt2::RendererPref kRendererOrder[] = {tt2::RendererPref::Auto, tt2::RendererPref::Vulkan,
                                                             tt2::RendererPref::OpenGL, tt2::RendererPref::Software};
 
+    static constexpr tt2::WindowMode kWindowOrder[] = {tt2::WindowMode::Windowed, tt2::WindowMode::Borderless,
+                                                        tt2::WindowMode::Native};
+
+    // The sizes the RESOLUTION row offers in mode `m` (Borderless: none).
+    const std::vector<tt2::Resolution>& sizes_for(tt2::WindowMode m) const {
+        static const std::vector<tt2::Resolution> none;
+        if (m == tt2::WindowMode::Windowed) return context_.display.windowed;
+        if (m == tt2::WindowMode::Native) return context_.display.native;
+        return none;
+    }
+
     // values_ -> row indices and notes.
     void load_rows() {
         for (auto& r : rows_) {
-            if (r.id == "WINDOW") r.index = values_.window == tt2::WindowMode::Borderless ? 1 : 0;
+            if (r.id == "WINDOW") {
+                for (int i = 0; i < 3; ++i)
+                    if (kWindowOrder[i] == values_.window) r.index = i;
+                // Native needs an exact display mode of an offered size (the
+                // original's fullscreen needs an exact 800x600 mode, §3).
+                r.skip = {false, false, context_.display.native.empty()};
+                r.note = values_.window == tt2::WindowMode::Native && context_.native_failed
+                             ? improvements_strings::NATIVE_FAILED
+                             : "";
+            }
+            if (r.id == "RESOLUTION") load_resolution_row(r);
             if (r.id == "RENDERER") {
                 for (int i = 0; i < 4; ++i)
                     if (kRendererOrder[i] == values_.renderer) r.index = i;
@@ -216,9 +254,42 @@ private:
                     if (tt2::FRAME_LIMITS[i] == values_.frame_limit) r.index = static_cast<int>(i);
         }
     }
+    // Borderless shows the desktop size, greyed out (Q5); a mode with no
+    // size to offer keeps the current one, greyed out.
+    void load_resolution_row(Row& r) {
+        const std::vector<tt2::Resolution>& sizes = sizes_for(values_.window);
+        r.choices.clear();
+        r.index = 0;
+        if (values_.window == tt2::WindowMode::Borderless || sizes.empty()) {
+            const bool borderless = values_.window == tt2::WindowMode::Borderless;
+            r.choices.push_back(tt2::to_string(borderless ? context_.display.desktop : values_.resolution));
+            r.enabled = false;
+            r.reason = borderless ? improvements_strings::DESKTOP_SIZE
+                       : values_.window == tt2::WindowMode::Windowed ? improvements_strings::NO_LARGER_SIZE
+                                                                     : improvements_strings::NO_NATIVE_SIZE;
+            return;
+        }
+        // What will apply: the saved size, or the closest one this display offers.
+        const tt2::Resolution shown = pick_resolution(sizes, values_.resolution);
+        for (std::size_t i = 0; i < sizes.size(); ++i) {
+            r.choices.push_back(tt2::to_string(sizes[i]));
+            if (sizes[i] == shown) r.index = static_cast<int>(i);
+        }
+        r.enabled = true;
+        r.reason.clear();
+    }
+
     // One row's index -> values_.
     void store(const Row& r) {
-        if (r.id == "WINDOW") values_.window = r.index == 1 ? tt2::WindowMode::Borderless : tt2::WindowMode::Windowed;
+        if (r.id == "WINDOW") {
+            values_.set_window(kWindowOrder[r.index]);
+            const std::vector<tt2::Resolution>& sizes = sizes_for(values_.window);
+            if (!sizes.empty()) values_.resolution = pick_resolution(sizes, values_.resolution);
+        }
+        if (r.id == "RESOLUTION") {
+            const std::vector<tt2::Resolution>& sizes = sizes_for(values_.window);
+            if (static_cast<std::size_t>(r.index) < sizes.size()) values_.resolution = sizes[static_cast<std::size_t>(r.index)];
+        }
         if (r.id == "RENDERER") values_.renderer = kRendererOrder[r.index];
         if (r.id == "VSYNC") values_.vsync = r.index == 0;
         if (r.id == "FRAME_LIMIT") values_.frame_limit = tt2::FRAME_LIMITS[r.index];

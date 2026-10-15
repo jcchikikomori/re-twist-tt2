@@ -59,6 +59,7 @@
 #include "tt2ui/profile_dialogs.hpp"
 #include "audio.hpp"
 #include "folder_picker.hpp"
+#include "display_sdl.hpp"
 #include "render_backend_sdl.hpp"
 #include "tt2ui/welcome_flow.hpp"
 
@@ -1195,7 +1196,8 @@ int main(int argc, char** argv) {
                                // '|' Return, ' ' twist, '~' Esc, '$' the pause menu's STOP, '>' NEXT ROUND,
                                // '?' HOW TO PLAY (pause menu, or the main menu without --play), '<' / '>' help pages,
                                // '#' SETTINGS, '@' its INFO (credits), '6'..'8' max length,
-                               // '=' the main menu's IMPROVEMENTS (then '<' / '>' its display mode),
+                               // '=' the main menu's IMPROVEMENTS (then '<' / '>' its display mode,
+                               //     '(' / ')' its resolution),
                                // '!' fullscreen switch, '^' Alt+Enter,
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND;
                                // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
@@ -1383,15 +1385,14 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
-    // SDL3's fullscreen flag is the desktop-sized borderless mode, as
-    // SDL2's FULLSCREEN_DESKTOP was.
-    SDL_Window* win = SDL_CreateWindow("Text Twist 2", SCREEN_W, SCREEN_H,
-                                       improvements.window == tt2::WindowMode::Windowed ? 0 : SDL_WINDOW_FULLSCREEN);
+    // Hidden until apply_display() has given it its mode and size (UX-5).
+    // High pixel density: on a scaled display the canvas is drawn at the
+    // real pixel size, not stretched from the point size.
+    SDL_Window* win = SDL_CreateWindow("Text Twist 2", SCREEN_W, SCREEN_H, SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!win) {
         std::fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
         return 1;
     }
-    SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
     // Deviation (UX-1, display-and-timing.md §2): the original renders with
     // Direct3D 9 only; the port tries Vulkan, then OpenGL, then software
     // (render_backend.hpp).
@@ -1414,6 +1415,18 @@ int main(int argc, char** argv) {
     SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H, SDL_LOGICAL_PRESENTATION_LETTERBOX);
     std::printf("renderer: %s; enhancements %s, max texture %d\n", pick.log.c_str(),
                 render_caps.enhancements ? "on" : "off", render_caps.max_texture_size);
+    // Deviation UX-5 (display-and-timing.md §1, §3): any offered size, and
+    // three modes; Native falls back to Borderless when the switch fails.
+    bool native_failed = false;
+    auto apply_window = [&](const tt2::Improvements& imp) {
+        const DisplayApplied applied = apply_display(win, imp, query_display(win));
+        native_failed = applied.native_failed;
+        std::printf("display: %s\n", applied.log.c_str());
+    };
+    apply_window(improvements);
+    SDL_ShowWindow(win);
+    SDL_SyncWindow(win);
+    std::printf("display: %s\n", check_presentation(ren).c_str());
     // One fading dialog slot per dialog source, drawn in this order.
     DialogLayer game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
         menu_credits_layer, menu_improvements_layer, profile_layer, import_layer;
@@ -1547,11 +1560,11 @@ int main(int argc, char** argv) {
     // window mode, saves improvements.txt and mirrors settings.txt.
     std::optional<ImprovementsDialog> menu_improvements;
     auto commit_improvements = [&](const tt2::Improvements& imp) {
-        if (imp.window != improvements.window)
-            SDL_SetWindowFullscreen(win, imp.window != tt2::WindowMode::Windowed);
+        if (imp.window != improvements.window || imp.resolution != improvements.resolution) apply_window(imp);
         if (imp.vsync != improvements.vsync) apply_vsync(imp.vsync);
         improvements = imp;
-        std::printf("improvements: window %s, vsync %s, frame limit %d\n", tt2::to_string(improvements.window),
+        std::printf("improvements: window %s, resolution %s, vsync %s, frame limit %d\n",
+                    tt2::to_string(improvements.window), tt2::to_string(improvements.resolution).c_str(),
                     improvements.vsync ? "on" : "off", improvements.frame_limit);
         if (!save_dir.empty() && !store.save(improvements))
             std::fprintf(stderr, "warning: could not write %s\n", store.improvements_path().string().c_str());
@@ -1566,7 +1579,7 @@ int main(int argc, char** argv) {
     // window and borderless, save both files, and keep open dialogs in step.
     auto toggle_fullscreen = [&] {
         tt2::Improvements imp = improvements;
-        imp.window = imp.window == tt2::WindowMode::Windowed ? tt2::WindowMode::Borderless : tt2::WindowMode::Windowed;
+        imp.set_window(imp.toggled_window());   // back to the last fullscreen mode picked (UX-5)
         commit_improvements(imp);
         const bool fullscreen = improvements.legacy_fullscreen();
         if (menu_settings) menu_settings->sync_fullscreen(fullscreen);
@@ -1674,7 +1687,8 @@ int main(int argc, char** argv) {
         else if (name == "BUTTON_IMPROVEMENTS") {
             menu_improvements.emplace(improvements,
                                       ImprovementsDialog::Services{[&](SoundId id) { assets.play_sound(id); }},
-                                      ImprovementsDialog::Context{render_caps.backend, launch_renderer});
+                                      ImprovementsDialog::Context{render_caps.backend, launch_renderer,
+                                                                  query_display(win), native_failed});
             if (!vsync_ok) menu_improvements->set_row_enabled("VSYNC", false, improvements_strings::NO_VSYNC);
         }
         else std::printf("menu: %s (not implemented yet)\n", name.c_str());
@@ -1749,6 +1763,8 @@ int main(int argc, char** argv) {
                 if (game) game->leave();   // 0x427b20: closing the window saves a running round
             }
             if (game && e.type == SDL_EVENT_WINDOW_FOCUS_LOST) game->focus_lost();
+            if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
+                std::printf("display: %s\n", check_presentation(ren).c_str());
             // Before any routing, so Alt+Enter (and its auto-repeat) never
             // submits a word or presses OK.
             if (e.type == SDL_EVENT_KEY_DOWN && (e.key.mod & SDL_KMOD_ALT) &&
@@ -1938,7 +1954,7 @@ int main(int argc, char** argv) {
         }
         // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL;
         // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter;
-        // '=' IMPROVEMENTS, then '<' / '>' its display mode, '|' OK, '~' CANCEL.
+        // '=' IMPROVEMENTS, then '<' / '>' its display mode, '(' / ')' its resolution, '|' OK, '~' CANCEL.
         if (!game && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
             flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
@@ -1948,6 +1964,8 @@ int main(int argc, char** argv) {
                 auto_type.erase(0, 1);
                 if (menu_improvements && (c == '<' || c == '>'))
                     menu_improvements->press(c == '<' ? "BUTTON_WINDOW_PREV" : "BUTTON_WINDOW_NEXT");
+                else if (menu_improvements && (c == '(' || c == ')'))
+                    menu_improvements->press(c == '(' ? "BUTTON_RESOLUTION_PREV" : "BUTTON_RESOLUTION_NEXT");
                 else if (menu_improvements && c == '|') menu_improvements_result(menu_improvements->press("BUTTON_OK"));
                 else if (menu_improvements && c == '~')
                     menu_improvements_result(menu_improvements->press("BUTTON_CANCEL"));

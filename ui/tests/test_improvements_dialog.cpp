@@ -262,3 +262,131 @@ TEST(improvements_vsync_row_can_be_disabled) {
     d.press("BUTTON_FRAME_LIMIT_NEXT");
     ASSERT_EQ(d.values().frame_limit, 60);
 }
+
+// ---- DISPLAY MODE and RESOLUTION (P5, deviation UX-5) --------------------
+
+namespace {
+using tt2::Resolution;
+// A 1920x1080 desktop: windowed sizes fit the usable bounds (1920x1040);
+// the display has exact modes for 800x600, 1280x720 and 1920x1080.
+ImprovementsDialog::Context on_1080p(bool native_failed = false) {
+    ImprovementsDialog::Context c;
+    c.display.desktop = {1920, 1080};
+    c.display.windowed = available_resolutions(1920, 1040);
+    c.display.native = {{800, 600}, {1280, 720}, {1920, 1080}};
+    c.native_failed = native_failed;
+    return c;
+}
+}  // namespace
+
+TEST(improvements_display_mode_offers_native_when_the_display_has_a_mode) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), on_1080p());
+    d.press("BUTTON_WINDOW_NEXT");
+    d.press("BUTTON_WINDOW_NEXT");
+    ASSERT_EQ(value(d, "WINDOW"), std::string("Native"));
+    ASSERT_TRUE(d.values().window == tt2::WindowMode::Native);
+    ASSERT_TRUE(d.values().fullscreen_mode == tt2::WindowMode::Native);   // Alt+Enter remembers it
+    d.press("BUTTON_WINDOW_NEXT");                                         // wraps round
+    ASSERT_TRUE(d.values().window == tt2::WindowMode::Windowed);
+}
+
+TEST(improvements_display_mode_skips_native_without_a_mode) {
+    Rig r;
+    ImprovementsDialog::Context c = on_1080p();
+    c.display.native.clear();
+    ImprovementsDialog d(windowed(), r.services(), c);
+    d.press("BUTTON_WINDOW_PREV");                                         // Windowed -> (Native skipped)
+    ASSERT_TRUE(d.values().window == tt2::WindowMode::Borderless);
+    d.press("BUTTON_WINDOW_NEXT");
+    ASSERT_TRUE(d.values().window == tt2::WindowMode::Windowed);
+}
+
+TEST(improvements_resolution_row_cycles_the_sizes_that_fit) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), on_1080p());
+    ASSERT_EQ(d.dialog().label("LABEL_RESOLUTION")->text, std::string("RESOLUTION"));
+    ASSERT_EQ(value(d, "RESOLUTION"), std::string("800x600"));
+    // 1920x1040 usable: everything up to 1600x900 (1440x1080 and 1920x1080 are too tall).
+    const char* expected[] = {"1024x768", "1280x960", "1280x720", "1600x900", "800x600"};
+    for (const char* e : expected) {
+        d.press("BUTTON_RESOLUTION_NEXT");
+        ASSERT_EQ(value(d, "RESOLUTION"), std::string(e));
+    }
+    d.press("BUTTON_RESOLUTION_PREV");
+    ASSERT_TRUE(d.values().resolution == (Resolution{1600, 900}));
+}
+
+TEST(improvements_resolution_row_greys_out_in_borderless) {
+    Rig r;
+    tt2::Improvements saved;
+    saved.resolution = {1280, 720};
+    ImprovementsDialog d(saved, r.services(), on_1080p());
+    d.press("BUTTON_WINDOW_NEXT");                                         // Borderless
+    ASSERT_EQ(value(d, "RESOLUTION"), std::string("1920x1080"));           // the desktop size (Q5)
+    ASSERT_TRUE(!d.row("RESOLUTION")->enabled);
+    ASSERT_TRUE(d.dialog().label("REASON_RESOLUTION")->visible);
+    d.press("BUTTON_RESOLUTION_NEXT");                                     // does nothing
+    ASSERT_TRUE(d.values().resolution == (Resolution{1280, 720}));         // kept for a later window
+}
+
+TEST(improvements_resolution_shows_what_fits_without_saving_it) {
+    // 1920x1080 saved, then opened on a 1366x768 laptop.
+    Rig r;
+    tt2::Improvements saved;
+    saved.resolution = {1920, 1080};
+    ImprovementsDialog::Context c;
+    c.display.desktop = {1366, 768};
+    c.display.windowed = available_resolutions(1366, 728);
+    ImprovementsDialog d(saved, r.services(), c);
+    ASSERT_EQ(value(d, "RESOLUTION"), std::string("1280x720"));            // the last offered size that fits
+    ASSERT_TRUE(d.values().resolution == (Resolution{1920, 1080}));        // OK alone changes nothing
+}
+
+TEST(improvements_resolution_row_on_a_tiny_display_keeps_800x600) {
+    Rig r;
+    ImprovementsDialog::Context c;
+    c.display.desktop = {640, 480};
+    c.display.windowed = available_resolutions(640, 440);                  // none
+    ImprovementsDialog d(windowed(), r.services(), c);
+    ASSERT_EQ(value(d, "RESOLUTION"), std::string("800x600"));
+    ASSERT_TRUE(!d.row("RESOLUTION")->enabled);
+    ASSERT_EQ(d.dialog().label("REASON_RESOLUTION")->text, std::string("No larger size fits this display"));
+}
+
+TEST(improvements_switching_to_native_picks_a_native_size) {
+    Rig r;
+    tt2::Improvements saved;
+    saved.resolution = {1600, 900};                                        // no 1600x900 mode
+    ImprovementsDialog d(saved, r.services(), on_1080p());
+    d.press("BUTTON_WINDOW_PREV");                                         // Native
+    ASSERT_TRUE(d.values().window == tt2::WindowMode::Native);
+    ASSERT_TRUE(d.values().resolution == (Resolution{1280, 720}));
+    const char* expected[] = {"1920x1080", "800x600"};
+    for (const char* e : expected) {
+        d.press("BUTTON_RESOLUTION_NEXT");
+        ASSERT_EQ(value(d, "RESOLUTION"), std::string(e));
+    }
+    d.press("BUTTON_CANCEL");
+    ASSERT_TRUE(d.values().window == tt2::WindowMode::Windowed);
+    ASSERT_TRUE(d.values().resolution == (Resolution{1600, 900}));
+}
+
+TEST(improvements_native_failure_is_noted) {
+    Rig r;
+    tt2::Improvements saved;
+    saved.set_window(tt2::WindowMode::Native);
+    const ImprovementsDialog d(saved, r.services(), on_1080p(true));
+    ASSERT_TRUE(d.dialog().label("NOTE_WINDOW")->visible);
+    ASSERT_EQ(d.dialog().label("NOTE_WINDOW")->text, std::string("Native unavailable, using Borderless"));
+    const ImprovementsDialog fine(saved, r.services(), on_1080p(false));
+    ASSERT_TRUE(!fine.dialog().label("NOTE_WINDOW")->visible);
+}
+
+TEST(improvements_sync_window_remembers_the_fullscreen_mode) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), on_1080p());
+    d.sync_window(tt2::WindowMode::Native);                               // Alt+Enter while open
+    ASSERT_EQ(value(d, "WINDOW"), std::string("Native"));
+    ASSERT_TRUE(d.values().fullscreen_mode == tt2::WindowMode::Native);
+}

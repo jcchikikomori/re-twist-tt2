@@ -18,20 +18,22 @@
 namespace tt2 {
 
 enum class WindowMode {
-    Windowed,     // an 800x600 window
+    Windowed,     // a window of the chosen resolution
     Borderless,   // desktop-sized, no border (SDL2's FULLSCREEN_DESKTOP)
+    Native,       // an exclusive display mode switch, like the original's fullscreen (UX-5)
 };
 
 inline const char* to_string(WindowMode m) {
     switch (m) {
         case WindowMode::Windowed: return "windowed";
         case WindowMode::Borderless: return "borderless";
+        case WindowMode::Native: return "native";
     }
     return "windowed";
 }
 
 inline bool parse_window_mode(std::string_view s, WindowMode& out) {
-    for (WindowMode m : {WindowMode::Windowed, WindowMode::Borderless})
+    for (WindowMode m : {WindowMode::Windowed, WindowMode::Borderless, WindowMode::Native})
         if (s == to_string(m)) {
             out = m;
             return true;
@@ -79,11 +81,70 @@ inline bool valid_frame_limit(int fps) {
     return false;
 }
 
+// The sizes IMPROVEMENTS offers (deviation UX-5): 4:3, then 16:9, all at
+// most 1080 pixels tall. The original only runs at 800x600.
+struct Resolution {
+    int w = 800;
+    int h = 600;
+    friend bool operator==(const Resolution& a, const Resolution& b) { return a.w == b.w && a.h == b.h; }
+    friend bool operator!=(const Resolution& a, const Resolution& b) { return !(a == b); }
+};
+
+inline constexpr Resolution RESOLUTIONS[] = {
+    {800, 600}, {1024, 768}, {1280, 960}, {1440, 1080}, {1280, 720}, {1600, 900}, {1920, 1080},
+};
+
+inline bool valid_resolution(const Resolution& r) {
+    for (const Resolution& c : RESOLUTIONS)
+        if (c == r) return true;
+    return false;
+}
+
+inline std::string to_string(const Resolution& r) { return std::to_string(r.w) + "x" + std::to_string(r.h); }
+
+namespace detail {
+// 1 to 4 digits, nothing else.
+inline bool parse_small_uint(std::string_view s, int& out) {
+    if (s.empty() || s.size() > 4) return false;
+    int v = 0;
+    for (char c : s) {
+        if (c < '0' || c > '9') return false;
+        v = v * 10 + (c - '0');
+    }
+    out = v;
+    return true;
+}
+}  // namespace detail
+
+// "WxH", one of RESOLUTIONS.
+inline bool parse_resolution(std::string_view s, Resolution& out) {
+    const std::size_t x = s.find('x');
+    if (x == std::string_view::npos) return false;
+    Resolution r;
+    if (!detail::parse_small_uint(s.substr(0, x), r.w) || !detail::parse_small_uint(s.substr(x + 1), r.h)) return false;
+    if (!valid_resolution(r)) return false;
+    out = r;
+    return true;
+}
+
 struct Improvements {
     WindowMode window = WindowMode::Windowed;   // GameSettings' default: windowed first run
     RendererPref renderer = RendererPref::Auto;
     bool vsync = true;     // the original presents with vsync on (D3DPRESENT_INTERVAL_ONE)
     int frame_limit = 0;   // one of FRAME_LIMITS
+    Resolution resolution;   // the window size (Windowed) or display mode (Native); Borderless ignores it
+    // The fullscreen mode Alt+Enter switches to: the last one picked (Borderless or Native).
+    WindowMode fullscreen_mode = WindowMode::Borderless;
+
+    // Picks a window mode and remembers a fullscreen one for Alt+Enter.
+    void set_window(WindowMode m) {
+        window = m;
+        if (m != WindowMode::Windowed) fullscreen_mode = m;
+    }
+    // Alt+Enter: a window to the remembered fullscreen mode, and back.
+    WindowMode toggled_window() const {
+        return window == WindowMode::Windowed ? fullscreen_mode : WindowMode::Windowed;
+    }
 
     // A 0.2.x settings.txt only knows fullscreen on / off; its fullscreen
     // was SDL's desktop-sized borderless window.
@@ -98,7 +159,8 @@ struct Improvements {
 
     friend bool operator==(const Improvements& a, const Improvements& b) {
         return a.window == b.window && a.renderer == b.renderer && a.vsync == b.vsync &&
-               a.frame_limit == b.frame_limit;
+               a.frame_limit == b.frame_limit && a.resolution == b.resolution &&
+               a.fullscreen_mode == b.fullscreen_mode;
     }
     friend bool operator!=(const Improvements& a, const Improvements& b) { return !(a == b); }
 };
@@ -109,7 +171,9 @@ inline std::string serialize(const Improvements& imp) {
        << "window=" << to_string(imp.window) << '\n'
        << "renderer=" << to_string(imp.renderer) << '\n'
        << "vsync=" << (imp.vsync ? 1 : 0) << '\n'
-       << "frame_limit=" << imp.frame_limit << '\n';
+       << "frame_limit=" << imp.frame_limit << '\n'
+       << "resolution=" << to_string(imp.resolution) << '\n'
+       << "fullscreen_mode=" << to_string(imp.fullscreen_mode) << '\n';
     return os.str();
 }
 
@@ -153,6 +217,12 @@ inline bool parse(std::string_view text, Improvements& out) {
             }
             if (!valid_frame_limit(fps)) return false;
             imp.frame_limit = fps;
+        } else if (key == "resolution") {
+            if (!parse_resolution(val, imp.resolution)) return false;
+        } else if (key == "fullscreen_mode") {
+            WindowMode m;
+            if (!parse_window_mode(val, m) || m == WindowMode::Windowed) return false;
+            imp.fullscreen_mode = m;
         }
         // Any other key belongs to a newer build: skip it.
     }

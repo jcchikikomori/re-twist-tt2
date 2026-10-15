@@ -28,7 +28,8 @@ TEST(improvements_default_to_a_window) {
 
 TEST(improvements_text_round_trip_defaults) {
     const std::string text = serialize(Improvements{});
-    ASSERT_EQ(text, std::string("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\nrenderer=auto\nvsync=1\nframe_limit=0\n"));
+    ASSERT_EQ(text, std::string("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\nrenderer=auto\nvsync=1\nframe_limit=0\n"
+                                  "resolution=800x600\nfullscreen_mode=borderless\n"));
     Improvements back;
     back.window = WindowMode::Borderless;
     ASSERT_TRUE(parse(text, back));
@@ -80,6 +81,12 @@ TEST(improvements_text_rejects_garbage) {
         "format=re-twist-tt2 improvements\nframe_limit=-60\n",
         "format=re-twist-tt2 improvements\nframe_limit=0060\n",              // too long
         "format=re-twist-tt2 improvements\nframe_limit=\n",
+        "format=re-twist-tt2 improvements\nresolution=1921x1080\n",          // not an offered size
+        "format=re-twist-tt2 improvements\nresolution=abc\n",
+        "format=re-twist-tt2 improvements\nresolution=1920x\n",
+        "format=re-twist-tt2 improvements\nresolution=01920x1080\n",        // too long
+        "format=re-twist-tt2 improvements\nresolution=1920X1080\n",
+        "format=re-twist-tt2 improvements\nfullscreen_mode=windowed\n",     // Alt+Enter needs a fullscreen mode
         "format=re-twist-tt2 improvements\nno equals sign\n",
     };
     for (const char* text : bad) {
@@ -171,4 +178,42 @@ TEST(improvements_vsync_and_frame_limit_round_trip) {
 TEST(improvements_frame_limits_are_the_offered_ones) {
     for (int fps : {0, 60, 120, 144, 165, 240}) ASSERT_TRUE(valid_frame_limit(fps));
     for (int fps : {-1, 30, 59, 61, 75, 300}) ASSERT_TRUE(!valid_frame_limit(fps));
+}
+
+TEST(improvements_native_mode_and_resolution_round_trip) {
+    for (const Resolution& res : RESOLUTIONS) {
+        Improvements imp;
+        imp.set_window(WindowMode::Native);
+        imp.resolution = res;
+        Improvements back;
+        ASSERT_TRUE(parse(serialize(imp), back));
+        ASSERT_TRUE(back == imp);
+        ASSERT_TRUE(back.window == WindowMode::Native);
+        ASSERT_TRUE(back.legacy_fullscreen());                           // settings.txt still says fullscreen
+    }
+    Improvements imp;
+    ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nframe_limit=60\n", imp));
+    ASSERT_TRUE(imp.resolution == Resolution{});                         // a P4 file: 800x600
+    ASSERT_TRUE(imp.fullscreen_mode == WindowMode::Borderless);
+}
+
+TEST(improvements_resolutions_are_the_offered_ones) {
+    ASSERT_EQ(to_string(Resolution{1920, 1080}), std::string("1920x1080"));
+    Resolution r;
+    ASSERT_TRUE(parse_resolution("1280x720", r));
+    ASSERT_TRUE(r == (Resolution{1280, 720}));
+    for (const char* bad : {"", "x", "800x", "x600", "640x480", "800x600x1", "-800x600", "800 x600"})
+        ASSERT_TRUE(!parse_resolution(bad, r));
+    ASSERT_TRUE(r == (Resolution{1280, 720}));                           // untouched
+}
+
+TEST(improvements_alt_enter_returns_to_the_last_fullscreen_mode) {
+    Improvements imp;
+    ASSERT_TRUE(imp.toggled_window() == WindowMode::Borderless);         // the default
+    imp.set_window(WindowMode::Native);
+    imp.set_window(WindowMode::Windowed);
+    ASSERT_TRUE(imp.fullscreen_mode == WindowMode::Native);              // a window keeps the memory
+    ASSERT_TRUE(imp.toggled_window() == WindowMode::Native);
+    imp.set_window(imp.toggled_window());
+    ASSERT_TRUE(imp.toggled_window() == WindowMode::Windowed);
 }

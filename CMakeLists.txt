@@ -173,7 +173,8 @@ if(TT2_BUILD_UI)
             target_link_libraries(tt2_tinyfd PRIVATE comdlg32 ole32 shell32)
         endif()
 
-        add_executable(tt2_app ui/src/main.cpp ui/src/audio.cpp ui/src/folder_picker.cpp ui/src/render_backend.cpp)
+        add_executable(tt2_app ui/src/main.cpp ui/src/audio.cpp ui/src/display.cpp ui/src/folder_picker.cpp
+            ui/src/render_backend.cpp)
         target_link_libraries(tt2_app PRIVATE tt2_ui_logic tt2_platform tt2_tinyfd ${TT2_SDL_LIBS})
         set_target_properties(tt2_app PROPERTIES OUTPUT_NAME tt2)
         # The source tree's imported-assets/: a developer fallback, read when
@@ -241,6 +242,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_improvements_dialog.cpp
         ui/tests/test_render_backend.cpp
         ui/tests/test_frame_clock.cpp
+        ui/tests/test_display.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)

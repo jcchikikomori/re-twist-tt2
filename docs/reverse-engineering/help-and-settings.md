@@ -156,8 +156,10 @@ window object is the "fullscreen supported" flag. The fullscreen setter is the w
   renderer loads `d3d9.dll` (the only `ddraw.dll` use is the audio library's DirectX version probe,
   `0x508f70`; see `display-and-timing.md`), and neither adds Alt+Enter. A scan of the whole
   executable found no other caller of the setter through `[0x5fdea0]`.
-- **Port deviation:** Alt+Enter toggles the window mode and saves it to `settings.txt` (the user's choice
-  on 2026-10-14). The original Esc and maximize shortcuts are not ported: Esc keeps opening the pause menu.
+- **Port deviation:** Alt+Enter switches between a window and the last fullscreen mode picked in IMPROVEMENTS
+  (Borderless by default, or Native; `fullscreen_mode=` in `improvements.txt`, UX-5) and saves both files,
+  `settings.txt` keeping its fullscreen flag for older builds (the user's choice on 2026-10-14). The original
+  Esc and maximize shortcuts are not ported: Esc keeps opening the pause menu.
 
 Evidence: `ev_3aba74211b0566c537bff5aa1bb483e505f8ed72805ff11b5181f2b0d452a913` (window ctor),
 `ev_f68b85a9df92a2795e664a20cce08b6e0f3f81cdf40322e8ce67bac27dfcd071` (WndProc entry bytes; the body was read

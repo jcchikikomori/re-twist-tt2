@@ -1,0 +1,88 @@
+// Window sizes and the 4:3 game rectangle (display.hpp; deviation UX-5).
+#include "test_harness.hpp"
+
+#include <vector>
+
+#include "tt2ui/display.hpp"
+
+using namespace tt2ui;
+using tt2::Resolution;
+
+TEST(fit_4x3_is_the_identity_at_800x600) {
+    const Fit4x3 f = fit_4x3(800, 600);
+    ASSERT_TRUE(f.game.x == 0.0f && f.game.y == 0.0f && f.game.w == 800.0f && f.game.h == 600.0f);
+    ASSERT_TRUE(f.scale == 1.0f);
+    ASSERT_TRUE(pillar_bars(800, 600).left.empty() && pillar_bars(800, 600).right.empty());
+}
+
+TEST(fit_4x3_at_1080p_leaves_240_pixel_bars) {
+    // scale = min(1920 / 800, 1080 / 600) = 1.8: a 1440x1080 game at x = 240.
+    const Fit4x3 f = fit_4x3(1920, 1080);
+    ASSERT_TRUE(f.game.x == 240.0f && f.game.y == 0.0f && f.game.w == 1440.0f && f.game.h == 1080.0f);
+    ASSERT_TRUE(f.scale == 1.8f);
+    const PillarBars b = pillar_bars(1920, 1080);
+    ASSERT_TRUE(b.left.x == 0.0f && b.left.w == 240.0f && b.left.h == 1080.0f);
+    ASSERT_TRUE(b.right.x == 1680.0f && b.right.w == 240.0f);
+}
+
+TEST(fit_4x3_on_a_steam_deck_floors_like_sdl) {
+    // 1280x800: scale 800 / 600, 1066.67 floored to 1066, so both bars are 107.
+    const Fit4x3 f = fit_4x3(1280, 800);
+    ASSERT_TRUE(f.game.w == 1066.0f && f.game.h == 800.0f && f.game.x == 107.0f);
+    const PillarBars b = pillar_bars(1280, 800);
+    ASSERT_TRUE(b.left.w == 107.0f && b.right.x == 1173.0f && b.right.w == 107.0f);
+}
+
+TEST(fit_4x3_keeps_a_half_pixel_offset) {
+    // 1281x720: 960 wide, x = 160.5, as SDL centres it.
+    const Fit4x3 f = fit_4x3(1281, 720);
+    ASSERT_TRUE(f.game.w == 960.0f && f.game.x == 160.5f);
+}
+
+TEST(fit_4x3_of_a_taller_output_letterboxes_without_pillars) {
+    const Fit4x3 f = fit_4x3(1280, 1024);   // 5:4
+    ASSERT_TRUE(f.game.x == 0.0f && f.game.w == 1280.0f && f.game.h == 960.0f && f.game.y == 32.0f);
+    const PillarBars b = pillar_bars(1280, 1024);
+    ASSERT_TRUE(b.left.empty() && b.right.empty());
+}
+
+TEST(fit_4x3_of_nothing_is_empty) {
+    ASSERT_TRUE(fit_4x3(0, 0).game.empty());
+    ASSERT_TRUE(fit_4x3(0, 0).scale == 0.0f);
+    ASSERT_TRUE(fit_4x3(1920, -1).game.empty());
+    ASSERT_TRUE(pillar_bars(0, 0).left.empty());
+}
+
+TEST(available_resolutions_on_a_1920x1200_display_offers_all_seven) {
+    ASSERT_EQ(available_resolutions(1920, 1200).size(), std::size_t{7});
+}
+
+TEST(available_resolutions_on_a_1366x768_display) {
+    const std::vector<Resolution> r = available_resolutions(1366, 768);
+    ASSERT_EQ(r.size(), std::size_t{3});
+    ASSERT_TRUE(r[0] == (Resolution{800, 600}) && r[1] == (Resolution{1024, 768}) && r[2] == (Resolution{1280, 720}));
+}
+
+TEST(available_resolutions_on_a_640x480_display_offers_none) {
+    ASSERT_TRUE(available_resolutions(640, 480).empty());
+    ASSERT_TRUE(available_resolutions(0, 0).empty());
+}
+
+TEST(pick_resolution_keeps_an_offered_size) {
+    const std::vector<Resolution> r = available_resolutions(1920, 1080);
+    ASSERT_TRUE(pick_resolution(r, Resolution{1600, 900}) == (Resolution{1600, 900}));
+}
+
+TEST(pick_resolution_steps_down_to_what_fits) {
+    // A 1920x1080 window saved, then a 1366x768 laptop: the largest that fits.
+    const std::vector<Resolution> r = available_resolutions(1366, 768);
+    ASSERT_TRUE(pick_resolution(r, Resolution{1920, 1080}) == (Resolution{1280, 720}));
+    ASSERT_TRUE(pick_resolution(r, Resolution{1440, 1080}) == (Resolution{1280, 720}));   // 921,600 > 786,432 px
+    ASSERT_TRUE(pick_resolution(r, Resolution{1024, 600}) == (Resolution{800, 600}));     // 1024x768 is too tall
+}
+
+TEST(pick_resolution_with_nothing_offered_is_800x600) {
+    ASSERT_TRUE(pick_resolution({}, Resolution{1920, 1080}) == Resolution{});
+    // Nothing smaller offered: the first one.
+    ASSERT_TRUE(pick_resolution({Resolution{1280, 720}}, Resolution{1024, 768}) == (Resolution{1280, 720}));
+}
