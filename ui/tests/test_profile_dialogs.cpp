@@ -302,6 +302,65 @@ TEST(removing_last_player_reopens_name_input) {
     ASSERT_TRUE(f.pm.current() == nullptr);
 }
 
+// 0x40ade0 / 0x40ad00 show "Remove player" and the name input over the
+// list without hiding it; NO / CANCEL close only the dialog on top.
+TEST(player_select_stays_open_under_remove_and_add) {
+    Fixture f;
+    f.pm.add("A", 1);
+    f.pm.add("B", 2);
+    f.flow.open_player_select();
+    ASSERT_TRUE(f.flow.under().empty());
+    f.click("NAME_1");                                       // pick B, then ask to remove it
+    f.click("BUTTON_REMOVE");
+    ASSERT_TRUE(f.flow.active() == DialogKind::Confirm);
+    ASSERT_EQ(f.flow.under().size(), std::size_t{1});
+    ASSERT_TRUE(f.flow.under()[0].kind == DialogKind::PlayerSelect);
+    f.click("BUTTON_NO");
+    ASSERT_TRUE(f.flow.active() == DialogKind::PlayerSelect && f.flow.under().empty());
+    ASSERT_EQ(f.flow.selected_row(), 1);                     // the list kept its selection
+    ASSERT_EQ(f.flow.dialog().button("NAME_1")->sprite.frame, 0);   // no hover left over
+    f.click("BUTTON_ADD");
+    ASSERT_TRUE(f.flow.active() == DialogKind::NewPlayer);
+    ASSERT_TRUE(f.flow.under()[0].kind == DialogKind::PlayerSelect);
+    f.flow.key_escape();                                     // CANCEL
+    ASSERT_TRUE(f.flow.active() == DialogKind::PlayerSelect && f.flow.under().empty());
+}
+
+TEST(name_exists_message_stacks_three_deep) {
+    // List -> name input -> "Player exists.": OK uncovers the input with
+    // its text, and the list is still under that.
+    Fixture f;
+    f.pm.add("Ann", 1);
+    f.flow.open_player_select();
+    f.click("BUTTON_ADD");
+    f.type("Ann");
+    f.flow.key_return();
+    ASSERT_TRUE(f.flow.active() == DialogKind::Message);
+    ASSERT_EQ(f.flow.under().size(), std::size_t{2});
+    ASSERT_TRUE(f.flow.under()[0].kind == DialogKind::PlayerSelect);
+    ASSERT_TRUE(f.flow.under()[1].kind == DialogKind::NewPlayer);
+    ASSERT_TRUE(!f.flow.wants_text_input());                 // the message is on top
+    f.flow.key_return();
+    ASSERT_TRUE(f.flow.active() == DialogKind::NewPlayer);
+    ASSERT_EQ(f.flow.input_text(), std::string("Ann"));
+    ASSERT_EQ(f.flow.under().size(), std::size_t{1});
+}
+
+TEST(removing_the_last_player_puts_the_name_input_over_the_empty_list) {
+    // 0x40aef0: the list refreshes (0x40aa40), then the input opens over it.
+    Fixture f;
+    f.pm.add("Solo", 1);
+    f.flow.open_player_select();
+    f.click("BUTTON_REMOVE");
+    f.click("BUTTON_YES");
+    ASSERT_TRUE(f.flow.active() == DialogKind::NewPlayer);
+    ASSERT_EQ(f.flow.under().size(), std::size_t{1});
+    ASSERT_TRUE(!f.flow.under()[0].button("NAME_0")->sprite.visible);   // the refreshed, empty list
+    f.type("New");
+    f.flow.key_return();                                     // adding closes everything
+    ASSERT_TRUE(!f.flow.open() && f.flow.under().empty());
+}
+
 TEST(player_select_with_no_current_player_disables_remove) {
     Fixture f;
     f.pm.add("A", 1);

@@ -27,6 +27,7 @@
 #include <SDL3_mixer/SDL_mixer.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -1730,6 +1731,8 @@ int main(int argc, char** argv) {
     SideFillTextures side_fill;
     DialogLayer game_under_layer, game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
         menu_credits_layer, menu_improvements_layer, menu_notice_layer, profile_layer, import_layer;
+    // The player dialogs under the top one (deepest: select, name input, message).
+    std::array<DialogLayer, 2> profile_under_layers;
 
     // Hand pointer over clickable items, hourglass on the load
     // screen, arrow everywhere else. The original's cursor handling
@@ -2455,6 +2458,18 @@ int main(int argc, char** argv) {
         const Dialog* menu_notice = menu_improvements ? menu_improvements->notice() : nullptr;
         draw_dialog_layer(ren, layer_px, menu_notice_layer, menu_notice ? 1 : 0, dt,
                           [&] { draw_dialog(ren, assets, *menu_notice); });
+        // Each player dialog still open under the top one, deepest first,
+        // with its own backdrop (dodarkenbackground).
+        const std::vector<Dialog>& profile_under = profile.under();
+        for (std::size_t i = 0; i < profile_under_layers.size(); ++i) {
+            const Dialog* d = i < profile_under.size() ? &profile_under[i] : nullptr;
+            draw_dialog_layer(ren, layer_px, profile_under_layers[i], d ? static_cast<int>(d->kind) : 0, dt,
+                              [&] {
+                                  // The name input keeps its typed text under a message (no cursor).
+                                  draw_dialog(ren, assets, *d,
+                                              d->kind == DialogKind::NewPlayer ? profile.input_text() : std::string());
+                              });
+        }
         draw_dialog_layer(ren, layer_px, profile_layer, static_cast<int>(profile.dialog().kind), dt, [&] {
             draw_dialog(ren, assets, profile.dialog(), profile.input_text(), profile.cursor_visible());
         });
@@ -2507,6 +2522,7 @@ int main(int argc, char** argv) {
                            &menu_credits_layer, &menu_improvements_layer, &menu_notice_layer, &profile_layer,
                            &import_layer})
         l->release();
+    for (DialogLayer& l : profile_under_layers) l.release();
     side_fill.release();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

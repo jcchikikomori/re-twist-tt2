@@ -139,8 +139,17 @@ trophy room (`SCENE_TROPHY`, `MUSIC_trophy_room`, `SOUND_game_trophy_won`).
 The five name buttons are created from the `namebutton` template
 (`0x40aa40` loops `5 - count` to blank the unused ones). The current
 player's button is highlighted and its y is remembered (+0x204).
-Remove asks `CTEXT_REMOVE_PLAYER_HEADER` / `CTEXT_REMOVE_PLAYER` first
-(yes/no dialog, INFERRED from the strings; the confirm path is `0x40aef0`).
+Remove asks `CTEXT_REMOVE_PLAYER_HEADER` / `CTEXT_REMOVE_PLAYER` first (CONFIRMED,
+`ev_57ada8556876080d0d1b3da218489de25f021087feffd37b99e971b2ee701ed6`): `0x40ade0` builds the
+`DIALOG_YESNO` with `0x40b310` (YES → `0x40aef0`, NO → the default close) and shows it over the list.
+Add (`0x40ad00`, `ev_8e7918e4018a80170606bb4ebdf4b9a23a6258e85188d853513aa63b11f0a813`) shows
+`DIALOG_NEWPLAYER` the same way. Neither hides the list, so the dialogs stack: NO / CANCEL close only
+the top one. YES (`0x40aef0`, `ev_de7bd9ddf7583e8b81ed45d14d3f69a1cc7c307b1bda6b9f300f68c25c1498f3`)
+removes the player, refreshes the list under it (`0x40aa40`) and, when it is empty, shows the name
+input over the empty list. **Port:** `ProfileFlow` keeps a stack (`under()`); the "Player exists."
+message also opens over the name input (INFERRED, the same GF2 show), and `main.cpp` draws up to two
+dialogs underneath, each with its own backdrop. Adding a player still closes every dialog (UNKNOWN in
+the original).
 That `DIALOG_YESNO` word-wraps its `MESSAGE` (`width="390"`, `wrapstyle="wordwrap"`) and moves
 YES / NO below it (`0x40b470`, `game-scene.md`); the port builds it with the same `build_yes_no()`
 as the in-game confirms, so the question takes two lines above the buttons.

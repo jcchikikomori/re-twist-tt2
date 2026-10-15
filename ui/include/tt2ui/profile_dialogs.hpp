@@ -243,6 +243,11 @@ public:
     bool open() const { return dialog_.kind != DialogKind::None; }
     const Dialog& dialog() const { return dialog_; }
     Dialog& dialog() { return dialog_; }
+    // The dialogs still open under the top one, bottom first: player
+    // select under its "Remove player" or name input (0x40ade0 / 0x40ad00
+    // show the new dialog without hiding it), the name input under its
+    // "already exists" message. Only the top dialog takes input.
+    const std::vector<Dialog>& under() const { return under_; }
     const std::string& input_text() const { return input_; }
     bool cursor_visible() const { return cursor_on_; }
     int selected_row() const { return selected_; }
@@ -257,16 +262,19 @@ public:
     // BUTTON_CHANGENAME.
     void open_player_select() {
         selected_ = pm_.current_index();
+        under_.clear();
         build_player_select();
     }
+    // The first player (nothing to go back to): the name input alone.
     void open_new_player(bool cancellable) {
-        input_.clear();
-        cursor_on_ = true;
-        cursor_ms_ = 0;
-        return_to_select_ = cancellable;
+        under_.clear();
+        start_new_player(cancellable);
         build_new_player(cancellable);
     }
-    void close() { dialog_ = Dialog{}; }
+    void close() {
+        under_.clear();
+        dialog_ = Dialog{};
+    }
 
     // --- input ---------------------------------------------------------
     void text_input(const std::string& utf8) {
@@ -382,9 +390,21 @@ private:
         d.buttons.back().enabled = cancellable;   // first player: no way out
         dialog_ = std::move(d);
     }
+    void start_new_player(bool cancellable) {
+        input_.clear();
+        cursor_on_ = true;
+        cursor_ms_ = 0;
+        return_to_select_ = cancellable;
+    }
+    // The name input over the open dialog (player select).
+    void push_new_player(bool cancellable) {
+        start_new_player(cancellable);
+        push_top();
+        build_new_player(cancellable);
+    }
     void new_player_press(const std::string& name) {
         if (name == "BUTTON_CANCEL") {
-            if (return_to_select_) open_player_select();
+            if (return_to_select_) pop();   // player select is still under it
             else close();
             return;
         }
@@ -396,7 +416,7 @@ private:
                 close();
                 break;
             case tt2::AddPlayerResult::Exists:
-                build_message(strings::PLAYER_EXISTS_HEADER, strings::PLAYER_EXISTS, DialogKind::NewPlayer);
+                build_message(strings::PLAYER_EXISTS_HEADER, strings::PLAYER_EXISTS);   // over the input
                 break;
             default:
                 // Empty / too long / bad chars: the original's input box
@@ -458,11 +478,11 @@ private:
             close();
             return;
         }
-        if (name == "BUTTON_ADD") {
-            open_new_player(/*cancellable=*/true);
+        if (name == "BUTTON_ADD") {   // 0x40ad00: the name input over the list
+            push_new_player(/*cancellable=*/true);
             return;
         }
-        if (name == "BUTTON_REMOVE") {
+        if (name == "BUTTON_REMOVE") {   // 0x40ade0: "Remove player" over the list
             build_confirm(strings::REMOVE_PLAYER_HEADER, strings::REMOVE_PLAYER);
             return;
         }
@@ -474,37 +494,49 @@ private:
         // buttons below it (0x40b470), the same as the in-game confirms.
         Dialog d = build_yes_no(header, message, false, services_.wrap);
         d.kind = DialogKind::Confirm;
+        push_top();
         dialog_ = std::move(d);
     }
+    // NO closes only the confirm (the default close); YES (0x40aef0)
+    // removes the player, refreshes the list under it (0x40aa40) and, when
+    // the list is empty, opens the name input over it.
     void confirm_press(const std::string& name) {
-        if (name == "BUTTON_YES") {
-            const int old = selected_;
-            if (old >= 0 && old < pm_.count()) {
-                pm_.remove(pm_.players()[static_cast<std::size_t>(old)].name);   // 0x460c30
-                changed();
-            }
-            selected_ = tt2::PlayerManager::selection_after_remove(old, pm_.count());
-            if (pm_.empty()) { open_new_player(false); return; }           // 0x40aef0
-            select_row(selected_);
+        pop();
+        if (name != "BUTTON_YES") return;
+        const int old = selected_;
+        if (old >= 0 && old < pm_.count()) {
+            pm_.remove(pm_.players()[static_cast<std::size_t>(old)].name);   // 0x460c30
+            changed();
         }
+        selected_ = tt2::PlayerManager::selection_after_remove(old, pm_.count());
+        if (!pm_.empty()) select_row(selected_);
         build_player_select();
+        if (pm_.empty()) push_new_player(/*cancellable=*/false);
     }
 
     // ---- message (DIALOG_YESNO frame with a single OK) ------------------
-    void build_message(const char* header, const char* message, DialogKind back) {
+    void build_message(const char* header, const char* message) {
         Dialog d = build_yes_no(header, message, true, services_.wrap);
         d.kind = DialogKind::Message;
-        message_back_ = back;
+        push_top();
         dialog_ = std::move(d);
     }
-    void close_message() {
-        if (message_back_ == DialogKind::NewPlayer) {
-            const std::string keep = input_;
-            build_new_player(return_to_select_);
-            input_ = keep;
-        } else {
-            close();
-        }
+    // OK uncovers the dialog under the message, typed name and all.
+    void close_message() { pop(); }
+
+    // ---- the stack ------------------------------------------------------
+    void push_top() {
+        if (dialog_.kind != DialogKind::None) under_.push_back(std::move(dialog_));
+        dialog_ = Dialog{};
+    }
+    // Closes the top dialog only; the one under it comes back as it was,
+    // with no hover left over from before.
+    void pop() {
+        if (under_.empty()) { dialog_ = Dialog{}; return; }
+        dialog_ = std::move(under_.back());
+        under_.pop_back();
+        for (auto& b : dialog_.buttons) b.hover = b.pressed = false;
+        refresh_frames();
     }
 
     // ---- helpers ------------------------------------------------------
@@ -546,12 +578,12 @@ private:
     tt2::PlayerManager& pm_;
     Services services_;
     Dialog dialog_;
+    std::vector<Dialog> under_;   // open under dialog_, bottom first
     std::string input_;
     bool cursor_on_ = true;
     int cursor_ms_ = 0;
     int selected_ = -1;
     bool return_to_select_ = false;
-    DialogKind message_back_ = DialogKind::None;
 };
 
 }  // namespace tt2ui
