@@ -187,7 +187,8 @@ the pause menu) keeps the original layout.
 
 - IMPORT keeps the dialog's values like OK, closes it, and opens the folder picker straight away (no launch
   warning). Cancelling the picker closes it.
-- The original game has no art for IMPORT, so it is drawn as a placeholder button with its name, even when
+- The original game has no art for IMPORT, so it uses the generated `images/gui/button_import.png` from
+  `data/placeholder/` (a 119x200, 4-state sheet like OK, drawn by `tools/gen_placeholders.py`), even when
   the original art is imported.
 
 ### 3.6 Port deviations: display options (UX-3, UX-4, 2026-10-15)

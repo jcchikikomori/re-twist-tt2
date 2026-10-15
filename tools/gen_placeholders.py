@@ -394,6 +394,9 @@ BUTTONS = [
     ("button_pause_settings", 181, 52, "SETTINGS"),
     ("button_pause_endgame", 181, 52, "MAIN MENU"),
     ("button_pause_help", 181, 52, "HOW TO PLAY"),
+    # The port's own (deviation OP-7): SETTINGS' asset row. No such file in
+    # the original, so it is used after an import too.
+    ("button_import", 119, 50, "IMPORT"),
 ]
 # body top, body bottom, rim, label fill, label outline
 STATES = [
@@ -458,6 +461,8 @@ def build_button(name, fw, fh, label, k, out):
 #     place of BUTTON_GH, a 115x100 frame like the original's, 4 states.
 #   - images/gui/button_arrow_left.png / _right.png: the IMPROVEMENTS rows'
 #     value arrows, 36x36 frames, 4 states.
+#   - images/gui/button_import.png (in BUTTONS above): SETTINGS' IMPORT
+#     (deviation OP-7), a dialog pill like OK.
 # ---------------------------------------------------------------------------
 MENU_BADGE = (115, 100)
 ARROW = 36
@@ -587,8 +592,9 @@ loads these files only when the player has not imported their own Text Twist 2 i
 
 - **Shapes:** drawn by the script. No original GameHouse pixels; only colour values were sampled.
 - **The port's own buttons:** `images/selectionscene/button_improvements.png` (the main-menu
-  IMPROVEMENTS badge) and `images/gui/button_arrow_left.png` / `button_arrow_right.png`. These
-  names don't exist in the original game, so they are used even after an import.
+  IMPROVEMENTS badge), `images/gui/button_arrow_left.png` / `button_arrow_right.png`, and
+  `images/gui/button_import.png` (SETTINGS' IMPORT). These names don't exist in the original
+  game, so they are used even after an import.
 - **Fonts:** bitmap renderings of open fonts from `third_party/fonts/`:
   - Luckiest Guy (Apache 2.0, `LICENSE-LuckiestGuy.txt`): font_uibar, font_dialog_headers,
     font_dialog_headers2, font_uibar_labels.

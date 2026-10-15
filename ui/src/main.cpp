@@ -181,6 +181,8 @@ const std::map<std::string, std::string> kImageFiles = {
     {"CHECKBOX02", "images/gui/button_check.png"},
     {"IMAGE_DIFFICULTY_TAB", "images/gui/difficulty_tab.png"},
     {"BUTTON_INFO", "images/gui/button_info.png"},
+    // The port's own IMPORT (deviation OP-7): only data/placeholder/ has it.
+    {"BUTTON_IMPORT", "images/gui/button_import.png"},
     {"BUTTON_PREV", "images/gui/dialoghelp/button_prev.png"},
     {"BUTTON_NEXT", "images/gui/dialoghelp/button_next.png"},
     {"IMAGE_HELP_PAGE01", "images/gui/dialoghelp/image_help_page01.png"},

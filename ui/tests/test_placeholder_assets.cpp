@@ -164,6 +164,29 @@ TEST(placeholder_has_the_ports_own_buttons_ux2) {
     }
 }
 
+TEST(placeholder_has_the_settings_import_button_op7) {
+    // SETTINGS' IMPORT is a dialog button: the same 4-state sheet as OK,
+    // so the hover / pressed / disabled frames line up with the model.
+    const MenuButton b = make_dialog_button("BUTTON_IMPORT", "BUTTON_IMPORT", 0, 0, Anchor::TopRight);
+    const Size got = png_size(kDir / "images" / "gui" / "button_import.png");
+    ASSERT_EQ(got.w, b.sprite.sheet.sheet_w());
+    ASSERT_EQ(got.h, b.sprite.sheet.sheet_h());
+    const Size hi = png_size(kDir / "2x" / "images" / "gui" / "button_import.png");
+    ASSERT_EQ(hi.w, got.w * 2);
+    ASSERT_EQ(hi.h, got.h * 2);
+}
+
+TEST(ports_own_buttons_are_not_original_files) {
+    // The game takes these from data/placeholder/ only because an import
+    // never has them; a name the original also used would be replaced by
+    // the imported copy (or need a GameHouse file the repo must not ship).
+    const std::string manifest = read(kDir.parent_path() / "original-assets.sha256");
+    ASSERT_TRUE(manifest.find("images/gui/button_ok.png") != std::string::npos);   // the list is readable
+    for (const char* rel : {"images/gui/button_import.png", "images/gui/button_arrow_left.png",
+                            "images/gui/button_arrow_right.png", "images/selectionscene/button_improvements.png"})
+        ASSERT_TRUE(manifest.find(rel) == std::string::npos);
+}
+
 TEST(placeholder_licences_ship_with_the_fonts) {
     ASSERT_TRUE(fs::exists(kDir / "README.md"));
     ASSERT_TRUE(read(kDir / "OFL-Arimo.txt").find("SIL Open Font License") != std::string::npos);
@@ -203,7 +226,7 @@ TEST(placeholder_2x_is_exactly_twice_its_1x_twin) {
         ASSERT_TRUE(twice(png_size(kDir / rel), png_size(e.path())));
         ++checked;
     }
-    ASSERT_EQ(checked, 50);
+    ASSERT_EQ(checked, 51);
 }
 
 TEST(placeholder_2x_glyphs_fit_the_doubled_1x_cells) {
