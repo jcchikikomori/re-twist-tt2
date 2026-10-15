@@ -67,6 +67,7 @@ ctest --test-dir build --output-on-failure    # engine + headless UI tests
 | `--speed N` | Run the clock `N` times faster |
 | `--exit-after MS` | Quit after `MS` simulated milliseconds |
 | `--dump-frames DIR` | Write `frame_NNNN.bmp` at `--fps N` (headless with `SDL_VIDEODRIVER=dummy`) |
+| `--fixed-dt MS` | Advance every frame by exactly `MS` ms instead of the real time, so frame dumps repeat exactly |
 
 ## Original game assets (required for now)
 

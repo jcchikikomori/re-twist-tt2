@@ -1118,6 +1118,7 @@ int main(int argc, char** argv) {
     long exit_after_ms = -1;
     std::string dump_dir;      // --dump-frames DIR: write BMP frames (for the README GIF)
     int dump_fps = 12;
+    int fixed_dt = 0;          // --fixed-dt MS: every frame advances MS ms (repeatable frame dumps)
     std::string debug_player;
     std::string data_dir = TT2_DATA_DIR;
     bool data_dir_given = false;
@@ -1142,6 +1143,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--exit-after") && i + 1 < argc) exit_after_ms = std::atol(argv[++i]);
         else if (!std::strcmp(argv[i], "--dump-frames") && i + 1 < argc) dump_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--fps") && i + 1 < argc) dump_fps = std::atoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--fixed-dt") && i + 1 < argc) fixed_dt = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--player") && i + 1 < argc) debug_player = argv[++i];
         else if (!std::strcmp(argv[i], "--data-dir") && i + 1 < argc) { data_dir = argv[++i]; data_dir_given = true; }
         else if (!std::strcmp(argv[i], "--play") && i + 1 < argc) auto_play = argv[++i];
@@ -1164,6 +1166,14 @@ int main(int argc, char** argv) {
         }
     }
     if (speed < 1) speed = 1;
+    if (fixed_dt < 0) fixed_dt = 0;
+    // The game time so far. The RNG seeds below read the clock, as the original
+    // seeds from timeGetTime(); under --fixed-dt they read this simulated clock
+    // instead, so a whole run (rack order, idle timers) repeats exactly.
+    long simulated_ms = 0;
+    auto seed_ticks = [&]() -> std::uint32_t {
+        return fixed_dt > 0 ? static_cast<std::uint32_t>(1000 + simulated_ms) : static_cast<std::uint32_t>(SDL_GetTicks());
+    };
 
     // The data folder (dictionaries, asset manifest). Packaged builds
     // (AppImage, Windows zip) carry it next to the executable; a source
@@ -1246,7 +1256,7 @@ int main(int argc, char** argv) {
                                                 store.profiles_path().string().c_str());
     if (!debug_player.empty()) {
         if (!players.select(debug_player)) {
-            const auto r = players.add(debug_player, static_cast<std::uint32_t>(SDL_GetTicks()));
+            const auto r = players.add(debug_player, seed_ticks());
             if (r != tt2::AddPlayerResult::Added)
                 std::fprintf(stderr, "warning: --player %s: %s\n", debug_player.c_str(), tt2::to_string(r));
         }
@@ -1263,7 +1273,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "no dictionaries in %s (need open-common.tree + open-full.tree)\n", data_dir.c_str());
         return 1;
     }
-    tt2::Random highscore_rng(static_cast<std::int64_t>(SDL_GetTicks()) + 17);
+    tt2::Random highscore_rng(static_cast<std::int64_t>(seed_ticks()) + 17);
     tt2::HighScoreManager highscores(kHighScoreNames, highscore_rng);
     if (!save_dir.empty() && !store.load(highscores))
         std::fprintf(stderr, "warning: %s is unreadable; starting with default high scores\n",
@@ -1343,7 +1353,7 @@ int main(int argc, char** argv) {
         if (!store.save(highscores))
             std::fprintf(stderr, "warning: could not write %s\n", store.highscores_path().string().c_str());
     };
-    pservices.seed_millis = [] { return static_cast<std::uint32_t>(SDL_GetTicks()); };   // timeGetTime()
+    pservices.seed_millis = [&] { return seed_ticks(); };   // timeGetTime()
     ProfileFlow profile(players, pservices);
 
     bool running = true;
@@ -1527,7 +1537,7 @@ int main(int argc, char** argv) {
         else if (name == "BUTTON_SETTINGS") open_menu_settings();
         else std::printf("menu: %s (not implemented yet)\n", name.c_str());
     };
-    WelcomeFlow flow(services, static_cast<std::uint32_t>(SDL_GetTicks() + 1));
+    WelcomeFlow flow(services, seed_ticks() + 1);
     if (asset_choice.prompt) {
         import_prompt.emplace(import_services);
         std::printf("t=0 ms: assets: prompt shown\n");
@@ -1563,7 +1573,7 @@ int main(int argc, char** argv) {
             if (!save_dir.empty()) store.remove_saved_game(player, mode);
         };
         game = std::make_unique<GameScene>(common_tree, full_tree, *players.current(), &highscores, pending_timed,
-                                           gs, static_cast<std::int64_t>(SDL_GetTicks()), pending_resume.get());
+                                           gs, static_cast<std::int64_t>(seed_ticks()), pending_resume.get());
         if (pending_resume) std::printf("game: resumed round %d\n", pending_resume->round);
         pending_resume.reset();
         assets.play_stream(SoundId::MusicInGame1);
@@ -1579,7 +1589,6 @@ int main(int argc, char** argv) {
     };
 
     Uint32 last = SDL_GetTicks();
-    long simulated_ms = 0;
     int dump_accum_ms = 0;
     int dump_index = 0;
     bool text_input_on = false;
@@ -1723,7 +1732,7 @@ int main(int argc, char** argv) {
             SDL_SetCursor(busy ? cursor_wait : (hot ? cursor_hand : cursor_arrow));
         }
         const Uint32 now = SDL_GetTicks();
-        int dt = static_cast<int>(now - last) * speed;
+        int dt = (fixed_dt > 0 ? fixed_dt : static_cast<int>(now - last)) * speed;
         last = now;
         if (dt > 100) dt = 100;
         if (game_fade_out > 0) {
