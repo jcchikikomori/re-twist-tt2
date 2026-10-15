@@ -35,10 +35,12 @@ ctest --test-dir build --output-on-failure    # unit tests
 
 | Path | Owner / purpose |
 | --- | --- |
-| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp`, `round_crossword.hpp`, `profile.hpp` (players, progression, high scores; spec in `docs/reverse-engineering/profiles.md`), `profile_store.hpp` (plain-text save files), `settings.hpp` (volumes and window mode, `settings.txt`), `saved_game.hpp` (the resumable Classic game). |
+| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp`, `round_crossword.hpp`, `profile.hpp` (players, progression, high scores; spec in `docs/reverse-engineering/profiles.md`), `profile_store.hpp` (plain-text save files), `settings.hpp` (volumes and window mode, `settings.txt`), `saved_game.hpp` (the resumable Classic game), `sha256.hpp`, `asset_manifest.hpp` (which original files the importer copies, and their hashes), `utf8_path.hpp` (UTF-8 paths under C++17 and C++20). |
 | `engine/tests/` | Unit tests, one file per header plus `test_main.cpp` (the in-tree test harness). |
 | `src/main.cpp` | The driver / smoke test for the engine. |
 | `tools/tree_cli.cpp` | Dictionary tool: `decode`, `encode`, `merge`, `diff`, `verify`. Replaces the old `tools/tree-cli.ts`. |
+| `tools/assets_cli.cpp` | `tt2-assets`: `manifest <install>` writes the original-asset manifest (paths + SHA-256 only), `verify <dir> <manifest>` checks a folder. |
+| `third_party/tinyfiledialogs/` | Vendored, unaltered (zlib): the native folder picker for the importer. Its own C target, outside `-Werror`. |
 | `data/` | Runtime dictionaries. The open-license `open-common.tree` + `open-full.tree` are committed; the original GameHouse `common.tree` + `full.tree` are gitignored. |
 | `data-src/` | Raw word lists for rebuilding `open-*.tree` (ENABLE2k, frequency lists). |
 | `docs/reverse-engineering/` | Evidence from the original game: binary fingerprint, gameplay notes, `.tree` format spec, reference Python decoder/encoder. |
@@ -87,13 +89,14 @@ the one that fits the deployer.
 2. **End-user's own original install — the end-user's legal
    liability.** Some users own a legitimate copy of Text Twist 2
    and want the game to *look* like the original. The build
-   supports an opt-in importer:
+   supports an opt-in importer, and **for now the game requires
+   it**: the placeholder art isn't ready, so every launch without
+   a verified import asks for one (docs/design/import-assets.md):
 
    ```bash
-   # Example: copy the original install's images and sounds into
-   # the build tree. ONLY do this with a copy you legally own.
-   ./scripts/import-original.sh /path/to/Text\ Twist\ 2/install
-   cmake --build build
+   # In the game: the launch prompt, or main menu -> SETTINGS -> IMPORT.
+   # From a terminal (ONLY with a copy you legally own):
+   ./build/tt2 --import "/path/to/Text Twist 2"
    ```
 
    What this is and what it isn't:
@@ -104,13 +107,17 @@ the one that fits the deployer.
      have the right to copy those assets out of their install.
      The license to use the executable does not, in every
      jurisdiction, extend to extracting its art assets.
-   - The CMake build detects the imported assets and uses them
-     when present; otherwise it falls back to the placeholders.
-   - Imported assets are gitignored. `git status` after running
-     the importer should not show them.
+   - Every file is checked against `data/original-assets.sha256`
+     (paths and hashes only) and copied into the per-user folder
+     (`~/.local/share/re-twist-tt2/imported-assets`, or
+     `%APPDATA%\re-twist-tt2\imported-assets`), never into the
+     repository. The DRM DLL and `.nfo` files are never opened.
+   - The source tree's gitignored `imported-assets/` still loads
+     as a developer fallback when no per-user import exists.
 
-   The importer is intentionally not automated in CI. It is a
-   manual, user-initiated step.
+   CI never touches real assets: it imports a synthetic install
+   of random bytes (`scripts/ci-import-smoke.sh`), always with
+   `--asset-dir`. A real import is a manual, user-initiated step.
 
 ## Reference: how the original works
 
@@ -203,7 +210,9 @@ the address-level walkthrough of the gameplay code is in
   dialogs, `game_scene.hpp` for the Classic Untimed / Timed scene,
   `game_dialogs.hpp` for its pause menu, confirmations and round-end
   dialogs, `help_dialog.hpp` for HOW TO PLAY, `settings_dialog.hpp`
-  for SETTINGS, `credits_dialog.hpp` for CREDITS, `dialog_fade.hpp` for the
+  for SETTINGS, `credits_dialog.hpp` for CREDITS, `asset_import.hpp` /
+  `import_prompt.hpp` / `folder_picker.hpp` for importing the original
+  assets, `dialog_fade.hpp` for the
   dialog backdrop and show / hide fades),
   `ui/src/main.cpp` is the SDL2 front end, and `ui/tests/` holds the
   headless tests. Timings and layout for the welcome flow come from
@@ -211,8 +220,8 @@ the address-level walkthrough of the gameplay code is in
   from `docs/reverse-engineering/game-scene.md`, help and settings from
   `docs/reverse-engineering/help-and-settings.md`;
   keep the model free of SDL so it stays testable. Original assets are
-  never committed: `scripts/import-original.sh` copies them into the
-  gitignored `imported-assets/` on the user's machine only.
+  never committed: the player imports them (`tt2 --import`, the launch
+  prompt or SETTINGS) into a per-user folder on their machine only.
 - Commits follow Conventional Commits. **The AI only stages changes and
   drafts commit messages; the user commits and pushes.**
 - **AI attribution is mandatory on every AI-generated commit.** Every

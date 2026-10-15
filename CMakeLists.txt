@@ -138,7 +138,8 @@ if(TT2_BUILD_UI)
         add_executable(tt2_app ui/src/main.cpp ui/src/folder_picker.cpp)
         target_link_libraries(tt2_app PRIVATE tt2_ui_logic tt2_platform tt2_tinyfd ${TT2_SDL_LIBS})
         set_target_properties(tt2_app PROPERTIES OUTPUT_NAME tt2)
-        # Where `scripts/import-original.sh` puts the user's own assets.
+        # The source tree's imported-assets/: a developer fallback, read when
+        # no per-user import exists (scripts/import-original.sh used to copy there).
         target_compile_definitions(tt2_app PRIVATE
             TT2_IMPORTED_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/imported-assets"
             TT2_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")

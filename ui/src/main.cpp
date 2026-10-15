@@ -1,11 +1,12 @@
 // SDL2 front end for the welcome flow (splash -> loading -> main menu)
 // and the player-profile dialogs.
 //
-// Assets: the repository ships none of the original art. If the user
-// has run `scripts/import-original.sh` the files are read from
-// `imported-assets/` (or the directory given by `--assets DIR` /
-// `TT2_ASSETS`). Anything missing is replaced by a procedurally drawn
-// placeholder of the same size, so the flow always boots.
+// Assets: the repository ships none of the original art. The player
+// imports it from their own install (the launch prompt, SETTINGS, or
+// `tt2 --import DIR`) into a per-user folder; `--assets DIR` /
+// `TT2_ASSETS` override it (docs/design/import-assets.md). Anything
+// missing is replaced by a procedurally drawn placeholder of the same
+// size, so the flow always boots.
 //
 // Profiles are read from / written to the platform's per-user data
 // directory (tt2::default_save_dir(): %APPDATA%, ~/Library/Application

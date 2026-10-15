@@ -1,45 +1,37 @@
 #!/usr/bin/env sh
-# Copy the images, fonts, music and sounds the UI needs out of the user's OWN
-# Text Twist 2 install into `imported-assets/` (gitignored).
+# Import the images, fonts, music and sounds the UI needs from the user's
+# OWN Text Twist 2 install. A thin wrapper around `tt2 --import`, which
+# checks every file against data/original-assets.sha256 and copies them
+# into the per-user asset folder (~/.local/share/re-twist-tt2/imported-assets
+# on Linux; %APPDATA%\re-twist-tt2\imported-assets on Windows).
 #
 # Only run this against a copy you legally own. The repository never
 # ships these files, and whether your licence allows extracting them
-# is your responsibility, not the project's. Without them the game
-# boots with procedural placeholders.
+# is your responsibility, not the project's. The game itself also asks
+# on launch, so this script is optional.
 #
-# Usage: scripts/import-original.sh "/path/to/Text Twist 2"
+# Usage: scripts/import-original.sh "/path/to/Text Twist 2" [tt2 flags...]
+#   e.g. --asset-dir DIR to import somewhere else.
+# The tt2 binary is $TT2, else build/tt2, else tt2 on the PATH.
 set -eu
 
-if [ "$#" -ne 1 ]; then
-    echo "usage: $0 /path/to/Text Twist 2" >&2
+if [ "$#" -lt 1 ]; then
+    echo "usage: $0 /path/to/Text Twist 2 [--asset-dir DIR]" >&2
     exit 2
 fi
 SRC=$1
+shift
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-DST="$ROOT/imported-assets"
 
-if [ ! -f "$SRC/properties/resources.xml" ]; then
-    echo "$SRC does not look like a Text Twist 2 install (no properties/resources.xml)" >&2
-    exit 1
+if [ -n "${TT2:-}" ]; then
+    BIN=$TT2
+elif [ -x "$ROOT/build/tt2" ]; then
+    BIN=$ROOT/build/tt2
+elif command -v tt2 > /dev/null 2>&1; then
+    BIN=tt2
+else
+    echo "no tt2 binary: build it first (cmake -S . -B build && cmake --build build) or set TT2" >&2
+    exit 2
 fi
 
-copy_dir() {
-    [ -d "$SRC/$1" ] || { echo "skip $1 (missing)"; return 0; }
-    mkdir -p "$DST/$1"
-    chmod -R u+w "$DST/$1" 2>/dev/null || true   # earlier copies keep the install's read-only bits
-    cp -Rf "$SRC/$1/." "$DST/$1/"
-    echo "copied $1"
-}
-
-copy_dir images/splash
-copy_dir images/loadscene
-copy_dir images/selectionscene
-copy_dir images/gui
-copy_dir images/gamescene
-copy_dir images/trophyscene   # IMAGE_BURST (round-end sparkle)
-copy_dir fonts
-copy_dir music
-copy_dir sound
-
-echo "done: $DST"
-echo "git status must not list anything under imported-assets/."
+exec "$BIN" --import "$SRC" "$@"

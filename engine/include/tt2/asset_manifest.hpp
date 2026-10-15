@@ -28,7 +28,8 @@
 
 namespace tt2 {
 
-// The folders scripts/import-original.sh copies, in its order.
+// The folders scripts/import-original.sh copied, in its order (it now
+// wraps `tt2 --import`).
 inline constexpr const char* IMPORT_ROOTS[] = {
     "images/splash",     "images/loadscene", "images/selectionscene", "images/gui", "images/gamescene",
     "images/trophyscene", "fonts",           "music",                 "sound",

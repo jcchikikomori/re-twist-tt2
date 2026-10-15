@@ -60,7 +60,7 @@ enum class AssetSource {
     Flag,        // --assets DIR
     Env,         // TT2_ASSETS
     User,        // the per-user import folder
-    Developer,   // <source tree>/imported-assets (scripts/import-original.sh)
+    Developer,   // <source tree>/imported-assets (the old import-original.sh target)
 };
 
 inline const char* to_string(AssetSource s) {

@@ -7,7 +7,7 @@ Evidence for the pause-menu dialogs HOW TO PLAY and SETTINGS. Target: the instal
 
 This file records layout, timing and behavior only. The help **text and pictures are not
 copied here**: the original instructions live in the four help images, which the game
-loads at runtime from `imported-assets/` when the user has run `scripts/import-original.sh`.
+loads at runtime once the player has imported their own install (`docs/design/import-assets.md`).
 
 ## 1. Who opens them (CONFIRMED)
 
