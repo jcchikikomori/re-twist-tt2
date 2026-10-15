@@ -56,6 +56,7 @@
 #include "tt2ui/import_prompt.hpp"
 #include "tt2ui/improvements_dialog.hpp"
 #include "tt2ui/settings_dialog.hpp"
+#include "tt2ui/side_fill.hpp"
 #include "tt2ui/profile_dialogs.hpp"
 #include "audio.hpp"
 #include "folder_picker.hpp"
@@ -1115,6 +1116,61 @@ const std::vector<std::string> kHighScoreNames = {
 // into `live` every frame and shown at its fade alpha. When it closes, that
 // last frame becomes `frozen` and fades out over the scene, so a closing
 // dialog needs no model state of its own.
+// The side bars beside the 4:3 game (deviation UX-6, side_fill.hpp): one
+// texture per side at the bar's pixel size, rebuilt when the output size
+// changes, drawn in output pixels with the logical presentation switched
+// off for the two blits. --dump-frames crops to the 4:3 rectangle, so the
+// bars never reach a dump.
+struct SideFillTextures {
+    SDL_Texture* left = nullptr;
+    SDL_Texture* right = nullptr;
+    SDL_FRect left_dst{}, right_dst{};
+    int out_w = 0, out_h = 0;
+
+    void release() {
+        if (left) SDL_DestroyTexture(left);
+        if (right) SDL_DestroyTexture(right);
+        left = right = nullptr;
+    }
+    static SDL_Texture* make(SDL_Renderer* ren, int w, int h, Side side) {
+        std::vector<std::uint8_t> px = side_fill_rgba(w, h, side);
+        if (px.empty()) return nullptr;
+        SDL_Surface* s = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, px.data(), w * 4);
+        SDL_Texture* t = upload(ren, s);
+        if (s) SDL_DestroySurface(s);
+        if (t) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
+        return t;
+    }
+    void rebuild(SDL_Renderer* ren, int w, int h) {
+        release();
+        out_w = w;
+        out_h = h;
+        const PillarBars bars = pillar_bars(w, h);
+        if (bars.left.empty()) return;
+        // A half-pixel edge (an odd leftover) rounds outwards; the game is
+        // drawn after the bars and covers the overlap.
+        const int lw = static_cast<int>(std::ceil(bars.left.w));
+        const int rx = static_cast<int>(std::floor(bars.right.x));
+        left = make(ren, lw, h, Side::Left);
+        right = make(ren, w - rx, h, Side::Right);
+        left_dst = {0, 0, static_cast<float>(lw), static_cast<float>(h)};
+        right_dst = {static_cast<float>(rx), 0, static_cast<float>(w - rx), static_cast<float>(h)};
+    }
+    void draw(SDL_Renderer* ren) {
+        int w = 0, h = 0;
+        SDL_GetRenderOutputSize(ren, &w, &h);
+        if (w != out_w || h != out_h) rebuild(ren, w, h);
+        if (!left || !right) return;
+        int lw = 0, lh = 0;
+        SDL_RendererLogicalPresentation mode = SDL_LOGICAL_PRESENTATION_DISABLED;
+        SDL_GetRenderLogicalPresentation(ren, &lw, &lh, &mode);
+        SDL_SetRenderLogicalPresentation(ren, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
+        SDL_RenderTexture(ren, left, nullptr, &left_dst);
+        SDL_RenderTexture(ren, right, nullptr, &right_dst);
+        SDL_SetRenderLogicalPresentation(ren, lw, lh, mode);
+    }
+};
+
 struct DialogLayer {
     DialogFade fade;
     SDL_Texture* live = nullptr;
@@ -1428,6 +1484,7 @@ int main(int argc, char** argv) {
     SDL_SyncWindow(win);
     std::printf("display: %s\n", check_presentation(ren).c_str());
     // One fading dialog slot per dialog source, drawn in this order.
+    SideFillTextures side_fill;
     DialogLayer game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
         menu_credits_layer, menu_improvements_layer, profile_layer, import_layer;
 
@@ -2055,6 +2112,7 @@ int main(int argc, char** argv) {
 
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
+        if (improvements.widescreen_fill) side_fill.draw(ren);   // UX-6; top / bottom bars stay black
         if (game) {
             draw_game(ren, assets, *game);
         } else if (!boot_prompt_open()) {   // black behind the boot prompt
@@ -2154,6 +2212,7 @@ int main(int argc, char** argv) {
     for (DialogLayer* l : {&game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
                            &menu_credits_layer, &menu_improvements_layer, &profile_layer, &import_layer})
         l->release();
+    side_fill.release();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();

@@ -390,3 +390,30 @@ TEST(improvements_sync_window_remembers_the_fullscreen_mode) {
     ASSERT_EQ(value(d, "WINDOW"), std::string("Native"));
     ASSERT_TRUE(d.values().fullscreen_mode == tt2::WindowMode::Native);
 }
+
+// ---- WIDESCREEN FILL (P6, deviation UX-6) ---------------------------------
+
+TEST(improvements_widescreen_fill_row_starts_on_and_toggles) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services());
+    ASSERT_EQ(d.dialog().label("LABEL_WIDESCREEN_FILL")->text, std::string("WIDESCREEN FILL"));
+    ASSERT_EQ(value(d, "WIDESCREEN_FILL"), std::string("On"));
+    d.press("BUTTON_WIDESCREEN_FILL_NEXT");
+    ASSERT_TRUE(!d.values().widescreen_fill);
+    ASSERT_EQ(value(d, "WIDESCREEN_FILL"), std::string("Off"));
+    d.press("BUTTON_CANCEL");
+    ASSERT_TRUE(d.values().widescreen_fill);
+}
+
+TEST(improvements_widescreen_fill_works_on_every_renderer) {
+    // One blit per bar, so it is not an enhancement: the software renderer keeps it.
+    Rig r;
+    ImprovementsDialog::Context c;
+    c.active = Backend::Software;
+    tt2::Improvements saved;
+    saved.widescreen_fill = false;
+    ImprovementsDialog d(saved, r.services(), c);
+    ASSERT_TRUE(d.row("WIDESCREEN_FILL")->enabled);
+    d.press("BUTTON_WIDESCREEN_FILL_PREV");
+    ASSERT_TRUE(d.values().widescreen_fill);
+}

@@ -29,7 +29,7 @@ TEST(improvements_default_to_a_window) {
 TEST(improvements_text_round_trip_defaults) {
     const std::string text = serialize(Improvements{});
     ASSERT_EQ(text, std::string("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\nrenderer=auto\nvsync=1\nframe_limit=0\n"
-                                  "resolution=800x600\nfullscreen_mode=borderless\n"));
+                                  "resolution=800x600\nfullscreen_mode=borderless\nwidescreen_fill=1\n"));
     Improvements back;
     back.window = WindowMode::Borderless;
     ASSERT_TRUE(parse(text, back));
@@ -87,6 +87,8 @@ TEST(improvements_text_rejects_garbage) {
         "format=re-twist-tt2 improvements\nresolution=01920x1080\n",        // too long
         "format=re-twist-tt2 improvements\nresolution=1920X1080\n",
         "format=re-twist-tt2 improvements\nfullscreen_mode=windowed\n",     // Alt+Enter needs a fullscreen mode
+        "format=re-twist-tt2 improvements\nwidescreen_fill=yes\n",
+        "format=re-twist-tt2 improvements\nwidescreen_fill=\n",
         "format=re-twist-tt2 improvements\nno equals sign\n",
     };
     for (const char* text : bad) {
@@ -216,4 +218,19 @@ TEST(improvements_alt_enter_returns_to_the_last_fullscreen_mode) {
     ASSERT_TRUE(imp.toggled_window() == WindowMode::Native);
     imp.set_window(imp.toggled_window());
     ASSERT_TRUE(imp.toggled_window() == WindowMode::Windowed);
+}
+
+TEST(improvements_widescreen_fill_round_trips) {
+    for (bool on : {true, false}) {
+        Improvements imp;
+        imp.widescreen_fill = on;
+        Improvements back;
+        ASSERT_TRUE(parse(serialize(imp), back));
+        ASSERT_TRUE(back.widescreen_fill == on);
+    }
+    Improvements imp;
+    imp.widescreen_fill = false;
+    ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nresolution=1280x720\n", imp));
+    ASSERT_TRUE(!imp.widescreen_fill);                                   // a missing key keeps its value
+    ASSERT_TRUE(Improvements{}.widescreen_fill);                         // on by default
 }

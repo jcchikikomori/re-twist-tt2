@@ -243,6 +243,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_render_backend.cpp
         ui/tests/test_frame_clock.cpp
         ui/tests/test_display.cpp
+        ui/tests/test_side_fill.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)

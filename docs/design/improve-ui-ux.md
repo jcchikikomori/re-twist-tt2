@@ -91,7 +91,7 @@ Each row is filled in by the phase that ships it.
 | UX-3 | SETTINGS hides its FULLSCREEN switch | 0.3.0 (P2) |
 | UX-4 | Display options saved in `improvements.txt` | 0.3.0 (P2) |
 | UX-5 | Window sizes up to 1080p; borderless and native fullscreen | 0.3.0 (P5) |
-| UX-6 | Side bars filled in the original palette | |
+| UX-6 | Side bars filled in the original palette | 0.3.0 (P6) |
 | UX-7 | No 60 fps cap by default; vsync or a chosen limit | 0.3.0 (P4) |
 | UX-8 | Filtering, 2x placeholder art, full-resolution dialog layers | |
 | UX-9 | Optional texture upscaler | |

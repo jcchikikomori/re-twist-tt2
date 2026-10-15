@@ -105,6 +105,21 @@ the monitor does the scaling, because the game switches the display to 800x600 (
 - **High pixel density:** the window asks for real pixels (`SDL_WINDOW_HIGH_PIXEL_DENSITY`), so a scaled
   desktop gets a sharp canvas; sizes are in window points, output sizes in pixels.
 
+### What fills the side bars (UX-6)
+
+`ui/include/tt2ui/side_fill.hpp` draws each bar at its pixel size whenever the output size changes:
+
+- **Colours** come from `palette.hpp`, a copy of `tools/gen_placeholders.py`'s palette; a unit test reads the
+  Python file, so the two cannot drift apart.
+- **Pattern:** a vertical gradient from `DEEP` (top) to `ROYAL_DARK` (bottom), rings centred on the game's edge
+  that blend at most 22 % towards `ROYAL` and fade with distance, and a 2 px `GOLD` line against the game. The
+  right bar is the left one mirrored. No RNG and no original art, so the bars look the same with or without an
+  import.
+- **Drawing:** one blit per bar in output pixels, with the logical presentation switched off for those two
+  calls, before the game. It is not an enhancement, so the software renderer draws it too. Any left / right bar
+  is filled (16:9, 16:10, ultrawide); a taller output keeps black bars above and below.
+- **`--dump-frames`** still crops to the 4:3 rectangle, so the bars never appear in a dump.
+
 ### How the port keeps time (UX-7)
 
 `ui/include/tt2ui/frame_clock.hpp` replaces the 16 ms `Sleep` cap:
@@ -135,7 +150,7 @@ borderless fullscreen, vsync, `dt` clamped to 100 ms).
 | --- | --- | --- | --- |
 | UX-1 | Renders with Vulkan, then OpenGL, then software, through SDL3; `renderer=` in `improvements.txt` or `--renderer` picks the first to try; never Direct3D | Direct3D 9 only (2) | 0.3.0 (P1 SDL3, P3 order) |
 | UX-5 | Window sizes from 800x600 to 1920x1080 (4:3 and 16:9) that fit the display; Windowed, Borderless (desktop size) or Native (an exact display mode at the desktop's refresh rate, else the fastest; Borderless when the switch fails); `window=`, `resolution=` and `fullscreen_mode=` in `improvements.txt` | 800x600 only; exclusive 800x600 mode (1, 3) | 0.3.0 (P5) |
-| UX-6 | Side bars beside the 4:3 game filled in the original palette | No widescreen (1) | |
+| UX-6 | Side bars beside the 4:3 game filled with a generated gradient, faint rings and a gold edge in the placeholder palette (`widescreen_fill=` in `improvements.txt`, on by default; off: black); top and bottom bars stay black | No widescreen (1) | 0.3.0 (P6) |
 | UX-7 | No 60 fps cap by default; vsync (on by default) and a frame limit (60, 120, 144, 165 or 240) in `improvements.txt`; a nanosecond clock whose whole-ms steps keep the leftover fraction; the 100 ms clamp is kept | 60 fps cap with `Sleep`; vsync always on (4) | 0.3.0 (P4) |
 | UX-8 | Smooth or pixel-art filtering, 2x placeholder art, full-resolution dialog layers | No scaling (1) | |
 | UX-9 | Optional texture upscaler | None | |

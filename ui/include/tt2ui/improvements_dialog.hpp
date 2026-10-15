@@ -47,6 +47,7 @@ inline constexpr const char* FRAME_LIMIT = "FRAME LIMIT";
 inline constexpr const char* UNLIMITED = "Unlimited";
 inline constexpr const char* FPS = " fps";
 inline constexpr const char* NO_VSYNC = "Not available with this renderer";
+inline constexpr const char* WIDESCREEN_FILL = "WIDESCREEN FILL";
 }  // namespace improvements_strings
 
 // Layout, dialog-local. Rows start under the header; OK / CANCEL sit 83 px
@@ -171,6 +172,8 @@ private:
                              improvements_strings::NATIVE},
                             0, true, {}, {}, {}});
         rows_.push_back(Row{"RESOLUTION", improvements_strings::RESOLUTION, {}, 0, true, {}, {}, {}});
+        rows_.push_back(Row{"WIDESCREEN_FILL", improvements_strings::WIDESCREEN_FILL,
+                            {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}, {}, {}});
         rows_.push_back(Row{"RENDERER", improvements_strings::RENDERER,
                             {improvements_strings::AUTO, backend_title(Backend::Vulkan), backend_title(Backend::OpenGL),
                              backend_title(Backend::Software)},
@@ -249,6 +252,7 @@ private:
                          (values_.renderer != context_.launched ? improvements_strings::AFTER_RESTART : "");
             }
             if (r.id == "VSYNC") r.index = values_.vsync ? 0 : 1;
+            if (r.id == "WIDESCREEN_FILL") r.index = values_.widescreen_fill ? 0 : 1;
             if (r.id == "FRAME_LIMIT")
                 for (std::size_t i = 0; i < std::size(tt2::FRAME_LIMITS); ++i)
                     if (tt2::FRAME_LIMITS[i] == values_.frame_limit) r.index = static_cast<int>(i);
@@ -292,6 +296,7 @@ private:
         }
         if (r.id == "RENDERER") values_.renderer = kRendererOrder[r.index];
         if (r.id == "VSYNC") values_.vsync = r.index == 0;
+        if (r.id == "WIDESCREEN_FILL") values_.widescreen_fill = r.index == 0;
         if (r.id == "FRAME_LIMIT") values_.frame_limit = tt2::FRAME_LIMITS[r.index];
     }
 
