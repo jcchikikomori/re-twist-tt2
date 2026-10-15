@@ -96,3 +96,5 @@ Each row is filled in by the phase that ships it.
 | UX-7 | No 60 fps cap by default; vsync or a chosen limit | 0.3.0 (P4) |
 | UX-8 | Filtering, 2x placeholder art, full-resolution dialog layers | 0.3.0 (P7 filter and layers; P8 art) |
 | UX-9 | Optional texture upscaler (Super-xBR 2x) | 0.3.0 (P9) |
+| UX-10 | "Continue the game?" prompt before a saved game, with an IMPROVEMENTS switch (ASK TO RESUME) back to the original's silent resume | 0.4.0 |
+| UX-11 | Removing a player deletes their saved games; a new player never inherits a removed one's | 0.4.0 |
