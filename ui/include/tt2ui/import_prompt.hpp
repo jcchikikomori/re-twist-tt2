@@ -62,6 +62,9 @@ inline std::string import_progress_text(float progress) {
 }
 
 // The failure dialog's message; it always says whether anything changed.
+// Only install-relative paths (missing or mismatched files) are listed: a
+// write or commit failure can carry the absolute per-user folder, which
+// stays in the log (main.cpp) and out of the dialog.
 inline std::string import_failure_text(const ImportError& e) {
     const std::string n = std::to_string(e.count);
     const char* files = e.count == 1 ? " file" : " files";
@@ -73,8 +76,7 @@ inline std::string import_failure_text(const ImportError& e) {
     case ImportError::Kind::Missing: text = n + files + " missing from that folder.\nNothing was copied."; break;
     case ImportError::Kind::WriteFailed:
     case ImportError::Kind::CommitFailed:
-        text = "The files could not be copied.\nYour previous assets are unchanged.";
-        break;
+        return "The files could not be copied.\nYour previous assets are unchanged.";
     case ImportError::Kind::None: return "";
     }
     for (std::size_t i = 0; i < e.paths.size() && i < IMPORT_LISTED_PATHS; ++i) text += "\n" + e.paths[i];

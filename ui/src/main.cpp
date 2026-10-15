@@ -1829,6 +1829,12 @@ int main(int argc, char** argv) {
         if (import_prompt) {
             import_prompt->tick(dt);   // runs the picker and the import job
             if (!import_prompt->open()) {
+                if (import_job && import_job->stage() == tt2ui::AssetImportJob::Stage::Failed) {
+                    // The dialog stays generic; the details, absolute paths included, go to the log.
+                    const tt2ui::ImportError& err = import_job->error();
+                    std::fprintf(stderr, "import failed: %s\n", tt2ui::to_string(err.kind));
+                    for (const std::string& path : err.paths) std::fprintf(stderr, "  %s\n", path.c_str());
+                }
                 import_prompt.reset();
                 import_job.reset();
                 std::printf("t=%ld ms: assets: prompt closed\n", simulated_ms);

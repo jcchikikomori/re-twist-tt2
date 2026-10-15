@@ -206,6 +206,20 @@ TEST(import_failure_text_for_each_kind) {
     ASSERT_EQ(import_failure_text(e), std::string("8 files did not match.\nNothing was copied.\na\nb\nc"));
 }
 
+TEST(import_failure_text_never_shows_the_user_folder) {
+    // A commit failure records the absolute per-user folder; the dialog
+    // must not show it (it names the user's account).
+    ImportError e;
+    e.count = 1;
+    e.paths = {"/home/someone/.local/share/re-twist-tt2/imported-assets"};
+    for (auto kind : {ImportError::Kind::CommitFailed, ImportError::Kind::WriteFailed}) {
+        e.kind = kind;
+        const std::string text = import_failure_text(e);
+        ASSERT_EQ(text, std::string("The files could not be copied.\nYour previous assets are unchanged."));
+        ASSERT_TRUE(text.find("/home/") == std::string::npos);
+    }
+}
+
 TEST(import_prompt_ignores_hidden_disabled_and_unknown_buttons) {
     Fake fake;
     ImportPromptFlow f(fake.services());
