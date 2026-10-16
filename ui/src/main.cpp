@@ -2045,6 +2045,11 @@ int main(int argc, char** argv) {
     std::printf("improvements: window %s%s\n", tt2::to_string(improvements.window),
                 !save_dir.empty() && !store.has_improvements() ? " (from settings.txt)" : "");
 
+#ifdef __ANDROID__
+    // Back (button or gesture) arrives as SDLK_AC_BACK instead of finishing
+    // the activity; the loop treats it as Escape (T2.2).
+    SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
@@ -2554,6 +2559,22 @@ int main(int argc, char** argv) {
         if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             pick(flow.selection()->buttons(), TooltipSurface::Selection, "menu");
     };
+#ifdef __ANDROID__
+    // Going to the background (T2.2): SDL sends WILL_ENTER_BACKGROUND from
+    // inside the event pump and then blocks there until the app returns, so
+    // the loop below would only see it afterwards, and Android may kill the
+    // app in between. An event watch runs as the event is sent, still on
+    // this thread: pause the round and save it there. SDL pauses audio.
+    std::function<void()> on_background = [&] {
+        with_play([](auto& g) { g.enter_background(); });
+        std::printf("android: entering the background\n");
+    };
+    const SDL_EventFilter background_watch = [](void* user, SDL_Event* ev) {
+        if (ev->type == SDL_EVENT_WILL_ENTER_BACKGROUND) (*static_cast<std::function<void()>*>(user))();
+        return true;
+    };
+    SDL_AddEventWatch(background_watch, &on_background);
+#endif
     while (running) {
         // --hover: a motion event at that canvas point every frame, handed
         // straight to the loop below (the dummy driver drops pushed motion).
@@ -2572,6 +2593,12 @@ int main(int argc, char** argv) {
                 // (SDL2's logical size did this on its own).
                 SDL_ConvertEventToRenderCoordinates(ren, &e);
             }
+#ifdef __ANDROID__
+            if ((e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) && e.key.key == SDLK_AC_BACK)
+                e.key.key = SDLK_ESCAPE;   // Back closes a dialog or pauses, as Escape does
+            if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND)
+                std::printf("android: back in the foreground\n");   // the round stays paused until a tap
+#endif
             if (e.type == SDL_EVENT_MOUSE_MOTION) {
                 mouse_x = e.motion.x;
                 mouse_y = e.motion.y;
@@ -2619,16 +2646,19 @@ int main(int argc, char** argv) {
                 if (e.type == SDL_EVENT_MOUSE_MOTION) profile.mouse_move(e.motion.x, e.motion.y);
                 if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
                     profile.mouse_down(e.button.x, e.button.y);
+                // A tap on the name box brings the on-screen keyboard back
+                // after Back put it away; SDL shows it again when hidden.
+                if (profile.take_keyboard_request() && text_input_on) SDL_StartTextInput(win);
                 if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
                     profile.mouse_up(e.button.x, e.button.y);
                 continue;
             }
             if (game || blitz) {
                 with_play([&](auto& g) {
-                    if (e.type == SDL_EVENT_TEXT_INPUT) {
-                        for (const char* c = e.text.text; *c; ++c) g.type_letter(*c);
-                    }
                     if (e.type == SDL_EVENT_KEY_DOWN) {
+                        if (const char c = letter_for_key(e.key.key, (e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT |
+                                                                                     SDL_KMOD_GUI)) != 0))
+                            g.type_letter(c);
                         switch (e.key.key) {
                             case SDLK_BACKSPACE: g.backspace(); break;
                             case SDLK_RETURN:
@@ -2732,7 +2762,15 @@ int main(int argc, char** argv) {
                     menu_help_press(dialog_mouse_up(menu_help->dialog(), e.button.x, e.button.y));
                 continue;
             }
-            if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) running = false;
+            if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) {
+#ifdef __ANDROID__
+                // Back on the menu: put the app in the background (SDL calls
+                // moveTaskToBack) instead of quitting, as Android apps do.
+                SDL_MinimizeWindow(win);
+#else
+                running = false;
+#endif
+            }
             if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0) {
                 auto* menu = flow.selection();
                 if (e.type == SDL_EVENT_MOUSE_MOTION) menu->mouse_move(e.motion.x, e.motion.y, hit);
@@ -2951,7 +2989,9 @@ int main(int argc, char** argv) {
             std::printf("t=%ld ms: scene %d\n", simulated_ms, static_cast<int>(last_scene));
             if (last_scene == SceneId::Selection) menu_entered();
         }
-        const bool want_text = profile.wants_text_input() || ((game || blitz) && !profile.open());
+        // Only the name dialog takes text: anything else would bring up the
+        // on-screen keyboard (Android, Steam Deck). Rounds read key presses.
+        const bool want_text = profile.wants_text_input();
         if (want_text != text_input_on) {
             text_input_on = want_text;
             if (text_input_on) SDL_StartTextInput(win); else SDL_StopTextInput(win);
@@ -3107,6 +3147,9 @@ int main(int argc, char** argv) {
     if (cursor_wait) SDL_DestroyCursor(cursor_wait);
     if (cursor_hand) SDL_DestroyCursor(cursor_hand);
     if (cursor_arrow) SDL_DestroyCursor(cursor_arrow);
+#ifdef __ANDROID__
+    SDL_RemoveEventWatch(background_watch, &on_background);
+#endif
     assets.release();   // before the mixer and the renderer it came from
     audio_out.close();
     for (DialogLayer* l : {&game_under_layer, &game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
