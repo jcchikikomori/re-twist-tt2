@@ -26,6 +26,10 @@
 - **Import the original game but in a zip (compressed) form**, then the port will decompress and will install inside of the game
 - The imported assets should be stored on a [scoped storage](https://source.android.com/docs/core/storage/scoped)
 
+## Improvements
+
+- Remove the following options for Android: "Display Mode" & "Resolution"
+
 ## Legacy Edition
 
 - Soon, we would have a separate build for Android 5.0 until Android 11.0
