@@ -190,6 +190,7 @@ if(TT2_BUILD_UI)
             # is no folder dialog on Android (Phase 3 imports from a ZIP).
             add_library(tt2_app SHARED ${TT2_APP_SOURCES} ui/src/folder_picker_android.cpp)
             set_target_properties(tt2_app PROPERTIES OUTPUT_NAME main)
+            target_link_libraries(tt2_app PRIVATE log)   # stdout/stderr -> logcat
         else()
             enable_language(C)
             add_library(tt2_tinyfd STATIC third_party/tinyfiledialogs/tinyfiledialogs.c)

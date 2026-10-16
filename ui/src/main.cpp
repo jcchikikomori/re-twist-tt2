@@ -29,6 +29,8 @@
 // Renames main() to SDL_main(), the symbol SDLActivity looks up in
 // libmain.so. Desktop builds keep a plain main() without it.
 #include <SDL3/SDL_main.h>
+#include <android/log.h>
+#include <unistd.h>
 #endif
 #include <SDL3_image/SDL_image.h>
 #include <SDL3_mixer/SDL_mixer.h>
@@ -333,12 +335,23 @@ bool file_exists(const std::string& path) {
 }
 
 bool read_text(const std::string& path, std::string& out) {
+#ifdef __ANDROID__
+    // Relative paths are APK assets there, which only SDL's file API can
+    // open (T0.3 of docs/plans/android-support.md; T1.1 copies them out).
+    size_t size = 0;
+    void* bytes = SDL_LoadFile(path.c_str(), &size);
+    if (!bytes) return false;
+    out.assign(static_cast<const char*>(bytes), size);
+    SDL_free(bytes);
+    return true;
+#else
     std::ifstream in(tt2::utf8_path(path), std::ios::binary);
     if (!in) return false;
     std::ostringstream ss;
     ss << in.rdbuf();
     out = ss.str();
     return true;
+#endif
 }
 
 // Procedural letter ball for IMAGE_LETTERBALL_ANIM (placeholder build):
@@ -1747,7 +1760,39 @@ void draw_dialog_layer(SDL_Renderer* ren, LayerSize px, DialogLayer& layer, int 
     if (above) draw_closing();
 }
 
+#ifdef __ANDROID__
+// Android discards stdout and stderr, so the game's printf diagnostics
+// (dictionary, renderer, import status) would vanish. Route both through a
+// pipe into logcat, one line per entry: `adb logcat -s tt2`.
+void redirect_stdio_to_logcat() {
+    static int fds[2];
+    if (pipe(fds) != 0) return;
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+    dup2(fds[1], STDOUT_FILENO);
+    dup2(fds[1], STDERR_FILENO);
+    std::thread([] {
+        std::string line;
+        char buf[512];
+        ssize_t n;
+        while ((n = read(fds[0], buf, sizeof buf)) > 0) {
+            for (ssize_t i = 0; i < n; ++i) {
+                if (buf[i] != '\n') {
+                    line += buf[i];
+                    continue;
+                }
+                __android_log_write(ANDROID_LOG_INFO, "tt2", line.c_str());
+                line.clear();
+            }
+        }
+    }).detach();
+}
+#endif
+
 int main(int argc, char** argv) {
+#ifdef __ANDROID__
+    redirect_stdio_to_logcat();
+#endif
     std::string assets_flag;      // --assets DIR: read the art from DIR, never ask
     std::string assets_env;       // TT2_ASSETS, same as --assets
     if (const char* env = std::getenv("TT2_ASSETS")) assets_env = env;
@@ -1847,6 +1892,11 @@ int main(int argc, char** argv) {
     // The data folder (dictionaries, asset manifest). Packaged builds
     // (AppImage, Windows zip) carry it next to the executable; a source
     // build falls back to TT2_DATA_DIR.
+#ifdef __ANDROID__
+    // The APK's assets/data/ (android/app/build.gradle.kts). std::filesystem
+    // can't see inside the APK, so there is nothing to probe.
+    if (!data_dir_given) data_dir = "data";
+#else
     if (!data_dir_given) {
         std::string exe_dir;
         if (const char* base = SDL_GetBasePath()) exe_dir = base;
@@ -1856,6 +1906,7 @@ int main(int argc, char** argv) {
                    std::filesystem::exists(std::filesystem::path(d) / "common.tree", ec);
         });
     }
+#endif
 
     // The original art: the player's own install, imported into a per-user
     // folder and checked against data/original-assets.sha256

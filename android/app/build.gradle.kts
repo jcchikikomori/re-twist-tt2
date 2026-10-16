@@ -65,6 +65,21 @@ val fetchSdlJava by tasks.registering {
     }
 }
 
+// The game's data/ as APK assets (assets/data/), read through SDL's file
+// API. An allow-list, the same files CMake's install() ships: the source
+// tree's data/ may also hold the player's own GameHouse common.tree and
+// full.tree, which must never be packaged.
+val bundledAssetsDir = layout.buildDirectory.dir("generated/tt2-assets")
+
+val bundleGameData by tasks.registering(Sync::class) {
+    from(rootProject.file("../data")) {
+        include("open-common.tree", "open-full.tree", "LICENSE.md", "original-assets.sha256")
+        include("placeholder/**")
+        into("data")
+    }
+    into(bundledAssetsDir)
+}
+
 android {
     namespace = "com.jcchikikomori.retwisttt2"
     compileSdk = 35
@@ -101,6 +116,7 @@ android {
     }
 
     sourceSets["main"].java.srcDir(sdlJavaDir)
+    sourceSets["main"].assets.srcDir(bundledAssetsDir)
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -116,4 +132,4 @@ kotlin {
     jvmToolchain(17)
 }
 
-tasks.named("preBuild") { dependsOn(fetchSdlJava) }
+tasks.named("preBuild") { dependsOn(fetchSdlJava, bundleGameData) }
