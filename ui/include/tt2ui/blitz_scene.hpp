@@ -57,13 +57,21 @@ constexpr float BLITZ_LIST_SCALE = 0.33f;      // 0x414780: 0x3ea8f5c3
 constexpr float BLITZ_CURRENT_MID_X = 493.0f;
 constexpr float BLITZ_RACK_Y = 281.0f;         // 0x414780: 0x438c8000
 constexpr float BLITZ_ENTRY_Y = 212.0f;
-// IMAGE_BLITZ_MARK (x.png 22x44, two 22x22 frames) at x = 207, y = the
-// rack's y (0x414340). Round end: frame 1 solved, 0 not (0x411ef0).
-constexpr float BLITZ_MARK_X = 207.0f;
+// IMAGE_BLITZ_MARK (x.png 22x44, two 22x22 frames): 0x414340 puts it at
+// (207, rack y), then 0x414c70 moves it to x = panel width + 10 (see
+// blitz_panel_w). Round end: frame 1 solved, 0 not (0x411ef0).
 constexpr int BLITZ_MARK_SOLVED_FRAME = 1;
-// SPRITE_TIMER (timerBar.PNG 321x92, two 321x46 frames) at (343, 110);
-// scale-x = t / 80300, frame 1 only while time is being added (0x415300).
+// SPRITE_TIMER (timerBar.PNG 321x92, two 321x46 frames) at (343, 110).
+// Never scaled: 0x415300 clips it to (0, 0, 321 * t / 80300, 46), so the
+// art shows from the left and its right end is cut off. Frame 1 only
+// while time is being added.
 constexpr float BLITZ_TIMER_X = 343.0f, BLITZ_TIMER_Y = 110.0f;
+constexpr float BLITZ_TIMER_W = 321.0f, BLITZ_TIMER_H = 46.0f;
+// The list look (0x43d280(0)): each rack ball shows its 24 px child from
+// IMAGE_LETTERBALL_40 (letterball_anim_40.png 408x624, 17 x 26 frames,
+// the same frame index as the 60 px sheet) and each rack cell its
+// IMAGE_BLITZDOT (16x16), both centred at scale 2.5 (0x439d00, 0x43ab90).
+constexpr float BLITZ_SMALL_SCALE = 2.5f;
 // IMAGE_HINT_LETTERS (hint_letters.png 621x207, 9 columns, 27 frames of
 // 69x69): frame = letter - 0x60. 0x43c990 fades one in, 0 -> 0.392 in 500 ms.
 constexpr int BLITZ_HINT_FADE_MS = 500;
@@ -75,14 +83,17 @@ constexpr int BLITZ_SOLVED_FRAME_MS = 60;
 // 0x414780: a switch with letters in the old row clears them first and
 // waits 500 ms.
 constexpr int BLITZ_SWITCH_CLEAR_MS = 500;
-// UNKNOWN in the original (GF2 defaults of 0x486560 / 0x47ece0 /
-// 0x408e90): the port's choices for the rack slide and the time-bar grow.
+// 0x414780: the rack slides (linear) and scales (smoothstep) in 400 ms;
+// the entry row fades (linear) in the same 400 ms.
 constexpr int BLITZ_SWITCH_MS = 400;
-constexpr int BLITZ_TIME_ADDED_MS = 500;
+// 0x4116e0 @0x411af4: the +8 s clip grows for (L + 4) * 100 ms, L = the
+// solved word's length. Worked example: L = 6 -> 1000 ms. Its easing is
+// UNKNOWN (the register is clobbered before 0x47ece0); the port is linear.
+inline int blitz_time_added_ms(std::size_t length) { return (static_cast<int>(length) + 4) * 100; }
 // 0x411ef0: per word, first at 400 ms then +100 ms; the solved letters
 // fade in over 400 ms; the mark fades in over 150 ms while it grows
-// 1 -> 1.2 (300 ms, smoothstep) and settles 1.2 -> 1 (100 ms). The 2000 ms
-// wait starts when the last word's reveal starts.
+// sideways, scale-x 0 -> 1.2 (300 ms, smoothstep) then 1.2 -> 1 (100 ms,
+// smoothstep). The 2000 ms wait starts when the last word's reveal starts.
 constexpr int BLITZ_REVEAL_FIRST_MS = 400;
 constexpr int BLITZ_REVEAL_STEP_MS = 100;
 constexpr int BLITZ_REVEAL_FADE_MS = 400;
@@ -111,42 +122,50 @@ inline SheetSpec blitz_mark_sheet() { return sheet("IMAGE_BLITZ_MARK", 22, 44, 1
 inline SheetSpec blitz_timer_sheet() { return sheet("IMAGE_TIMERBAR", 321, 92, 1, 2, 2); }
 inline SheetSpec hint_letter_sheet() { return sheet("IMAGE_HINT_LETTERS", 621, 207, 9, 3, 27); }
 
-// The word-list panel around the racks (0x414c70). INFERRED geometry:
-// the decompilation of 0x414c70 is too garbled to read the formulas, so
-// (the ids carry the section: gamescene has its own IMAGE_PANEL_* files)
-// the port frames the list rows in the panel art: a 197 px wide box (the
-// XML's corner x) from 10 px above the first rack to the last row's
-// 40 px, edged by the 1 px / 10 px strips and the two corners.
-constexpr float BLITZ_PANEL_W = 197.0f;
+// The word-list panel around the racks (0x414c70; the ids carry the
+// section, gamescene has its own IMAGE_PANEL_* files). Its size follows
+// the round (0x415280 = the longest word): w = 26 * maxL - 10,
+// top = 285 - 20n - 10, h = 40n. The 10 px strips and corners frame a
+// background scaled to (w, h - 20). Worked example n = 5, maxL = 6:
+// top 175, w 146, the right edge 185..365, the bottom strip at 365.
 constexpr float BLITZ_PANEL_EDGE = 10.0f;
-inline std::vector<SpriteState> blitz_panel(std::size_t n) {
-    const float top = blitz_list_top(n) - BLITZ_PANEL_EDGE;
-    const float bottom = blitz_list_top(n) + static_cast<float>(n) * BLITZ_LIST_PITCH;
-    const float h = bottom - top;
+inline float blitz_panel_w(std::size_t max_len) { return 26.0f * static_cast<float>(max_len) - 10.0f; }
+inline float blitz_panel_top(std::size_t n) { return blitz_list_top(n) - BLITZ_PANEL_EDGE; }
+inline float blitz_panel_h(std::size_t n) { return static_cast<float>(n) * BLITZ_LIST_PITCH; }
+inline std::vector<SpriteState> blitz_panel(std::size_t n, std::size_t max_len) {
+    const float w = blitz_panel_w(max_len);
+    const float top = blitz_panel_top(n);
+    const float h = blitz_panel_h(n);
+    const float inner = h - 2.0f * BLITZ_PANEL_EDGE;
     std::vector<SpriteState> out;
-    SpriteState bg = sprite("PANEL_BG", sheet("blitzscene/IMAGE_PANEL_BG", 195, 600), 0, top);
-    bg.scale_x = BLITZ_PANEL_W / 195.0f;
-    bg.scale_y = h / 600.0f;
+    SpriteState bg = sprite("PANEL_BG", sheet("blitzscene/IMAGE_PANEL_BG", 195, 600), 0, top + BLITZ_PANEL_EDGE);
+    bg.scale_x = w / 195.0f;
+    bg.scale_y = inner / 600.0f;
     out.push_back(bg);
-    SpriteState t = sprite("PANEL_LEFT", sheet("blitzscene/IMAGE_PANEL_TOP", 1, 10), 0, top - BLITZ_PANEL_EDGE);
-    t.scale_x = BLITZ_PANEL_W;
+    SpriteState t = sprite("PANEL_LEFT", sheet("blitzscene/IMAGE_PANEL_TOP", 1, 10), 0, top);
+    t.scale_x = w;
     out.push_back(t);
-    SpriteState b = sprite("PANEL_BOTTOM", sheet("blitzscene/IMAGE_PANEL_BOTTOM", 1, 10), 0, bottom);
-    b.scale_x = BLITZ_PANEL_W;
+    SpriteState b = sprite("PANEL_BOTTOM", sheet("blitzscene/IMAGE_PANEL_BOTTOM", 1, 10), 0, top + h - BLITZ_PANEL_EDGE);
+    b.scale_x = w;
     out.push_back(b);
-    SpriteState r = sprite("PANEL_RIGHT", sheet("blitzscene/IMAGE_PANEL_SIDER", 10, 1), BLITZ_PANEL_W, top);
-    r.scale_y = h;
+    SpriteState r = sprite("PANEL_RIGHT", sheet("blitzscene/IMAGE_PANEL_SIDER", 10, 1), w, top + BLITZ_PANEL_EDGE);
+    r.scale_y = inner;
     out.push_back(r);
-    out.push_back(sprite("PANEL_LEFTCORNER", sheet("blitzscene/IMAGE_PANEL_CORNERTOPR", 10, 10), BLITZ_PANEL_W, top - BLITZ_PANEL_EDGE));
-    out.push_back(sprite("PANEL_RIGHTCORNER", sheet("blitzscene/IMAGE_PANEL_CORNERR", 10, 10), BLITZ_PANEL_W, bottom));
+    out.push_back(sprite("PANEL_LEFTCORNER", sheet("blitzscene/IMAGE_PANEL_CORNERTOPR", 10, 10), w, top));
+    out.push_back(sprite("PANEL_RIGHTCORNER", sheet("blitzscene/IMAGE_PANEL_CORNERR", 10, 10), w, top + h - BLITZ_PANEL_EDGE));
     return out;
 }
+inline SheetSpec blitz_small_ball_sheet() { return sheet("IMAGE_LETTERBALL_40", 408, 624, 17, 26, 442); }
+inline SheetSpec blitz_dot_sheet() { return sheet("IMAGE_BLITZDOT", 16, 16); }
 
-// One ball to draw: screen centre, scale and alpha.
+// One ball to draw: screen centre, scale and alpha. `small`: the list
+// look's 24 px child draws over it at full alpha (0x411ef0 shows a solved
+// word's tiles at once while only the 60 px ball fades in).
 struct BlitzBallDraw {
     LetterBall ball;   // x / y on screen
     float scale = 1.0f;
     float alpha = 1.0f;
+    bool small = false;
 };
 
 // One word of the round on screen (0x414340's word object).
@@ -167,8 +186,12 @@ struct BlitzWordView {
     // The round-end reveal: wait, then mark and letters.
     int reveal_delay_ms = -1;       // -1: not revealing
     int reveal_elapsed_ms = -1;
-    float letters_alpha = 1.0f;     // the solved letters fade in at the reveal
+    float letters_alpha = 1.0f;     // the 60 px balls fade in at the reveal
     SpriteState mark;
+    // 0x43d280: the list look (small balls and blitz dots). On for a rack
+    // in the list; off as a word's move up starts, on again when its move
+    // back down ends.
+    bool list_look = true;
 
     bool moving() const { return move_ms > 0 && move_elapsed_ms < move_ms; }
     float screen_x(float local) const { return x + local * scale; }
@@ -197,12 +220,14 @@ struct BlitzWordView {
             left -= used;
             if (move_delay_ms > 0) return;
         }
+        if (to_scale >= 1.0f) list_look = false;   // 0x414780: 0x43d280(1) as the move starts
         move_elapsed_ms = std::min(move_ms, move_elapsed_ms + left);
         const float t = static_cast<float>(move_elapsed_ms) / static_cast<float>(move_ms);   // linear, 0x4307e0
         x = from_x + (to_x - from_x) * t;
         y = from_y + (to_y - from_y) * t;
-        scale = from_scale + (to_scale - from_scale) * t;
+        scale = from_scale + (to_scale - from_scale) * ease(Easing::Smoothstep, t);   // 0x4513d0
         entry_alpha = entry_from + (entry_to - entry_from) * t;
+        if (!moving() && to_scale < 1.0f) list_look = true;   // 0x43d280(0) once the scale ends
     }
 };
 
@@ -248,11 +273,20 @@ public:
 
     SpriteState timer_bar() const {
         SpriteState s = sprite("SPRITE_TIMER", blitz_timer_sheet(), BLITZ_TIMER_X, BLITZ_TIMER_Y);
-        s.scale_x = timer_fraction_;
+        s.has_clip = true;
+        s.clip = {0.0f, 0.0f, BLITZ_TIMER_W * timer_fraction_, BLITZ_TIMER_H};
         s.frame = time_added_ms_ > 0 ? 1 : 0;
         return s;
     }
-    std::vector<SpriteState> panel() const { return blitz_panel(views_.size()); }
+    // 0x415280: the longest word of the round sizes the panel.
+    std::size_t max_word_length() const {
+        std::size_t n = 0;
+        for (const auto& w : views_) n = std::max(n, w.answer.size());
+        return n;
+    }
+    std::vector<SpriteState> panel() const { return blitz_panel(views_.size(), max_word_length()); }
+    // How long the current +8 s grow runs (0 when none is running).
+    int time_added_total_ms() const { return time_added_ms_ > 0 ? time_added_total_ms_ : 0; }
     // PAUSE_VEIL (pauseshield.png 220x545 at 0, 0) covers the word list
     // while DIALOG_MENU is up (0x4135e0 / 0x4169d0), the dialogs it opens
     // included.
@@ -286,6 +320,22 @@ public:
         }
         return out;
     }
+    // 0x43ab90 / 0x43d280(0): a blitz dot in each cell of a rack in the
+    // list look. The balls cover them, so they show on solved racks.
+    std::vector<SpriteState> blitz_dots() const {
+        std::vector<SpriteState> out;
+        for (const auto& w : views_) {
+            if (!w.list_look) continue;
+            for (std::size_t i = 0; i < w.answer.size(); ++i) {
+                const float lx = static_cast<float>(i) * BALL_PITCH + BALL_HALF;
+                SpriteState s = sprite("BLITZDOT", blitz_dot_sheet(), w.screen_x(lx), w.screen_y(BALL_HALF));
+                s.anchor = Anchor::Center;
+                s.scale = BLITZ_SMALL_SCALE * w.scale;
+                out.push_back(s);
+            }
+        }
+        return out;
+    }
     // 0x43c990: the hint letters, left to right in the entry row.
     std::vector<SpriteState> hint_letters() const {
         std::vector<SpriteState> out;
@@ -296,8 +346,10 @@ public:
                 SpriteState s = sprite("HINT_LETTER", hint_letter_sheet(), w.entry_x() + lx, BLITZ_ENTRY_Y + BALL_HALF);
                 s.anchor = Anchor::Center;
                 s.frame = w.answer[i] - 0x60;
+                // 0x430440 caps a HINT_LETTER at its own alpha when the
+                // row fades: min, not a product.
                 const float t = std::min(1.0f, static_cast<float>(w.hint_fade_ms[i]) / BLITZ_HINT_FADE_MS);
-                s.alpha = BLITZ_HINT_ALPHA * t * w.entry_alpha;
+                s.alpha = std::min(BLITZ_HINT_ALPHA * t, w.entry_alpha);
                 out.push_back(s);
             }
         }
@@ -318,14 +370,16 @@ public:
                 d.ball.x = w.screen_x(b.x);
                 d.ball.y = w.screen_y(b.y);
                 d.alpha = w.letters_alpha;
+                d.small = w.list_look;
                 // The entry row stays where it is; only the rack slides.
                 if (b.played) {
                     d.ball.x = w.entry_x() + b.x;
                     d.ball.y = BLITZ_ENTRY_Y + (b.y + BALL_PITCH);
                     d.scale = 1.0f;
                     d.alpha = w.entry_alpha;
+                    d.small = false;
                 }
-                if (d.alpha > 0.0f) out.push_back(d);
+                if (d.alpha > 0.0f || d.small) out.push_back(d);
             }
         }
         return out;
@@ -447,8 +501,14 @@ public:
             default: break;
         }
     }
-    // 0x4169d0, event 0x206: DIALOG_MENU unless a dialog is up.
-    void focus_lost() { if (!dialog_open()) open_pause_menu(); }
+    // 0x4169d0, event 0x206: DIALOG_MENU, unless it is up already. Under
+    // another dialog it waits (+0x20c = 2) until that dialog closes.
+    void focus_lost() {
+        if (pause_veil()) return;
+        if (dialog_open()) menu_pending_ = true;
+        else open_pause_menu();
+    }
+    bool menu_pending() const { return menu_pending_; }
 
     bool pointer_over_clickable() const {
         if (settings_) return settings_->pointer_hot();
@@ -465,7 +525,9 @@ public:
             b.hover = over;
             if (!over) b.pressed = false;
         }
-        hot_ = ball_at(x, y) >= 0 || rack_at(x, y) >= 0;
+        // 0x4162b0: the hand over unsolved words, over every word after the round.
+        const int r = rack_at(x, y);
+        hot_ = ball_at(x, y) >= 0 || (r >= 0 && (round_.over() || !round_.words()[static_cast<std::size_t>(r)].solved));
     }
     void mouse_down(float x, float y) {
         if (settings_) { settings_->mouse_down(x, y); return; }
@@ -589,6 +651,10 @@ public:
         for (auto& b : dialog_balls_)
             if (b.tick(dt_ms)) play(SoundId::LetterLoad);
         for (auto& p : dialog_particles_) p.tick(dt_ms);
+        if (menu_pending_ && !dialog_open()) {
+            menu_pending_ = false;
+            open_pause_menu();
+        }
         if (paused()) return;
         queue_.update(dt_ms);
         popups_.update(dt_ms);
@@ -650,6 +716,8 @@ private:
         solved_flip_.clear();
         views_.clear();
         const auto& words = round_.words();
+        std::size_t max_len = 0;
+        for (const auto& w : words) max_len = std::max(max_len, w.word.size());
         for (std::size_t i = 0; i < words.size(); ++i) {
             BlitzWordView v;
             v.answer = words[i].word;
@@ -665,7 +733,8 @@ private:
             if (words[i].solved) show_solved(v, words[i].word);
             v.x = BLITZ_LIST_X;
             v.y = blitz_list_y(words.size(), i);
-            v.mark = sprite("BLITZ_MARK", blitz_mark_sheet(), BLITZ_MARK_X, v.y);
+            // No anchor call (top-left), at x = panel width + 10 (0x414c70).
+            v.mark = sprite("BLITZ_MARK", blitz_mark_sheet(), blitz_panel_w(max_len) + BLITZ_PANEL_EDGE, v.y);
             v.mark.visible = false;
             views_.push_back(v);
         }
@@ -697,6 +766,7 @@ private:
         v.scale = v.to_scale = 1.0f;
         v.entry_alpha = v.entry_to = 1.0f;
         v.move_ms = 0;
+        v.list_look = false;
     }
 
     // 0x414660 / 0x414780: the old word goes back to the list (its typed
@@ -760,12 +830,14 @@ private:
             return;
         }
         changed();
-        // +8 s: popup 6, the sound, the bar grows (frame 1) while input
-        // waits; then 0x411520 moves on to the next unsolved word.
+        // +8 s: popup 6, the sound, the bar's clip grows (frame 1) for
+        // (L + 4) * 100 ms while input waits; then 0x411520 moves on to
+        // the next unsolved word.
         popups_.push(PopupKind::ExtraTime);
         play(SoundId::LightningTimeAdded);
         busy_ = true;
-        time_added_ms_ = BLITZ_TIME_ADDED_MS;
+        time_added_total_ms_ = blitz_time_added_ms(w.answer.size());
+        time_added_ms_ = time_added_total_ms_;
         timer_from_ = timer_fraction_;
         refresh_buttons();
     }
@@ -774,7 +846,7 @@ private:
         if (time_added_ms_ <= 0) return;
         time_added_ms_ = std::max(0, time_added_ms_ - dt);
         const float to = static_cast<float>(round_.time_ms()) / tt2::LIGHTNING_START_MS;
-        const float t = 1.0f - static_cast<float>(time_added_ms_) / BLITZ_TIME_ADDED_MS;
+        const float t = 1.0f - static_cast<float>(time_added_ms_) / static_cast<float>(time_added_total_ms_);
         timer_fraction_ = timer_from_ + (to - timer_from_) * t;
         if (time_added_ms_ > 0) return;
         busy_ = false;
@@ -835,12 +907,12 @@ private:
         v.mark.visible = true;
         v.mark.frame = solved ? BLITZ_MARK_SOLVED_FRAME : 0;
         v.mark.alpha = 0.0f;
-        v.mark.anchor = Anchor::Center;
-        v.mark.x = BLITZ_MARK_X + 11.0f;
-        v.mark.y = blitz_list_y(views_.size(), i) + 11.0f;
+        v.mark.scale_x = 0.0f;   // grows sideways from its left edge
         v.entry_alpha = v.entry_to = 0.0f;
         if (solved) {
-            // The entry row's tiles move into the rack, slot for slot, and fade in.
+            // 0x43bad0(0, j, 1.0): the entry row's tiles snap into the rack,
+            // slot for slot; their small tiles show at once and only the
+            // 60 px balls fade in.
             for (auto& b : v.balls) {
                 if (!b.played) continue;
                 b.played = false;
@@ -916,13 +988,13 @@ private:
                 const int e = v.reveal_elapsed_ms;
                 v.mark.alpha = std::min(1.0f, static_cast<float>(e) / BLITZ_MARK_FADE_MS);
                 if (e < BLITZ_MARK_GROW_MS)
-                    v.mark.scale = 1.0f + (BLITZ_MARK_OVERSHOOT - 1.0f) *
-                                              ease(Easing::Smoothstep, static_cast<float>(e) / BLITZ_MARK_GROW_MS);
+                    v.mark.scale_x = BLITZ_MARK_OVERSHOOT *
+                                     ease(Easing::Smoothstep, static_cast<float>(e) / BLITZ_MARK_GROW_MS);
                 else if (e < BLITZ_MARK_GROW_MS + BLITZ_MARK_SETTLE_MS)
-                    v.mark.scale = BLITZ_MARK_OVERSHOOT - (BLITZ_MARK_OVERSHOOT - 1.0f) *
-                                                              ease(Easing::Smoothstep, static_cast<float>(e - BLITZ_MARK_GROW_MS) / BLITZ_MARK_SETTLE_MS);
+                    v.mark.scale_x = BLITZ_MARK_OVERSHOOT - (BLITZ_MARK_OVERSHOOT - 1.0f) *
+                                                                ease(Easing::Smoothstep, static_cast<float>(e - BLITZ_MARK_GROW_MS) / BLITZ_MARK_SETTLE_MS);
                 else
-                    v.mark.scale = 1.0f;
+                    v.mark.scale_x = 1.0f;
                 v.letters_alpha = std::min(1.0f, std::max(v.letters_alpha, static_cast<float>(e) / BLITZ_REVEAL_FADE_MS));
             }
         }
@@ -1204,20 +1276,25 @@ private:
             for (const auto& b : w.balls) if (b.played) ++played;
             has_last = !round_.current_word().last_word.empty();
         }
-        // The arrows sit just outside the panel (0x414c70).
-        const float top = blitz_list_top(views_.size()) - BLITZ_PANEL_EDGE;
-        const float bottom = blitz_list_top(views_.size()) + static_cast<float>(views_.size()) * BLITZ_LIST_PITCH;
+        // 0x414c70: the arrows centred on the panel width (floored by
+        // 0x419900, INFERRED), PREV one arrow height above the panel,
+        // NEXT 10 px below it. Worked example n = 5, maxL = 6: w = 146,
+        // PREV at (35, 113), NEXT at (35, 385).
+        const float w = blitz_panel_w(max_word_length());
+        const float top = blitz_panel_top(views_.size());
+        const float bottom = top + blitz_panel_h(views_.size());
         for (auto& b : buttons_) {
             const std::string& n = b.sprite.name;
+            const float arrow_x = std::floor(w * 0.5f - static_cast<float>(b.sprite.sheet.frame_w) * 0.5f);
             if (n == "BUTTON_Menu") b.enabled = !dialog_open();
             else if (n == "BUTTON_GiveUp") b.enabled = live;
             else if (n == "BUTTON_PREVWORD") {
                 b.enabled = live;
-                b.sprite.x = (BLITZ_PANEL_W + BLITZ_PANEL_EDGE) * 0.5f - b.sprite.sheet.frame_w * 0.5f;
-                b.sprite.y = top - BLITZ_PANEL_EDGE - static_cast<float>(b.sprite.sheet.frame_h);
+                b.sprite.x = arrow_x;
+                b.sprite.y = top - static_cast<float>(b.sprite.sheet.frame_h);
             } else if (n == "BUTTON_NEXTWORD") {
                 b.enabled = live;
-                b.sprite.x = (BLITZ_PANEL_W + BLITZ_PANEL_EDGE) * 0.5f - b.sprite.sheet.frame_w * 0.5f;
+                b.sprite.x = arrow_x;
                 b.sprite.y = bottom + BLITZ_PANEL_EDGE;
             }
             else if (n == "BUTTON_Clear") b.enabled = live && played > 0;
@@ -1246,9 +1323,10 @@ private:
     GamePhase phase_ = GamePhase::Playing;
     bool finished_ = false;
     bool busy_ = false;              // +0x2f9: time added / round-end reveal
-    int time_added_ms_ = 0;
+    int time_added_ms_ = 0, time_added_total_ms_ = 0;
     float timer_fraction_ = 1.0f, timer_from_ = 1.0f;
     bool hot_ = false;
+    bool menu_pending_ = false;      // +0x20c = 2: focus lost under a dialog
     std::vector<MenuButton> buttons_;
     MessagePopups popups_;
     TrophyPopups trophies_;

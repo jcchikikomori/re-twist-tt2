@@ -116,7 +116,7 @@ TEST(blitz_solve_scores_adds_time_and_moves_to_the_next_word) {
     ASSERT_TRUE(f.b().busy());
     ASSERT_TRUE(!f.b().button("BUTTON_Twist")->enabled);   // locked while the bar grows
     ASSERT_EQ(f.b().timer_bar().frame, 1);
-    f.run(BLITZ_TIME_ADDED_MS);
+    f.run(blitz_time_added_ms(5));
     ASSERT_TRUE(!f.b().busy());
     ASSERT_EQ(f.b().current(), std::size_t{1});
     ASSERT_TRUE(!f.b().round().passed());
@@ -157,7 +157,7 @@ TEST(blitz_clock_runs_beeps_and_stops_under_the_menu) {
     ASSERT_EQ(f.count(SoundId::LightningTimeLow), 1);
     ASSERT_EQ(f.b().timer_minutes_text(), std::string("0"));
     ASSERT_EQ(f.b().timer_seconds_text(), std::string(":09"));
-    ASSERT_TRUE(near(f.b().timer_bar().scale_x, 9900.0f / 80300.0f));
+    ASSERT_TRUE(near(f.b().timer_bar().clip.w, 321.0f * 9900.0f / 80300.0f));
     f.b().key_escape();
     ASSERT_TRUE(f.b().pause_veil());
     f.run(5000);
@@ -217,7 +217,7 @@ TEST(blitz_rack_click_selects_a_word_or_opens_its_definition) {
 TEST(blitz_last_word_wins_the_round_with_trophies_and_next_round) {
     Fixture f(two(), 2500);
     f.enter("crate");
-    f.run(BLITZ_TIME_ADDED_MS + BLITZ_SWITCH_MS);
+    f.run(blitz_time_added_ms(5) + BLITZ_SWITCH_MS);
     f.enter("trace");
     ASSERT_EQ(f.b().score(), 250 + 250 + 1000);
     ASSERT_TRUE(f.b().phase() == GamePhase::Reveal);
@@ -310,9 +310,171 @@ TEST(blitz_rejects_a_classic_save) {
     ASSERT_EQ(b.words().size(), std::size_t{5});
 }
 
-TEST(blitz_panel_frames_the_list) {
-    const auto p = blitz_panel(5);
+TEST(blitz_panel_follows_the_longest_word) {
+    // n = 5, maxL = 6: top 175, w 146, h 200 (worked example in blitz_scene.hpp).
+    ASSERT_TRUE(near(blitz_panel_w(6), 146.0f) && near(blitz_panel_w(8), 198.0f));
+    const auto p = blitz_panel(5, 6);
     ASSERT_EQ(p.size(), std::size_t{6});
-    ASSERT_TRUE(near(p[0].y, 175.0f));                     // 10 px above the first rack
-    ASSERT_TRUE(near(p[0].scale_y * 600.0f, 210.0f));     // to 185 + 5 * 40
+    // bg, top strip, bottom strip, right side, top corner, bottom corner.
+    ASSERT_TRUE(near(p[0].y, 185.0f) && near(p[0].scale_x * 195.0f, 146.0f) && near(p[0].scale_y * 600.0f, 180.0f));
+    ASSERT_TRUE(near(p[1].y, 175.0f) && near(p[1].scale_x, 146.0f));
+    ASSERT_TRUE(near(p[2].y, 365.0f) && near(p[2].scale_x, 146.0f));
+    ASSERT_TRUE(near(p[3].x, 146.0f) && near(p[3].y, 185.0f) && near(p[3].scale_y, 180.0f));
+    ASSERT_TRUE(near(p[4].x, 146.0f) && near(p[4].y, 175.0f));
+    ASSERT_TRUE(near(p[5].x, 146.0f) && near(p[5].y, 365.0f));
+    // Eight letters widen it; the fixed 197 of the old port is gone.
+    ASSERT_TRUE(near(blitz_panel(5, 8)[1].scale_x, 198.0f));
+    ASSERT_TRUE(!near(blitz_panel(5, 5)[4].x, 197.0f));
+}
+
+TEST(blitz_arrows_and_marks_follow_the_panel) {
+    // Two five-letter words: w = 120, top = 285 - 40 - 10 = 235, h = 80.
+    Fixture f(two());
+    ASSERT_EQ(f.b().max_word_length(), std::size_t{5});
+    const MenuButton* prev = f.b().button("BUTTON_PREVWORD");
+    const MenuButton* next = f.b().button("BUTTON_NEXTWORD");
+    ASSERT_TRUE(near(prev->sprite.x, 22.0f) && near(prev->sprite.y, 173.0f));   // floor(60 - 38), 235 - 62
+    ASSERT_TRUE(near(next->sprite.x, 22.0f) && near(next->sprite.y, 325.0f));   // 235 + 80 + 10
+    for (const auto& w : f.b().words()) ASSERT_TRUE(near(w.mark.x, 130.0f));
+}
+
+TEST(blitz_timer_bar_is_clipped_not_scaled) {
+    Fixture f(two(), 40150);   // half of 80300
+    const SpriteState s = f.b().timer_bar();
+    ASSERT_TRUE(s.has_clip);
+    ASSERT_TRUE(near(s.clip.w, 160.5f) && near(s.clip.h, 46.0f));
+    ASSERT_TRUE(near(s.scale_x, 1.0f) && near(s.scale, 1.0f));
+    ASSERT_EQ(s.frame, 0);
+    Fixture g(two(), 100);
+    g.run(200);   // time out: nothing left to show
+    ASSERT_TRUE(near(g.b().timer_bar().clip.w, 0.0f));
+}
+
+TEST(blitz_time_added_runs_for_the_word_length_plus_four_tenths) {
+    ASSERT_EQ(blitz_time_added_ms(5), 900);
+    ASSERT_EQ(blitz_time_added_ms(6), 1000);
+    ASSERT_EQ(blitz_time_added_ms(8), 1200);
+    Fixture f(two());
+    f.enter("caret");
+    ASSERT_EQ(f.b().time_added_total_ms(), 900);
+    // The clip grows linearly from 50000 to 58000 of 80300.
+    f.run(450);
+    ASSERT_TRUE(near(f.b().timer_bar().clip.w, 321.0f * 54000.0f / 80300.0f));
+    ASSERT_EQ(f.b().timer_bar().frame, 1);
+    f.run(440);
+    ASSERT_TRUE(f.b().busy());   // 10 ms left: input still waits
+    ASSERT_EQ(f.b().current(), std::size_t{0});
+    f.run(10);
+    ASSERT_TRUE(!f.b().busy());
+    ASSERT_EQ(f.b().current(), std::size_t{1});
+    ASSERT_EQ(f.b().time_added_total_ms(), 0);
+    ASSERT_EQ(f.b().timer_bar().frame, 0);
+}
+
+TEST(blitz_mark_grows_sideways_from_its_left_edge) {
+    Fixture f(two());
+    f.enter("caret");
+    f.run(blitz_time_added_ms(5) + BLITZ_SWITCH_MS);
+    f.b().press("BUTTON_GiveUp");
+    f.b().dialog_press("BUTTON_YES");
+    const auto& w0 = f.b().words()[0];
+    while (w0.reveal_elapsed_ms < 0) f.b().update(10);
+    ASSERT_TRUE(w0.mark.anchor == Anchor::TopLeft);
+    ASSERT_TRUE(near(w0.mark.x, 130.0f) && near(w0.mark.y, 245.0f));
+    ASSERT_TRUE(w0.mark.scale_x < 0.01f && near(w0.mark.scale, 1.0f) && near(w0.mark.scale_y, 1.0f));
+    // The solved word's small tiles show at once; only the 60 px balls fade.
+    int faint = 0;
+    for (const auto& b : f.b().balls()) {
+        if (b.alpha >= 0.1f) continue;
+        ASSERT_TRUE(b.small);
+        ++faint;
+    }
+    ASSERT_TRUE(faint >= 5);
+    while (w0.reveal_elapsed_ms < BLITZ_MARK_GROW_MS) f.b().update(10);
+    ASSERT_TRUE(std::fabs(w0.mark.scale_x - BLITZ_MARK_OVERSHOOT) < 0.01f);
+    f.run(BLITZ_MARK_SETTLE_MS + 10);
+    ASSERT_TRUE(near(w0.mark.scale_x, 1.0f) && near(w0.mark.alpha, 1.0f));
+}
+
+TEST(blitz_switch_scales_with_smoothstep_and_slides_linearly) {
+    Fixture f(two());
+    f.b().key_word(true);
+    f.run(100);   // t = 0.25: smoothstep 0.15625
+    const auto& w1 = f.b().words()[1];
+    ASSERT_TRUE(near(w1.scale, BLITZ_LIST_SCALE + (1.0f - BLITZ_LIST_SCALE) * 0.15625f));
+    ASSERT_TRUE(near(w1.x, 10.0f + (320.5f - 10.0f) * 0.25f));
+    ASSERT_TRUE(near(w1.entry_alpha, 0.25f));
+}
+
+TEST(blitz_list_look_follows_the_switch) {
+    Fixture f(two());
+    ASSERT_TRUE(!f.b().words()[0].list_look && f.b().words()[1].list_look);
+    ASSERT_EQ(f.b().blitz_dots().size(), std::size_t{5});
+    int small = 0;
+    for (const auto& b : f.b().balls()) small += b.small;
+    ASSERT_EQ(small, 5);
+    f.b().key_word(true);
+    f.run(10);
+    ASSERT_TRUE(!f.b().words()[1].list_look);   // off as the move up starts
+    f.run(380);
+    ASSERT_TRUE(!f.b().words()[0].list_look);   // still moving down
+    f.run(10);
+    ASSERT_TRUE(f.b().words()[0].list_look);    // on when the scale ends
+    // With letters in the row the switch waits 500 ms first.
+    Fixture g(two());
+    g.type("c");
+    g.b().key_word(true);
+    g.run(490);
+    ASSERT_TRUE(g.b().words()[1].list_look);
+    g.run(20);
+    ASSERT_TRUE(!g.b().words()[1].list_look);
+}
+
+TEST(blitz_hint_alpha_is_capped_by_the_row_not_multiplied) {
+    Fixture f(two(), 80000);
+    f.run(9000);
+    f.run(BLITZ_HINT_FADE_MS);
+    ASSERT_EQ(f.b().hint_letters().size(), std::size_t{1});
+    ASSERT_TRUE(near(f.b().hint_letters()[0].alpha, BLITZ_HINT_ALPHA));
+    f.b().key_word(true);
+    f.run(BLITZ_SWITCH_MS);
+    ASSERT_TRUE(f.b().hint_letters().empty());   // the row is hidden in the list
+    f.b().key_word(true);   // two words: back to word 0
+    f.run(100);
+    ASSERT_TRUE(near(f.b().hint_letters()[0].alpha, 0.25f));   // the row's alpha, not 0.098
+    f.run(100);
+    ASSERT_TRUE(near(f.b().hint_letters()[0].alpha, BLITZ_HINT_ALPHA));   // capped, not 0.196
+}
+
+TEST(blitz_hand_cursor_skips_solved_racks_in_play) {
+    Fixture f(two());
+    f.b().mouse_move(20.0f, 290.0f);   // word 1, unsolved, in the list
+    ASSERT_TRUE(f.b().pointer_over_clickable());
+    f.enter("caret");
+    f.run(blitz_time_added_ms(5) + BLITZ_SWITCH_MS);
+    f.b().mouse_move(20.0f, 250.0f);   // word 0, solved
+    ASSERT_TRUE(!f.b().pointer_over_clickable());
+    // After the round every rack opens its definition.
+    f.b().press("BUTTON_GiveUp");
+    f.b().dialog_press("BUTTON_YES");
+    f.run(BLITZ_SWITCH_MS);
+    f.b().mouse_move(20.0f, 250.0f);
+    ASSERT_TRUE(f.b().pointer_over_clickable());
+}
+
+TEST(blitz_focus_loss_under_a_dialog_opens_the_menu_later) {
+    Fixture f(two());
+    f.b().press("BUTTON_GiveUp");
+    f.b().focus_lost();
+    ASSERT_TRUE(f.b().dialog_kind() == GameDialog::ConfirmGiveUp);
+    ASSERT_TRUE(f.b().menu_pending());
+    f.b().dialog_press("BUTTON_NO");
+    f.run(10);
+    ASSERT_TRUE(f.b().dialog_kind() == GameDialog::PauseMenu);
+    ASSERT_TRUE(!f.b().menu_pending());
+    // Under the menu's own dialogs nothing is queued.
+    f.b().dialog_press("BUTTON_HOWTOPLAY");
+    f.b().focus_lost();
+    ASSERT_TRUE(!f.b().menu_pending());
+    ASSERT_TRUE(f.b().dialog_kind() == GameDialog::HowToPlay);
 }

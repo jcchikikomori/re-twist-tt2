@@ -91,22 +91,52 @@ All positions are from the shipped XML (**CONFIRMED**). Images are named by id o
 - **Current word**: its rack slides to x = `493 − L*69*0.5`, y = 281 at scale 1.0; its entry row is at
   the same x, y = 212 (`0x414340`, `0x414780`). Example L = 6 → x = 286. Letters are 69 px apart.
   Switching animates the old rack back to (10, base+i*40) at scale 0.33 and fades its entry row to
-  alpha 0; the new entry row fades to 1 (`0x414780`, `GF2::ModifierLocationLine` + `ModifierScale`;
-  durations UNKNOWN, from `0x486560` defaults). Both moves are linear (`0x4307e0`); the rack slides
-  with `ModifierLocationLine` + `ModifierScale` (0.33 `0x3ea8f5c3` / 1.0), the entry row fades with
-  `0x4304d0` (alpha 0 / 1). With letters to clear first, a 500 ms `ModifierDelay` and the clear
+  alpha 0; the new entry row fades to 1 (`0x414780`). All three run for **400 ms** (`EDX = 0x190`): the
+  rack slides with `ModifierLocationLine` (linear, `0x4307e0`) and scales with `ModifierScale` (0.33
+  `0x3ea8f5c3` / 1.0) with **smoothstep** (`0x4513d0`); the entry row fades with `ModifierSimpleAlpha`
+  (`0x4304d0`, alpha 0 / 1, linear). CONFIRMED (`ev_673e0237…`). With letters to clear first, a 500 ms
+  `ModifierDelay` and the clear
   method `0x410d20` run before the move (`0x414780`, `param_4 > 0`).
 - **Solved word**: `0x439cb0` stops the entry row's running moves and `0x43c890(1)` runs `0x43a310(1)`
   on each ball: a `ModifierFrame` at 60 ms from the ball's base frame to base + 5, so the pearl
   (frame 11) turns into the square tile (frame 16). The letters stay in the entry row, which fades
   out when the word goes back to the list, so a solved word shows an empty rack until the reveal.
-- **Marks**: one `IMAGE_BLITZ_MARK` sprite per word at x = 207, y = rack y (`0x414340`), vector
-  `scene+0x3b0`. At round end solved words get frame 1, unsolved frame 0 (`0x411ef0`). INFERRED: frame 0 =
-  cross, frame 1 = check (the file is named x.png).
-- Panel sprites are re-laid out per round around the list (`0x414c70`): PANEL_LEFT at y = base − 10,
-  a height of `n*40`, PANEL_BG scaled by `w/195` and `h/600`, the marks moved beside the panel and the
-  two arrows centred on it above and below. The decompilation of `0x414c70` is too garbled to read the
-  exact formulas (**INFERRED**); §9 gives the port's geometry.
+- **Marks**: one `IMAGE_BLITZ_MARK` sprite per word, built at (207, rack y) with alpha 0 and no anchor
+  call (`0x414340`, vector `scene+0x3b0`), then moved to x = `w + 10` by `0x414c70` (below). At round
+  end solved words get frame 1, unsolved frame 0 (`0x411ef0`). INFERRED: frame 0 = cross, frame 1 =
+  check (the file is named x.png).
+- **Panel** (`0x414c70`, CONFIRMED from the asm, `ev_fb6ae5fa…`): `maxL = 0x415280()` is the longest
+  word of the round (`ev_b36e5b4c…`), `base = 285 − 20n`, `top = base − 10`, `h = 40n`,
+  `w = (27·maxL − 10) − maxL = 26·maxL − 10`.
+
+  | Sprite | Position | Scale |
+  | --- | --- | --- |
+  | `PANEL_LEFT` (1×10 top strip) | (0, `top`) | x `w` |
+  | `PANEL_LEFTCORNER` | (`w`, `top`) | |
+  | `PANEL_RIGHT` (10×1) | (`w`, `top + 10`) | y `h − 20` |
+  | `PANEL_RIGHTCORNER` | (`w`, `top + h − 10`) | |
+  | `PANEL_BOTTOM` | (0, `top + h − 10`) | x `w` |
+  | `PANEL_BG` | spans `top + 10 … top + h − 10` | x `w/195`, y `(h − 20)/600` |
+  | marks | (`w + 10`, rack y) | |
+  | `BUTTON_PREVWORD` | (`w/2 − 38`, `top − 62`) | |
+  | `BUTTON_NEXTWORD` | (`w/2 − 38`, `top + h + 10`) | |
+
+  Worked example n = 5, maxL = 6: top 175, w 146, the right edge 185 … 365, the marks at x 156, PREV at
+  (35, 113), NEXT at (35, 385). The arrow x goes through the rounding helper `0x419900` → `0x554580`,
+  INFERRED to be floor (`ev_c9653392…`, `ev_23e71e9c…`).
+
+### 1.2 The list look (CONFIRMED)
+
+- Each `LetterBall` (`0x439d00`, built with flag 1 in Blitz by `0x4396e0`) carries a hidden child at
+  `ball+0x17c`: `IMAGE_LETTERBALL_40` (`letterball_anim_40.png` 408×624, 17×26 frames of 24×24), anchor
+  centre, scale 2.5, so it covers the same 60 local px. Its frame follows the ball's (the solved flip
+  `0x43a310` runs on both). Each `LetterBox` cell (`0x43ab90`) also holds a hidden `IMAGE_BLITZDOT`
+  (16×16) at `(j·69 + 34.5, 34.5)`, scale 2.5 (`ev_a422c204…`, `ev_6ac36c58…`).
+- `0x43d280(flag)`: ball children visible when `flag != 1`, blitz dots visible when `flag == 0`
+  (`ev_b945e31e…`). `0x414340` calls it with 0 on every new rack (the list look). The switch
+  `0x414780` calls it with 1 on the new word as its move starts and with 0 on the old word once its
+  400 ms scale ends (`ev_673e0237…`). So in the list the crisp 24 px ball draws over the 60 px one at
+  0.33, and a solved word's empty rack shows a row of blitz dots (about 13 px on screen).
 
 ## 2. Round flow
 
@@ -155,8 +185,10 @@ All positions are from the shipped XML (**CONFIRMED**). Images are named by id o
    visuals); `0x40f1e0` (Word Nerd counter); uncommon flag → `0x40f3a0` (Human Dictionary counter);
    `SOUND_word_bingo`; `all = 0x411680()` (every word's `+0x88` set).
 1. Not the last word: timer `+= 8000`, capped at **80300**; `+0x304 = min(t,10000) − min(t,10000)%1000`;
-   popup kind **6** ("extra time"); `SOUND_lightning_time_added`; SPRITE_TIMER frame 1 + scale animation
-   to `t/80300`; input/timer lock `+0x2f9 = 1`; when the animation ends `0x411520` clears the lock and
+   popup kind **6** ("extra time"); `SOUND_lightning_time_added`; SPRITE_TIMER frame 1 and a
+   `ModifierClipRect` (`0x478390`) that grows the clip to `321 · t/80300` over **`(L + 4) · 100` ms**
+   (`EDI` @`0x411af4`; L = 6 → 1000 ms; easing UNKNOWN, `EDX` is clobbered before `0x47ece0`;
+   `ev_3e8a19be…`, `ev_7f4fa7b7…`); input/timer lock `+0x2f9 = 1`; when the animation ends `0x411520` clears the lock and
    moves to the **next unsolved word** (forward, wrapping). This auto-advance does **not** set the pass flag.
 1. Last word: §4.1.
 1. LABEL_Score updated (`+0x23c`).
@@ -207,6 +239,9 @@ Click dispatcher `0x4135e0` (by command name), only while `+0x264 == 0` (except 
   ghost letter, frame `char − 0x60`, alpha 0 → **0.392** over **500 ms**, `IMAGE_HINT_LETTERS` sprites at
   `row+0x1c4`); plays **`SOUND_lightning_hint`** only if a letter was revealed; then always
   `word+0xbc = 4000`, `+0x3be = 1`, `word+0xc0 += 1`.
+- The ghosts fade with their entry row: `0x430440` sets the alpha on a node and its children and clamps
+  any child named `HINT_LETTER` (INFERRED name, `0x4972a0`) to `min(alpha, 0.392)`. A word coming back
+  from the list shows its hints at `min(row alpha, 0.392)`, not the product (`ev_b945e31e…`).
 - So the 1st hint comes after 9 s on a word, then one every 4 s; each costs `10·L` points (score formula).
   Worked example L = 6: 0 hints 360, 1 hint 300, 2 hints 240, 6+ hints 0.
 
@@ -221,8 +256,11 @@ Click dispatcher `0x4135e0` (by command name), only while `+0x264 == 0` (except 
   as t crosses 10 s, 9 s … 1 s (10 beeps). After a solve the mark re-arms to `min(t,10000)` rounded down
   to a second. Example: t = 1,500 → +8 s → 9,500 → mark 9,000 → next beep at 9 s.
 - Display: LABEL_TimerMinutes = `"%d"` of `max(0, t/60000)`; LABEL_TimerSeconds = `":%02d"` of
-  `max(0, (t/1000)%60)` (truncating). 80,300 shows `1:20`. SPRITE_TIMER scale-x = `t / 80300.0`
-  (`[0x59b9a0] = 80300.0`), frame 0 (frame 1 only during the +8 s animation).
+  `max(0, (t/1000)%60)` (truncating). 80,300 shows `1:20`. SPRITE_TIMER is never scaled: round start
+  `0x4138e0` gives it a clip rect of the whole frame (`0x419930`, sprite `+0x14c`), and every running
+  frame sets frame 0 and the clip `(0, 0, 321 · t / 80300, 46)` @`0x4158c8`–`0x41597a`
+  (`[0x59b9a0] = 80300.0`), so the art shows from the left and its right end is cut off. Frame 1 only
+  during the +8 s animation (`ev_86da62d4…`, `ev_d382a9ae…`, `ev_23e71e9c…`).
 - `t <= 0` → `0x411e10` (§4.2). After that the per-word hint timer is not touched.
 - `+0x3bf` is set to 1 when `t <= 3000` (and the hint timer has not expired) @`0x415a06`; it is reset at
   round start/resume. No reader found in the traced Blitz code. **UNKNOWN use** (Nick of Time does not
@@ -235,10 +273,13 @@ Click dispatcher `0x4135e0` (by command name), only while `+0x264 == 0` (except 
 1. Last word solved (`0x4116e0`): `score += 1000`, `+0x264 = 1`, trophies 3–6 (§5), `0x411ef0`.
 1. `0x411ef0` reveal: `+0x2f9 = 1`; first `0x414780(current, none)` sends the current word back to
    the list. Per word i (stagger: first at 400 ms, +100 ms each): a solved word's entry-row balls go
-   into rack slot j in order (`0x43bad0(0, j, 1.0)`), alpha 0 → 1 over 400 ms (linear); an unsolved
+   into rack slot j in order (`0x43bad0(0, j, 1.0)`, a snap, no slide); their 24 px children show at
+   alpha 1 at once and only the 60 px balls fade 0 → 1 over 400 ms (linear, `ev_3e4d8a2b…`); an unsolved
    word's rack ball list is replaced by the answer's letters and `0x43c6a0` lays them out at
-   `j * 69 + 34.5`, so the rack spells the answer. Each mark sprite gets its frame (`+0x90`), alpha
-   0 → 1 over 150 ms and a scale pop 1 → 1.2 (300 ms, smoothstep `0x4513d0`) → 1.0 (100 ms). The
+   `j * 69 + 34.5`, so the rack spells the answer. Each mark sprite gets its frame (`+0x90`) and
+   scale-x 0, then alpha 0 → 1 over 150 ms and a sideways grow: `ModifierScale` (0, 1) → (1.2, 1) over
+   300 ms, then (1.2, 1) → (1, 1) over 100 ms, both smoothstep `0x4513d0`; scale-y stays 1, the pivot is
+   the sprite default (INFERRED top-left), so it grows from its left edge (`ev_2d60e904…`). The
    **2000 ms** delay is chained to the last word's stagger delay, so the whole reveal lasts
    `400 + 100 (n − 1) + 2000` ms (n = 5: 2,800 ms).
 1. `+0x264 == 1` → method `0x428a60` (`mov [+0x2f9],0; mov [+0x20c],3`) → next update case 3:
@@ -267,6 +308,11 @@ Click dispatcher `0x4135e0` (by command name), only while `+0x264 == 0` (except 
 
 - `+0x20c` 1 (Menu) / 2 (focus loss) → `DIALOG_MENU` and PAUSE_VEIL visible (`0x378` setVisible(1)),
   hiding the racks. 5 → `DIALOG_TUTORIAL`. The update sets `+0x260 = 1` while a dialog is pending/up.
+- Focus loss (`0x4169d0`: event `0x601`, or `0x206` while `DIALOG_MENU` is not up) only sets
+  `+0x20c = 2`; the update acts on it once `+0x260 == 0`, so under another dialog the menu opens after
+  that dialog closes (`ev_a0122af2…`).
+- The hover hand (`0x4162b0`) shows over the balls of unsolved words while the round is in play and over
+  every word after it (`ev_fe6575a3…`).
 
 ### 4.4 Save / resume (CONFIRMED)
 
@@ -319,18 +365,20 @@ time added (the +8 s branch is skipped). Player block `p = *(DAT_005fde98 + 0x70
 - Mode id 2 (`g_gameMode`, tutorial flag index, high-score tab BLITZ), tracker index 2, table `blitz`.
 - Dialogs reused from Classic: DIALOG_MENU, DIALOG_TUTORIAL, DIALOG_NEXTROUND, DIALOG_ENDGAME,
   DIALOG_CONGRATS, the yes/no confirm (`0x40b310`). DIALOG_PASSROUND is not used.
-- UNKNOWN: durations of the rack slide (`ModifierLocationLine`) and of the time-bar grow animation
-  (`0x408e90`-based); the purpose of `+0x3bf`, `LABEL_HINTNUMBER`, `+0x2fb`, and the `player+0x38` copy.
+- UNKNOWN: the easing of the time-bar clip grow (§2.3); the purpose of `+0x3bf`, `LABEL_HINTNUMBER`,
+  `+0x2fb`, and the `player+0x38` copy.
 
 ## 9. The port (deviations and choices)
 
-- **Durations the binary leaves to GF2 defaults** (UNKNOWN): the rack slide is 400 ms
-  (`BLITZ_SWITCH_MS`, the Classic relayout time) and the time bar grows over 500 ms
-  (`BLITZ_TIME_ADDED_MS`); input waits for the bar, as `+0x2f9` does.
-- **Panel geometry** (INFERRED): a 197 px wide box (the XML's corner x) from 10 px above the first rack
-  to `base + n * 40`, edged by the 1 px strips, the right side and the two corners; the arrows sit
-  10 px outside it, centred on the panel. The `blitzscene` panel images share their ids with
-  `gamescene`'s, so the port names them `blitzscene/IMAGE_PANEL_*`.
+- **Time-bar grow easing** (UNKNOWN): the clip grows linearly over `(L + 4) · 100` ms
+  (`blitz_time_added_ms`); input waits for it, as `+0x2f9` does.
+- **Panel ids**: the `blitzscene` panel images share their ids with `gamescene`'s, so the port names
+  them `blitzscene/IMAGE_PANEL_*`. The arrow x is floored (`0x419900`, INFERRED floor).
+- **The list look** (§1.2) is a per-word flag (`BlitzWordView::list_look`) instead of a visibility
+  switch on child sprites. Without the imported art (the placeholder build) the 24 px balls and the
+  blitz dots are not drawn; the 60 px placeholder pearls stand in.
+- **The round-start flip**: the original flips every word's balls, but a list word's 24 px child covers
+  its flip, so the port flips only the current word, which looks the same.
 - **Rack order**: the racks are shuffled like Classic's (`GameScene::scrambled`); the deal order was
   not traced.
 - **Twist sound**: as in Classic, only when the rack moves (a held Space does not stack clicks).
@@ -349,6 +397,11 @@ time added (the +8 s branch is skipped). Player block `p = *(DAT_005fde98 + 0x70
 | `0x415a70` / `0x4110f0` | scene enter (music) / resume-or-start |
 | `0x4138e0` | round start |
 | `0x414340` | word object build (9000 ms hint timer, positions, mark sprite) |
+| `0x415280` | the round's longest word (panel width) |
+| `0x43d280` / `0x439d00` / `0x43ab90` | list look switch / LetterBall (24 px child) / LetterBox (blitz dots) |
+| `0x430440` | alpha on a node and its children (`HINT_LETTER` capped at 0.392) |
+| `0x4162b0` | hover hand cursor |
+| `0x478390` | `ModifierClipRect` (the +8 s grow) |
 | `0x414660` / `0x414780` / `0x414c70` | select word / switch animation / layout + labels |
 | `0x415300` | update: pending dialogs, popups, timer, warning, hint timer, time-out |
 | `0x4135e0` / `0x415c50` / `0x417f50` | button / keyboard / rack-click handlers |
@@ -398,6 +451,23 @@ time added (the +8 s branch is skipped). Player block `p = *(DAT_005fde98 + 0x70
 | pseudo `0x461840` (delete save) | `ev_6f6cfb39ba030ca0f8f2f882a29fd4769747b38864a60c9437922704a2b0cc0b` |
 | pseudo `0x414780` | `ev_4663c27ba967c383f515817f21663390dd572cc13863d4361c33bdb788aa58f6` |
 | asm `0x423a20` (component offsets) | `ev_79be952146c636bd4321e15aa343e208c6b3be945c4d64b9e56d243ba488c1ca` |
+| asm `0x414340` (word build) | `ev_92a42547ae5101fcd038e73429bf52f80a9bc68d8cfb834876b39ec98b1bd26c` |
+| pseudo `0x43d280 0x430440 0x43c370` | `ev_b945e31e2692c1e50ae1de98d0ead011e4aaea6f98d11e264895cbc5479d46ec` |
+| pseudo `0x43ab90` (LetterBox ctor) | `ev_6ac36c583be43ffde9ab40c207c87c9c55b4193701b80d0bea5472a3d59ccb33` |
+| pseudo `0x439d00` (LetterBall ctor) | `ev_a422c2045af1a354489aa8206144b044937a7d4a80e1b090fe490bfade75c204` |
+| asm `0x4396e0` (word object) | `ev_81a2810316ba8e08cbdbedd605c4445faace9458b216040f9d1efe10e96e2ef3` |
+| pseudo `0x4972a0 0x4304d0 0x4131f0` | `ev_5696c4a789424aaa78cf2ed8eb850befed209c03279f015282e1843eb35df9cb` |
+| asm `0x414780` (switch) | `ev_673e02376dec1280698f08cd300ab673afd3e6538c87e6605923b727fb533480` |
+| asm `0x414c70` (panel) | `ev_fb6ae5fa7dbda9458457b9b09e3f6de289eb76b28670f38c61fd3edb5f123de8` |
+| asm `0x415280` (longest word) | `ev_b36e5b4c5102d6a36e2a3a979d4815adf3f62dc43ba4b5668c5bdb394be0d775` |
+| bytes `0x415110` (arrow-x FPU) | `ev_c9653392d17673d292a18c07a22eba273e178237bb7835ede01cf1eb7ab2be53` |
+| pseudo `0x411ef0` (reveal) | `ev_2d60e904e8936b161f126d4b824bc99e16c89153ba766b5f0940cdb5994a8b99` |
+| pseudo `0x43c6a0 0x43bad0` | `ev_3e4d8a2be29270a0f03313ab6c321c696be1703a9c86ad5919000bd63784b605` |
+| pseudo `0x419930 0x419900` (clip, rounding) | `ev_23e71e9ce4472ee97a84c94e6bc33d37f09b85536a4ec935f0915b59b85e2046` |
+| asm `0x4116e0` (+8 s clip grow) | `ev_3e8a19be7e6490f7cb91d3b5b794e535d3b830328146b3ae0dbd7dbee69f215e` |
+| pseudo `0x478390` (ModifierClipRect) | `ev_7f4fa7b75e43b30c23d0a0ad1a271db18ee0d472259acb944727c4163548ed0a` |
+| pseudo `0x4162b0` (hover) and neighbours | `ev_fe6575a3e4cf043af52640367f553e5e70618b663553036ed4cda9a577c4f74b` |
+| pseudo `0x4169d0` (focus) and neighbours | `ev_a0122af278cf98b382b4406ce2b7d970a827b5e4a8f34c5507b47db652b21d40` |
 | xrefs MUSIC_in-game_1 / "BLITZ" | `ev_ebac8cca503ff820fd864ee7abe0f56ca2b8fff8473ef9d5f1df59a87cda9d5e`, `ev_05fe8d398fc08139bc4df65dbe7875a6629affc4cf3eeca7f8875a3e98a650c1` |
 | xrefs BUTTON_GiveUp / BUTTON_NEXTWORD | `ev_4d8f0752746057269c8ef7d7c41bd508f5bfeeb70fc01ccc684f9a87a3465e89`, `ev_7e0d8ea4d7086c0b9c97538d1e0afe0fcd1d52e0e0a12e05e0a33a90b7798091` |
 | xrefs GAME_DATA / dictionary URL | `ev_7a4bbf59bf628c5af6db796f4250ca4eb34d82b12613890048e2b2b058cabb59`, `ev_1a0889fae6546a6d62a057bc7f2935ef1b8988480f6758c0f93c85dbedda3bc0` |

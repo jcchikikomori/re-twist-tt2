@@ -157,6 +157,8 @@ const std::map<std::string, std::string> kImageFiles = {
     {"SMALL_LETTERS", "images/gamescene/anagram_text.png"},
     {"SMALL_LETTERS_UNGUESSED", "images/gamescene/anagram_letters_revealed.png"},
     {"IMAGE_LETTERBALL_ANIM", "images/gamescene/letterball_anim.png"},
+    {"IMAGE_LETTERBALL_40", "images/gamescene/letterball_anim_40.png"},
+    {"IMAGE_BLITZDOT", "images/gamescene/blitzdot.png"},
     {"LetterBox", "images/gamescene/letterBox.png"},
     {"IMAGE_PANEL_BG", "images/gamescene/panel_bg.png"},
     {"IMAGE_PANEL_BOTTOM", "images/gamescene/panel_bottom.png"},
@@ -1452,6 +1454,11 @@ void draw_blitz(SDL_Renderer* ren, Assets& assets, const BlitzScene& g) {
     for (const auto& p : g.panel()) draw_sprite(ren, assets, p);
     draw_sprite(ren, assets, g.timer_bar());
     for (const auto& box : g.letter_boxes()) draw_sprite(ren, assets, box);
+    // The list look's dots and 24 px balls need the real art; the
+    // placeholder build keeps the 60 px pearls alone.
+    const bool small_art = !assets.image(blitz_small_ball_sheet()).placeholder;
+    if (!assets.image(blitz_dot_sheet()).placeholder)
+        for (const auto& d : g.blitz_dots()) draw_sprite(ren, assets, d);
     const SheetSpec hints = hint_letter_sheet();
     for (const auto& h : g.hint_letters()) {
         draw_sprite(ren, assets, h);
@@ -1460,7 +1467,15 @@ void draw_blitz(SDL_Renderer* ren, Assets& assets, const BlitzScene& g) {
             draw_text(ren, assets, "PLACEHOLDER_5", ch, h.x, h.y, TextAlign::Center, Anchor::Center, -1);
         }
     }
-    for (const auto& b : g.balls()) draw_letter_ball(ren, assets, b.ball, 0, 0, b.scale, b.alpha);
+    for (const auto& b : g.balls()) {
+        if (b.alpha > 0.0f) draw_letter_ball(ren, assets, b.ball, 0, 0, b.scale, b.alpha);
+        if (!b.small || !small_art) continue;
+        SpriteState sp = sprite("BALL_40", blitz_small_ball_sheet(), b.ball.x, b.ball.y);
+        sp.anchor = Anchor::Center;
+        sp.frame = b.ball.sheet_frame();
+        sp.scale = BLITZ_SMALL_SCALE * b.scale;
+        draw_sprite(ren, assets, sp);
+    }
     for (const auto& m : g.marks()) draw_sprite(ren, assets, m);
 
     draw_sprite(ren, assets, sprite("UI_BAR", sheet("IMAGE_UI_BAR", 800, 54), 0, 547));
