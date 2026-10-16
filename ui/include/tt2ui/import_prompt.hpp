@@ -77,6 +77,7 @@ inline std::string import_failure_text(const ImportError& e) {
     case ImportError::Kind::WriteFailed:
     case ImportError::Kind::CommitFailed:
         return "The files could not be copied.\nYour previous assets are unchanged.";
+    case ImportError::Kind::BadArchive: return "That file is not a usable ZIP archive.\nNothing was copied.";
     case ImportError::Kind::None: return "";
     }
     for (std::size_t i = 0; i < e.paths.size() && i < IMPORT_LISTED_PATHS; ++i) text += "\n" + e.paths[i];

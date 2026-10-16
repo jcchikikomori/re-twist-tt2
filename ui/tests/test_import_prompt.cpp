@@ -204,6 +204,9 @@ TEST(import_failure_text_for_each_kind) {
     e.count = 8;
     e.paths = {"a", "b", "c", "d", "e"};   // the job keeps 5; the dialog lists 3
     ASSERT_EQ(import_failure_text(e), std::string("8 files did not match.\nNothing was copied.\na\nb\nc"));
+    e.kind = ImportError::Kind::BadArchive;   // the Android ZIP importer; never lists paths
+    ASSERT_EQ(import_failure_text(e), std::string("That file is not a usable ZIP archive.\nNothing was copied."));
+    ASSERT_EQ(std::string(to_string(e.kind)), std::string("not a usable ZIP archive"));
 }
 
 TEST(import_failure_text_never_shows_the_user_folder) {

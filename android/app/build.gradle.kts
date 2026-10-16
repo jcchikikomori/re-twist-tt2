@@ -144,3 +144,9 @@ kotlin {
 }
 
 tasks.named("preBuild") { dependsOn(fetchSdlJava, bundleGameData) }
+
+// JVM unit tests for the Kotlin importer (./gradlew testDebugUnitTest): no
+// device, synthetic random bytes only, never real assets.
+dependencies {
+    testImplementation(libs.junit)
+}
