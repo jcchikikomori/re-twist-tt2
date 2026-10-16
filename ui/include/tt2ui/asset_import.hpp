@@ -10,7 +10,11 @@
 //   VerifyCopy    hash the copies again (disk or permission trouble)
 //   ReadyToCommit wait: the host frees its textures, sounds and music
 //                 first (Windows can't rename a folder with open files)
-//   commit()      <dir> -> <dir>.old, <dir>.staging -> <dir>, drop .old
+//   commit()      <dir> -> <dir>.old, <dir>.staging -> <dir>, drop .old.
+//                 Each rename is retried; when <dir> still can't move
+//                 (Windows: antivirus scanning the new files, Explorer
+//                 open on the folder, a .old that wouldn't delete), the
+//                 verified files are copied over it in place instead
 //
 // Only manifest entries are copied, and the manifest can't list DRM,
 // code or dictionary files (tt2/asset_manifest.hpp), so nothing else in
@@ -22,13 +26,16 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 #include "tt2/asset_manifest.hpp"
@@ -226,6 +233,14 @@ public:
         } while (used < byte_budget && !finished());
     }
 
+    // The folder moves commit() makes; tests swap in one that fails.
+    using RenameFn = std::function<void(const std::filesystem::path&, const std::filesystem::path&, std::error_code&)>;
+    void set_rename(RenameFn fn) { rename_ = std::move(fn); }
+    void set_commit_retries(int tries, int delay_ms) {
+        commit_tries_ = std::max(1, tries);
+        commit_delay_ms_ = std::max(0, delay_ms);
+    }
+
     // Swaps the verified copy into place and stamps it. Call it only after
     // the host has released everything it loaded from the asset folder.
     bool commit() {
@@ -241,15 +256,14 @@ public:
         fs::remove_all(old, ec);
         const bool had_dir = fs::exists(dir_, ec);
         if (had_dir) {
-            fs::rename(dir_, old, ec);
-            if (ec) return fail(ImportError::Kind::CommitFailed, tt2::utf8_string(dir_));
+            if (!move(dir_, old)) return replace_in_place();
         } else {
             fs::create_directories(dir_.parent_path(), ec);
         }
-        fs::rename(staging, dir_, ec);
-        if (ec) {
-            if (had_dir) fs::rename(old, dir_, ec);   // put the previous import back
-            return fail(ImportError::Kind::CommitFailed, tt2::utf8_string(dir_));
+        if (!move(staging, dir_)) {
+            if (!had_dir) return fail(ImportError::Kind::CommitFailed, tt2::utf8_string(dir_));
+            if (!move(old, dir_)) return fail(ImportError::Kind::CommitFailed, tt2::utf8_string(dir_));
+            return replace_in_place();   // the previous import is back; update it file by file
         }
         fs::remove_all(old, ec);
         stage_ = Stage::Done;
@@ -258,6 +272,46 @@ public:
 
 private:
     static constexpr std::size_t CHUNK = 64 * 1024;
+
+    // A rename, tried again after a short wait: on Windows a scanner or the
+    // shell often holds a just-written folder for a moment.
+    bool move(const std::filesystem::path& from, const std::filesystem::path& to) {
+        for (int i = 0; i < commit_tries_; ++i) {
+            if (i > 0 && commit_delay_ms_ > 0) std::this_thread::sleep_for(std::chrono::milliseconds(commit_delay_ms_));
+            std::error_code ec;
+            rename_(from, to, ec);
+            if (!ec) return true;
+        }
+        return false;
+    }
+
+    // The fallback when <dir> can't be moved: copy every verified file over
+    // the old one, the stamp last, so a copy that fails part way leaves the
+    // old stamp and the game asks for the import again. Files an older
+    // layout left behind stay; nothing reads them.
+    bool replace_in_place() {
+        namespace fs = std::filesystem;
+        const fs::path staging = staging_dir(dir_);
+        auto copy_one = [&](const fs::path& rel) {
+            std::error_code ec;
+            fs::create_directories((dir_ / rel).parent_path(), ec);
+            for (int i = 0; i < commit_tries_; ++i) {
+                if (i > 0 && commit_delay_ms_ > 0)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(commit_delay_ms_));
+                ec.clear();
+                fs::copy_file(staging / rel, dir_ / rel, fs::copy_options::overwrite_existing, ec);
+                if (!ec) return true;
+            }
+            return false;
+        };
+        for (const auto& e : manifest_.entries)
+            if (!copy_one(tt2::utf8_path(e.path))) return fail(ImportError::Kind::CommitFailed, e.path);
+        if (!copy_one(IMPORT_STAMP_FILE)) return fail(ImportError::Kind::CommitFailed, IMPORT_STAMP_FILE);
+        std::error_code ec;
+        fs::remove_all(staging, ec);
+        stage_ = Stage::Done;
+        return true;
+    }
 
     bool fail(ImportError::Kind kind, const std::string& path = {}) {
         if (error_.kind == ImportError::Kind::None) error_.kind = kind;
@@ -390,6 +444,11 @@ private:
     bool started_copy_ = false;
     std::ifstream in_;
     std::ofstream out_;
+    RenameFn rename_ = [](const std::filesystem::path& a, const std::filesystem::path& b, std::error_code& ec) {
+        std::filesystem::rename(a, b, ec);
+    };
+    int commit_tries_ = 5;
+    int commit_delay_ms_ = 200;
     tt2::Sha256 hasher_;
     std::vector<char> buf_;
 };

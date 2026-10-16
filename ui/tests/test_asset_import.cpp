@@ -137,6 +137,80 @@ TEST(import_over_an_existing_import_replaces_it) {
     ASSERT_TRUE(no_leftovers(f));
 }
 
+TEST(import_commit_retries_a_rename_held_for_a_moment) {
+    Fixture f("retry");
+    AssetImportJob first = f.job();
+    ASSERT_TRUE(run(first) && first.commit());
+    AssetImportJob j = f.job();
+    int calls = 0;
+    j.set_commit_retries(3, 0);
+    j.set_rename([&](const fs::path& a, const fs::path& b, std::error_code& ec) {
+        if (++calls <= 2) { ec = std::make_error_code(std::errc::permission_denied); return; }
+        fs::rename(a, b, ec);
+    });
+    ASSERT_TRUE(run(j) && j.commit());
+    ASSERT_TRUE(import_status(f.assets, f.manifest) == ImportStatus::Imported);
+    ASSERT_TRUE(no_leftovers(f));
+}
+
+TEST(import_over_a_folder_that_cannot_move_updates_it_in_place) {
+    // Windows: a scanner or Explorer holds the old folder, so it can't be
+    // renamed. The verified files are copied over it instead.
+    Fixture f("inplace");
+    AssetImportJob first = f.job();
+    ASSERT_TRUE(run(first) && first.commit());
+    put(f.assets / "images/gui/button_ok.png", "from an older release");
+    put(f.assets / IMPORT_STAMP_FILE, serialize_stamp({tt2::to_hex(tt2::sha256("older")), 3}));
+    put(f.assets / "stray.png", "older layout");
+    ASSERT_TRUE(import_status(f.assets, f.manifest) == ImportStatus::Stale);
+    AssetImportJob j = f.job();
+    j.set_commit_retries(2, 0);
+    j.set_rename([&](const fs::path& a, const fs::path& b, std::error_code& ec) {
+        if (a == f.assets) { ec = std::make_error_code(std::errc::permission_denied); return; }
+        fs::rename(a, b, ec);
+    });
+    ASSERT_TRUE(run(j) && j.commit());
+    ASSERT_EQ(slurp(f.assets / "images/gui/button_ok.png"), std::string("png-1"));
+    ASSERT_TRUE(import_status(f.assets, f.manifest) == ImportStatus::Imported);
+    ASSERT_TRUE(fs::exists(f.assets / "stray.png"));   // left alone, nothing reads it
+    ASSERT_TRUE(no_leftovers(f));
+}
+
+TEST(import_puts_the_old_folder_back_when_the_new_one_cannot_move) {
+    Fixture f("putback");
+    AssetImportJob first = f.job();
+    ASSERT_TRUE(run(first) && first.commit());
+    AssetImportJob j = f.job();
+    j.set_commit_retries(2, 0);
+    j.set_rename([&](const fs::path& a, const fs::path& b, std::error_code& ec) {
+        if (a == staging_dir(f.assets)) { ec = std::make_error_code(std::errc::permission_denied); return; }
+        fs::rename(a, b, ec);
+    });
+    ASSERT_TRUE(run(j) && j.commit());
+    ASSERT_TRUE(import_status(f.assets, f.manifest) == ImportStatus::Imported);
+    ASSERT_TRUE(no_leftovers(f));
+}
+
+TEST(import_in_place_copy_failure_keeps_the_old_stamp) {
+    Fixture f("inplacefail");
+    AssetImportJob first = f.job();
+    ASSERT_TRUE(run(first) && first.commit());
+    put(f.assets / IMPORT_STAMP_FILE, serialize_stamp({tt2::to_hex(tt2::sha256("older")), 3}));
+    fs::remove(f.assets / "fonts/empty.xml");
+    fs::create_directories(f.assets / "fonts/empty.xml");   // a folder where a file goes: the copy fails
+    AssetImportJob j = f.job();
+    j.set_commit_retries(2, 0);
+    j.set_rename([&](const fs::path& a, const fs::path& b, std::error_code& ec) {
+        if (a == f.assets) { ec = std::make_error_code(std::errc::permission_denied); return; }
+        fs::rename(a, b, ec);
+    });
+    ASSERT_TRUE(run(j));
+    ASSERT_TRUE(!j.commit());
+    ASSERT_TRUE(j.error().kind == ImportError::Kind::CommitFailed);
+    ASSERT_TRUE(import_status(f.assets, f.manifest) == ImportStatus::Stale);   // asked again next launch
+    ASSERT_TRUE(!fs::exists(staging_dir(f.assets)));
+}
+
 TEST(import_rejects_a_folder_that_is_not_an_install) {
     Fixture f("notinstall");
     fs::remove(f.install / tt2::INSTALL_PROBE);

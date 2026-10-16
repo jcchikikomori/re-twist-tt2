@@ -78,6 +78,11 @@ it and checks the files exist, without hashing anything. A newer manifest marks 
   `imported-assets.old`. A failed or interrupted import keeps the previous one.
 - **The game frees its loaded art and music before the swap**, because Windows can't rename a folder while a music
   file is open.
+- **A folder that won't move is updated in place.** Each rename is tried 5 times, 200 ms apart. On Windows an
+  antivirus scan of the new files, an Explorer window on the folder, or a `.old` that would not delete can still
+  hold it; then the verified files are copied over the old ones and the stamp is written last. A copy that fails
+  part way keeps the old stamp, so the game asks for the import again. Re-importing used to fail there until the
+  player deleted `imported-assets` by hand.
 - `scripts/import-original.sh` is now a thin wrapper around `tt2 --import`.
 
 ### Verification
