@@ -441,7 +441,7 @@ All are `autocenter` and `dodarkenbackground="true"`.
 | `DIALOG_TUTORIAL` | 444×320 | `HEADER` `FONT_DIALOG_HEADERS2` (221, 16); `BODY_TEXT` `FONT_TUTORIAL` centred at (224, 155), line height 32 (the whole block is centred, so 4 lines sit at 107..203; INFERRED, line 4 would otherwise fall below the buttons at 235); READ MORE `IMAGE_BUTTON_READMORE` (135, 235); PLAY `IMAGE_BUTTON_PLAY` (317, 235) |
 | `DIALOG_PASSROUND` | 380×280 | `TEXT_PASS_ROUND_TITLE` "Round Passed" (191, 16); `TEXT_PASS_ROUND_BODY` (192, 85); OK (189, 199) |
 | `DIALOG_ENDGAME` | 380×260 | "GAME OVER" (190, 14); body (192, 88), line height 38; PLAY AGAIN (271, 173), MENU (109, 173) |
-| `DIALOG_CONGRATS` | 380×320 | sparkle frame 4 at (191, 138); "Congratulations! You earned a new high score!" (193, 107) |
+| `DIALOG_CONGRATS` | 380×320 | sparkle frame 4 at (191, 138); "Congratulations! You earned a new high score!" (193, 107); "Awesome" letterballs; OK opens `DIALOG_HIGHSCORES` (`profiles.md` §4.4) |
 
 - `0x407f40` wires the pause menu. STOP opens `0x408320`: "Exit Game?" / "Are you sure you
   want to leave this game? Your game will be saved for next time." YES saves and leaves.

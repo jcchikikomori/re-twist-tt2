@@ -254,6 +254,47 @@ name, score, extra = round number via `%d`), inserts it into the mode's
 table, and shows the "new high score" dialog when the returned index is
 not -1, otherwise the plain end-of-game dialog.
 
+### 4.4 `DIALOG_HIGHSCORES` and the way to it (CONFIRMED unless tagged)
+
+Decompiled with Ghidra 12.1.4 through REA on 2026-10-16. The port is
+`ui/include/tt2ui/highscore_dialog.hpp`.
+
+| Fact | Evidence |
+| --- | --- |
+| Ctor `0x405c10`: 10 rows cloned from `panel` (216, 107); wires OK, MAIN MENU and 5 tabs | `ev_78395bde2dac9e044e94790cd921ddd7f269af7b688c528c7de3a087d9b4de39` |
+| Show `0x4063f0`: tab = global game mode `0x5fdea8` (Timed at launch); hides one button | `ev_52bbe3e7cb61463e1a7b36f37faf471914acf2db06b504863e22a785a9674c99` |
+| Fill `0x4068d0`: name, `"%d"` score, stored extra; "-" rows; "Round:" / "Date:" header; blink | `ev_eda431e5e33bf3d57db49b7cfb3a7dc98b3528e6753554b63daa7801a14fc06d` |
+| Main menu HIGH SCORES `0x42f0d0`: flag `+0x1dc = 1` (OK shows, MAIN MENU hidden) | `ev_7bd4709b65b83ccf35d7a70217b93cb88de93053cf3ae6990f9388c342fe68d0` |
+| `DIALOG_CONGRATS` OK `0x401b50` -> `0x428540`: flag 0 (MAIN MENU shows, OK hidden) | `ev_52bbe3e7cb61463e1a7b36f37faf471914acf2db06b504863e22a785a9674c99` |
+| `DIALOG_CONGRATS` show `0x401270` -> `0x401290`: the `0x409100` letterballs on `TEXT_CONGRATS_LETTERBALLS` | `ev_47633b14bcb68eed81d3e628ddd0ca575a069912cc4fffb91fda2ad6ebac71b6` |
+| Blink `ModifierBlink(0.5, 1.0, 300, 200, 0)` on the newest row | `ev_55489fa4eaa8088102c02461244bae937c43197707bf40457c07ab430e6890f7` |
+
+- **Rows.** Ten rows 30 px apart (INFERRED: the panel height), x 216.
+  `LABEL_NR` / `SPRITE_NR` are never set, so no rank numbers show.
+  Prefilled entries look like real ones.
+- **Tabs.** `TAB_PAGE01` (5 frames of 160 x 333) shows the front tab: untimed
+  0, timed 1, wotd 2, blitz 3, crossword 4. `TABS` (153 x 304) is 8 rows of
+  38; rows 4..7 are the checked tab. A tab plays `SOUND_BUTTON`.
+- **Blink.** The newest entry (`lastscore`) blinks the first time its
+  table is shown by a dialog; a tab change stops it for good. The phase
+  order is INFERRED (300 ms at 0.5, 200 ms at 1.0).
+- **Buttons.** OK and MAIN MENU share `0x406790`, which hands the click to
+  the owning scene or closes the dialog. What the game scene does next was
+  not traced (UNKNOWN); the port leaves for the main menu, as the
+  `BUTTON_PAUSE_END` art says.
+- **Congrats.** "Awesome" gives 7 balls on sprites "1".."7" (delays 500 to
+  1700 ms) with the next-round particles. Return (engine key 5) is OK
+  (`0x401b70`). `SOUND_game_high_score_achieved` plays before, at round end.
+  DIALOG_ENDGAME does not follow DIALOG_CONGRATS.
+- **Not in the exe.** No keyboard, no clear button; the global / online
+  high score strings in `commontext.xml` are never used.
+
+Port deviations:
+
+- A prefilled entry never blinks. The default fill inserts too, so taken
+  literally `lastscore` points at a made-up row 0 on a fresh table.
+- Esc is OK on the main menu's copy, like the help dialog.
+
 ## 5. The port
 
 The engine module is `engine/include/tt2/profile.hpp` (pure, no IO) and

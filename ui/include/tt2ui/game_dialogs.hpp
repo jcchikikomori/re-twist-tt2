@@ -58,6 +58,7 @@ inline constexpr const char* PASS_ROUND_BODY =
 // Kinds used by the game scene (the profile kinds stay in DialogKind).
 enum class GameDialog {
     None, PauseMenu, ConfirmExit, ConfirmPass, ConfirmGiveUp, HowToPlay, Settings, NextRound, EndGame, Congrats,
+    HighScores,   // DIALOG_HIGHSCORES from DIALOG_CONGRATS' OK (0x401b50 -> 0x428540)
     PassRound, Tutorial
 };
 

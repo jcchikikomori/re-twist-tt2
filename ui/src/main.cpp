@@ -59,6 +59,7 @@
 #include "tt2ui/frame_clock.hpp"
 #include "tt2ui/game_scene.hpp"
 #include "tt2ui/help_dialog.hpp"
+#include "tt2ui/highscore_dialog.hpp"
 #include "tt2ui/import_prompt.hpp"
 #include "tt2ui/improvements_dialog.hpp"
 #include "tt2ui/render_options.hpp"
@@ -213,6 +214,10 @@ const std::map<std::string, std::string> kImageFiles = {
     {"SLIDER_BUTTON", "images/gui/slider_button.png"},
     {"CHECKBOX02", "images/gui/button_check.png"},
     {"IMAGE_DIFFICULTY_TAB", "images/gui/difficulty_tab.png"},
+    // DIALOG_HIGHSCORES (profiles.md §4.4).
+    {"TABS", "images/gui/tabs.png"},
+    {"IMAGE_TAB_PAGE01", "images/gui/tab_page01.png"},
+    {"IMAGE_TAB_PAGE02", "images/gui/tab_page02.png"},
     {"BUTTON_INFO", "images/gui/button_info.png"},
     // The port's own IMPORT (deviation OP-7): only data/placeholder/ has it.
     {"BUTTON_IMPORT", "images/gui/button_import.png"},
@@ -241,6 +246,8 @@ const std::map<std::string, FontFile> kFontFiles = {
     {"FONT_NEXTROUND02", {"fonts/font_nextround02.xml", 4}},
     {"FONT_TUTORIAL", {"fonts/font_tutorial01.xml", 3}},
     {"FONT_FONT_HIGHSCORE_TEXT", {"fonts/font_highscore_text.xml", 2}},
+    {"FONT_HIGHSCOREBODY", {"fonts/font_highscorebody.xml", 2}},
+    {"FONT_HIGHSCORELABEL", {"fonts/font_highscores_label.xml", 2}},
     {"FONT_TOOLTIP", {"fonts/arial12.xml", 2}},
     {"FONT_TROPHYNAMES", {"fonts/font_trophynames.xml", 2}},
 };
@@ -1674,7 +1681,8 @@ int main(int argc, char** argv) {
                                // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
                                // '&' the main menu SETTINGS' IMPORT (re-import, deviation OP-7),
                                // '"' the main menu's CHANGE NAME, then '-' its REMOVE,
-                               // '+' the main menu's TROPHIES, then '~' its MENU
+                               // '+' the main menu's TROPHIES, then '~' its MENU,
+                               // '$' the main menu's HIGH SCORES, then '1'..'5' its tabs, '~' OK
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     std::vector<std::string> probe_files;   // --probe-media FILE (repeatable): decode, report, exit
     std::string renderer_flag;              // --renderer auto|vulkan|opengl|software: this run only
@@ -1905,7 +1913,7 @@ int main(int argc, char** argv) {
     // One fading dialog slot per dialog source, drawn in this order.
     SideFillTextures side_fill;
     DialogLayer game_under_layer, game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
-        menu_credits_layer, menu_improvements_layer, menu_notice_layer, profile_layer, import_layer;
+        menu_highscores_layer, menu_credits_layer, menu_improvements_layer, menu_notice_layer, profile_layer, import_layer;
     // The player dialogs under the top one (deepest: select, name input, message).
     std::array<DialogLayer, 2> profile_under_layers;
 
@@ -2007,7 +2015,11 @@ int main(int argc, char** argv) {
     // Saved game to continue in the next start_game (0x4242a0 / 0x42a460).
     std::unique_ptr<tt2::SavedGame> pending_resume;
     auto mode_name = [](bool timed) { return tt2::save_mode_name(timed ? tt2::GameMode::Timed : tt2::GameMode::Untimed); };
+    // 0x5fdea8: the mode last chosen on the menu, Timed at launch; the high
+    // scores open on its tab (0x4063f0).
+    tt2::GameMode last_mode = tt2::GameMode::Timed;
     auto begin_game = [&](bool timed) {
+        last_mode = timed ? tt2::GameMode::Timed : tt2::GameMode::Untimed;
         pending_start = true;
         pending_timed = timed;
         game_fade_out = GAME_FADE_HALF_MS;
@@ -2018,6 +2030,11 @@ int main(int argc, char** argv) {
     };
     // The main menu's HOW TO PLAY (0x42ee90 -> DIALOG_HELP).
     std::optional<HelpDialog> menu_help;
+    // The main menu's HIGH SCORES (0x42f0d0 -> DIALOG_HIGHSCORES, OK only).
+    std::optional<HighScoreDialog> menu_highscores;
+    auto menu_highscores_result = [&](HighScoreDialog::Result r) {
+        if (r != HighScoreDialog::Result::None) menu_highscores.reset();
+    };
     auto menu_help_press = [&](const std::string& name) {
         if (!menu_help) return;
         const MenuButton* b = menu_help->dialog().button(name);
@@ -2200,6 +2217,9 @@ int main(int argc, char** argv) {
         else if (name == "BUTTON_PLAY_UNTIMED") request_game(false);
         else if (name == "BUTTON_PLAY") request_game(true);
         else if (name == "BUTTON_HOWTOPLAY") menu_help.emplace();
+        else if (name == "BUTTON_HIGHSCORES")
+            menu_highscores.emplace(highscores, HighScoreDialog::Opener::Menu, last_mode,
+                                    [&](SoundId id) { assets.play_sound(id); });
         else if (name == "BUTTON_TROPHY" && players.current()) {
             pending_trophies = true;
             game_fade_out = GAME_FADE_HALF_MS;
@@ -2324,7 +2344,7 @@ int main(int argc, char** argv) {
             }
             return;
         }
-        if (menu_dialog_open || menu_improvements || menu_help) return;
+        if (menu_dialog_open || menu_improvements || menu_help || menu_highscores) return;
         if (menu_settings) { pick_settings(*menu_settings, "settings"); return; }
         if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             pick(flow.selection()->buttons(), TooltipSurface::Selection, "menu");
@@ -2472,6 +2492,17 @@ int main(int argc, char** argv) {
                     menu_improvements_result(menu_improvements->mouse_up(e.button.x, e.button.y));
                 continue;
             }
+            if (menu_highscores) {
+                // Deviation: Esc is OK, like the help (the original dialog takes no keys).
+                if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE)
+                    menu_highscores_result(menu_highscores->press("BUTTON_OK"));
+                if (e.type == SDL_EVENT_MOUSE_MOTION) dialog_mouse_move(menu_highscores->dialog(), e.motion.x, e.motion.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
+                    dialog_mouse_down(menu_highscores->dialog(), e.button.x, e.button.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
+                    menu_highscores_result(menu_highscores->mouse_up(e.button.x, e.button.y));
+                continue;
+            }
             if (menu_help) {
                 // Deviation: Esc closes the help (the original dialogs take no keys).
                 if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) menu_help_press("BUTTON_OK");
@@ -2500,6 +2531,7 @@ int main(int argc, char** argv) {
         else if (profile.open()) hot = profile.pointer_over_clickable();
         else if (menu_dialog_open) hot = dialog_pointer_hot(menu_dialog);
         else if (menu_help) hot = dialog_pointer_hot(menu_help->dialog());
+        else if (menu_highscores) hot = dialog_pointer_hot(menu_highscores->dialog());
         else if (menu_settings) hot = menu_settings->pointer_hot();
         else if (menu_improvements) hot = menu_improvements->pointer_hot();
         else if (game) hot = game->pointer_over_clickable();
@@ -2612,7 +2644,11 @@ int main(int argc, char** argv) {
                 else if (menu_improvements && c == '~')
                     menu_improvements_result(menu_improvements->press("BUTTON_CANCEL"));
                 else if (c == '?') services.menu_action("BUTTON_HOWTOPLAY");
+                else if (menu_highscores && c == '~') menu_highscores_result(menu_highscores->press("BUTTON_OK"));
+                else if (menu_highscores && c >= '1' && c <= '5')
+                    menu_highscores->press(HighScoreDialog::TABS[static_cast<std::size_t>(c - '1')].switch_name);
                 else if (c == '+') services.menu_action("BUTTON_TROPHY");
+                else if (c == '$') services.menu_action("BUTTON_HIGHSCORES");
                 else if (c == '#') services.menu_action("BUTTON_SETTINGS");
                 else if (c == '=') services.menu_action("BUTTON_IMPROVEMENTS");
                 else if (c == '^') toggle_fullscreen();
@@ -2682,6 +2718,7 @@ int main(int argc, char** argv) {
         }
         if (menu_dialog_open) dialog_tick(menu_dialog, dt);
         if (menu_help) menu_help->tick(dt);
+        if (menu_highscores) menu_highscores->tick(dt);
         if (menu_settings) menu_settings->tick(dt);
         if (menu_improvements) menu_improvements->tick(dt);
         simulated_ms += dt;
@@ -2756,6 +2793,8 @@ int main(int argc, char** argv) {
                           [&] { draw_dialog(ren, assets, menu_dialog); });
         draw_dialog_layer(ren, layer_px, menu_help_layer, menu_help ? 1 : 0, dt,
                           [&] { draw_help(ren, assets, menu_help->dialog()); });
+        draw_dialog_layer(ren, layer_px, menu_highscores_layer, menu_highscores ? 1 : 0, dt,
+                          [&] { draw_dialog(ren, assets, menu_highscores->dialog()); });
         draw_dialog_layer(ren, layer_px, menu_settings_layer, menu_settings ? 1 : 0, dt,
                           [&] { draw_settings(ren, assets, *menu_settings); });
         const Dialog* menu_credits = menu_settings ? menu_settings->credits() : nullptr;
@@ -2839,7 +2878,7 @@ int main(int argc, char** argv) {
     assets.release();   // before the mixer and the renderer it came from
     audio_out.close();
     for (DialogLayer* l : {&game_under_layer, &game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
-                           &menu_credits_layer, &menu_improvements_layer, &menu_notice_layer, &profile_layer,
+                           &menu_highscores_layer, &menu_credits_layer, &menu_improvements_layer, &menu_notice_layer, &profile_layer,
                            &import_layer})
         l->release();
     for (DialogLayer& l : profile_under_layers) l.release();

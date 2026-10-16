@@ -1226,17 +1226,23 @@ TEST(three_misses_end_the_game_with_high_score) {
     ASSERT_EQ(f.discards, 1);                              // the save goes with the game
     ASSERT_TRUE(s.dialog_kind() == GameDialog::Congrats);  // a new high score
     s.key_return();
-    ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);
+    // 0x401b50: OK opens DIALOG_HIGHSCORES on the Timed table, MAIN MENU only.
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::HighScores);
+    ASSERT_TRUE(s.highscore_dialog() != nullptr);
+    ASSERT_TRUE(s.highscore_dialog()->mode() == tt2::GameMode::Timed);
+    ASSERT_TRUE(!s.dialog().button("BUTTON_OK")->sprite.visible);
     ASSERT_TRUE(f.played(SoundId::HighScoreAchieved));
     const auto& table = f.hs.table(tt2::GameMode::Timed);
     bool found = false;
     for (const auto& e : table.entries) if (e.name == "Mugwump" && e.score == 1250 && e.extra == "4") found = true;
     ASSERT_TRUE(found);
     ASSERT_EQ(f.exits, 0);
-    s.key_return();
+    s.key_return();                                        // the dialog takes no keys
+    ASSERT_EQ(f.exits, 0);
+    s.dialog_press("BUTTON_MAINMENU");
     ASSERT_EQ(f.exits, 1);
     ASSERT_TRUE(s.finished());
-    s.key_return();                                        // only once
+    s.dialog_press("BUTTON_MAINMENU");                     // only once
     ASSERT_EQ(f.exits, 1);
 }
 

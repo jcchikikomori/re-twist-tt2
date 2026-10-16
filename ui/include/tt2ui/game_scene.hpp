@@ -28,6 +28,7 @@
 #include "tt2/word_tree.hpp"
 #include "tt2ui/game_dialogs.hpp"
 #include "tt2ui/help_dialog.hpp"
+#include "tt2ui/highscore_dialog.hpp"
 #include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/trophy_room.hpp"
 #include "tt2ui/modifier.hpp"
@@ -276,10 +277,17 @@ constexpr float NEXT_ROUND_BALL_XY[NEXT_ROUND_BALL_SLOTS][2] = {
 constexpr int NEXT_ROUND_BALL_DELAY_MS = 500;   // 0x409100: local_d0 = 500
 constexpr int NEXT_ROUND_BALL_STEP_MS = 200;    // += 200 per character
 
-inline std::vector<LetterBall> next_round_balls(const std::string& text) {
+// DIALOG_CONGRATS runs the same routine (0x401290) on TEXT_CONGRATS_LETTERBALLS
+// with its own seven sprites "1".."7".
+inline constexpr const char* CONGRATS_LETTERBALLS = "Awesome";   // TEXT_CONGRATS_LETTERBALLS
+constexpr int CONGRATS_BALL_SLOTS = 7;
+constexpr float CONGRATS_BALL_XY[CONGRATS_BALL_SLOTS][2] = {
+    {17, 99}, {62, 52}, {124, 18}, {193, 1}, {262, 18}, {319, 52}, {365, 104}};
+
+inline std::vector<LetterBall> dialog_letter_balls(const std::string& text, const float (*xy)[2], int slots) {
     std::vector<LetterBall> out;
     int slot = 0;
-    for (std::size_t i = 0; i < text.size() && slot < NEXT_ROUND_BALL_SLOTS; ++i) {
+    for (std::size_t i = 0; i < text.size() && slot < slots; ++i) {
         if (text[i] == ' ') continue;
         const int ix = slot++;
         const char c = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
@@ -287,14 +295,20 @@ inline std::vector<LetterBall> next_round_balls(const std::string& text) {
         LetterBall b;
         b.letter = c;
         b.slot = ix;
-        b.start_x = b.target_x = b.x = NEXT_ROUND_BALL_XY[ix][0];
-        b.start_y = b.target_y = b.y = NEXT_ROUND_BALL_XY[ix][1];
+        b.start_x = b.target_x = b.x = xy[ix][0];
+        b.start_y = b.target_y = b.y = xy[ix][1];
         b.frame = 0;
         b.reveal_delay_ms = NEXT_ROUND_BALL_DELAY_MS + NEXT_ROUND_BALL_STEP_MS * static_cast<int>(i);
         b.reveal_elapsed_ms = 0;
         out.push_back(b);
     }
     return out;
+}
+inline std::vector<LetterBall> next_round_balls(const std::string& text) {
+    return dialog_letter_balls(text, NEXT_ROUND_BALL_XY, NEXT_ROUND_BALL_SLOTS);
+}
+inline std::vector<LetterBall> congrats_balls(const std::string& text) {
+    return dialog_letter_balls(text, CONGRATS_BALL_XY, CONGRATS_BALL_SLOTS);
 }
 
 // DIALOG_NEXTROUND particle burst (0x409100, CONFIRMED from the listing):
@@ -566,7 +580,9 @@ public:
     const char* background_id() const { return timed_ ? "gamescene/BACKGROUND_TIMED" : "gamescene/BACKGROUND"; }
     bool dialog_open() const { return dialog_kind_ != GameDialog::None; }
     GameDialog dialog_kind() const { return dialog_kind_; }
-    const Dialog& dialog() const { return settings_ ? settings_->dialog() : dialog_; }
+    const Dialog& dialog() const {
+        return settings_ ? settings_->dialog() : highscore_ ? highscore_->dialog() : dialog_;
+    }
     // The dialog still open under the top one (the pause menu under its
     // "Exit Game?", SETTINGS or HOW TO PLAY; the tutorial under its help),
     // or nullptr. The original stacks them: 0x408320 / 0x408250 / 0x408180
@@ -574,7 +590,9 @@ public:
     // close only the dialog on top.
     const Dialog* under_dialog() const { return under_.empty() ? nullptr : &under_.back().second; }
     GameDialog under_kind() const { return under_.empty() ? GameDialog::None : under_.back().first; }
-    Dialog& dialog() { return settings_ ? settings_->dialog() : dialog_; }
+    Dialog& dialog() { return settings_ ? settings_->dialog() : highscore_ ? highscore_->dialog() : dialog_; }
+    // DIALOG_HIGHSCORES while dialog_kind() == HighScores, else nullptr.
+    const HighScoreDialog* highscore_dialog() const { return highscore_ ? &*highscore_ : nullptr; }
     // DIALOG_SETTINGS while dialog_kind() == Settings, else nullptr.
     const SettingsDialog* settings_dialog() const { return settings_ ? &*settings_ : nullptr; }
     // Alt+Enter changed the window mode: an open Settings dialog follows it.
@@ -688,7 +706,7 @@ public:
     // front end switches to the hand cursor for this.
     bool pointer_over_clickable() const {
         if (settings_) return settings_->pointer_hot();
-        if (dialog_open()) return dialog_pointer_hot(dialog_);
+        if (dialog_open()) return dialog_pointer_hot(dialog());
         for (const auto& b : buttons_)
             if (b.hover && b.enabled && b.sprite.visible) return true;
         return ball_hot_ || word_hot_;
@@ -697,7 +715,7 @@ public:
     void mouse_move(float x, float y) {
         if (settings_) { settings_->mouse_move(x, y); return; }
         if (dialog_open()) {
-            dialog_mouse_move(dialog_, x, y);   // no hover sound (0x48d390)
+            dialog_mouse_move(dialog(), x, y);   // no hover sound (0x48d390)
             return;
         }
         for (auto& b : buttons_) {
@@ -713,11 +731,12 @@ public:
     }
     void mouse_down(float x, float y) {
         if (settings_) { settings_->mouse_down(x, y); return; }
-        if (dialog_open()) { dialog_mouse_down(dialog_, x, y); return; }
+        if (dialog_open()) { dialog_mouse_down(dialog(), x, y); return; }
         for (auto& b : buttons_) b.pressed = b.sprite.visible && b.enabled && b.contains(x, y);
     }
     void mouse_up(float x, float y) {
         if (settings_) { settings_result(settings_->mouse_up(x, y)); return; }
+        if (highscore_) { highscore_result(highscore_->mouse_up(x, y)); return; }
         if (dialog_open()) {
             const std::string name = dialog_mouse_up(dialog_, x, y);
             if (!name.empty()) dialog_press(name);
@@ -790,6 +809,7 @@ public:
     // A button of the open dialog (mouse, keyboard and tests).
     void dialog_press(const std::string& name) {
         if (settings_) { settings_result(settings_->press(name)); return; }   // plays its own sounds
+        if (highscore_) { highscore_result(highscore_->press(name)); return; }   // so does this one
         const MenuButton* b = dialog_.button(name);
         if (!dialog_open() || !b || !b->enabled || !b->sprite.visible) return;
         play(SoundId::Button);
@@ -831,13 +851,16 @@ public:
                 close_dialog();
                 next_round();
                 break;
-            case GameDialog::Congrats: open_dialog(GameDialog::EndGame); break;   // INFERRED order
+            // 0x401b50: OK opens DIALOG_HIGHSCORES (0x428540) on the mode just
+            // played, the new entry blinking, MAIN MENU instead of OK.
+            case GameDialog::Congrats: open_dialog(highscores_ ? GameDialog::HighScores : GameDialog::EndGame); break;
             case GameDialog::EndGame:
                 close_dialog();
                 if (name == "BUTTON_REPLAY") new_game();
                 else exit_to_menu();
                 break;
             case GameDialog::Settings:
+            case GameDialog::HighScores:
             case GameDialog::None: break;
         }
     }
@@ -847,6 +870,7 @@ public:
         if (finished_) return;
         if (dialog_kind_ == GameDialog::HowToPlay) help_.tick(dialog_, dt_ms);
         if (settings_) settings_->tick(dt_ms);
+        else if (highscore_) highscore_->tick(dt_ms);
         else if (dialog_open()) dialog_tick(dialog_, dt_ms);
         for (auto& b : dialog_balls_)
             if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43a820 flag 1 -> 0x43a940 as the flip starts
@@ -1220,6 +1244,7 @@ private:
         dialog_balls_.clear();
         dialog_particles_.clear();
         settings_.reset();
+        highscore_.reset();
         switch (kind) {
             case GameDialog::PauseMenu: dialog_ = build_pause_menu(); break;
             case GameDialog::ConfirmExit:
@@ -1249,7 +1274,16 @@ private:
                 dialog_particles_ = next_round_particles(dialog_balls_, particle_rng_);
                 break;
             case GameDialog::EndGame: dialog_ = build_end_game(); break;
-            case GameDialog::Congrats: dialog_ = build_congrats(); break;
+            case GameDialog::Congrats:
+                dialog_ = build_congrats();
+                dialog_balls_ = congrats_balls(CONGRATS_LETTERBALLS);   // 0x401270 -> 0x401290
+                dialog_particles_ = next_round_particles(dialog_balls_, particle_rng_);
+                break;
+            case GameDialog::HighScores:
+                dialog_ = Dialog{};
+                if (highscores_)
+                    highscore_.emplace(*highscores_, HighScoreDialog::Opener::Game, mode(), services_.play_sound);
+                break;
             case GameDialog::PassRound: dialog_ = build_pass_round(); break;
             case GameDialog::Tutorial: dialog_ = build_tutorial(static_cast<int>(mode())); break;
             case GameDialog::None: dialog_ = Dialog{}; break;
@@ -1286,6 +1320,14 @@ private:
             if (services_.settings.commit) services_.settings.commit(settings_->values());
         }
         if (r == SettingsDialog::Result::Ok || r == SettingsDialog::Result::Cancel) pop_dialog();   // the menu is under it
+    }
+
+    // DIALOG_HIGHSCORES after a game: MAIN MENU leaves the scene (the art is
+    // BUTTON_PAUSE_END; INFERRED, the scene's handler was not traced).
+    void highscore_result(HighScoreDialog::Result r) {
+        if (r == HighScoreDialog::Result::None) return;
+        close_dialog();
+        exit_to_menu();
     }
 
     void exit_to_menu() {
@@ -1585,6 +1627,7 @@ private:
     HelpPager help_;                         // DIALOG_HELP page state
     std::vector<std::pair<GameDialog, Dialog>> under_;   // open dialogs under the top one, bottom first
     std::optional<SettingsDialog> settings_; // DIALOG_SETTINGS while open
+    std::optional<HighScoreDialog> highscore_;   // DIALOG_HIGHSCORES while open
     std::vector<LetterBall> dialog_balls_;   // DIALOG_NEXTROUND letterballs
     std::vector<Particle> dialog_particles_;
     // The original draws the burst from its global LCG (0x5fde90); a
