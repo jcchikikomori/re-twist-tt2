@@ -57,7 +57,7 @@
 
 | Topic | Decision |
 | --- | --- |
-| Render stack | Migrate from SDL2 to **SDL3**; try Vulkan, then OpenGL, then software. The software renderer turns the enhancements off |
+| Render stack | Migrate from SDL2 to **SDL3**; try Vulkan, then OpenGL, then software. The software renderer turns the enhancements off. Android tries OpenGL ES, then Vulkan, then software ([android-support.md](android-support.md), D2) |
 | Upscaling | Smooth / sharp / pixel-art filtering for the imported art, our own placeholder art regenerated at 2x, and an optional texture upscaler (self-written, off by default) |
 | Options file | A new `improvements.txt`, so `settings.txt` stays readable by older builds |
 | Dialog | **IMPROVEMENTS**, opened from a new main-menu button in place of "GameHouse - More Great Games" |

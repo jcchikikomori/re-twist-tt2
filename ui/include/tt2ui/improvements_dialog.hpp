@@ -208,7 +208,8 @@ private:
         rows_.push_back(Row{"UPSCALER", improvements_strings::UPSCALER,
                             {improvements_strings::OFF, improvements_strings::SUPER_XBR}, 0, true, {}});
         rows_.push_back(Row{"RENDERER", improvements_strings::RENDERER,
-                            {improvements_strings::AUTO, backend_title(Backend::Vulkan), backend_title(Backend::OpenGL),
+                            {improvements_strings::AUTO, backend_title(Backend::Vulkan),
+                             backend_title(opengl_backend(THIS_PLATFORM)),
                              backend_title(Backend::Software)},
                             0, true, {}});
         rows_.push_back(Row{"VSYNC", improvements_strings::VSYNC,

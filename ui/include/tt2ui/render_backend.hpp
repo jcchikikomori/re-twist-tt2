@@ -4,9 +4,14 @@
 // CONFIRMED (display-and-timing.md §2): the original renders with Direct3D 9
 // only. The port prefers Vulkan, then OpenGL, then SDL's software renderer
 // (docs/design/improve-ui-ux.md). Direct3D (direct3d, direct3d11,
-// direct3d12) and SDL's GPU renderer are never used, nor GLES (Q12). The
-// software renderer is the last resort and switches the visual
-// enhancements off (RenderCaps::enhancements).
+// direct3d12) and SDL's GPU renderer are never used. The software renderer
+// is the last resort and switches the visual enhancements off
+// (RenderCaps::enhancements).
+//
+// Deviation (decision D2, docs/design/android-support.md): Android has no
+// desktop OpenGL and most devices support OpenGL ES, so there the order is
+// OpenGL ES, then Vulkan, then software. Desktop never uses OpenGL ES (the
+// earlier "no GLES" rule, Q12), so the desktop chain is exactly what it was.
 #pragma once
 
 #include <algorithm>
@@ -17,13 +22,27 @@
 
 namespace tt2ui {
 
-enum class Backend { Vulkan, OpenGL, Software };
+enum class Backend { Vulkan, OpenGL, OpenGLES, Software };
+
+enum class Platform { Desktop, Android };
+
+#ifdef __ANDROID__
+inline constexpr Platform THIS_PLATFORM = Platform::Android;
+#else
+inline constexpr Platform THIS_PLATFORM = Platform::Desktop;
+#endif
+
+// What RendererPref::OpenGL means: desktop OpenGL, or OpenGL ES on Android.
+inline Backend opengl_backend(Platform platform) {
+    return platform == Platform::Android ? Backend::OpenGLES : Backend::OpenGL;
+}
 
 // SDL's name for the backend (SDL_CreateRenderer, SDL_GetRenderDriver).
 inline const char* sdl_driver_name(Backend b) {
     switch (b) {
         case Backend::Vulkan: return "vulkan";
         case Backend::OpenGL: return "opengl";
+        case Backend::OpenGLES: return "opengles2";
         case Backend::Software: return "software";
     }
     return "software";
@@ -32,12 +51,17 @@ inline const char* sdl_driver_name(Backend b) {
 // The backends to try for `pref`, in order, keeping only those SDL lists in
 // `sdl_drivers` (SDL_GetRenderDriver). Software is always last and always
 // there: SDL builds it in, and something has to draw.
-inline std::vector<Backend> backend_chain(tt2::RendererPref pref, const std::vector<std::string>& sdl_drivers) {
+inline std::vector<Backend> backend_chain(tt2::RendererPref pref, const std::vector<std::string>& sdl_drivers,
+                                          Platform platform = Platform::Desktop) {
+    const Backend gl = opengl_backend(platform);
     std::vector<Backend> wanted;
     switch (pref) {
         case tt2::RendererPref::Auto:
-        case tt2::RendererPref::Vulkan: wanted = {Backend::Vulkan, Backend::OpenGL}; break;
-        case tt2::RendererPref::OpenGL: wanted = {Backend::OpenGL}; break;
+            wanted = platform == Platform::Android ? std::vector<Backend>{gl, Backend::Vulkan}
+                                                   : std::vector<Backend>{Backend::Vulkan, gl};
+            break;
+        case tt2::RendererPref::Vulkan: wanted = {Backend::Vulkan, gl}; break;
+        case tt2::RendererPref::OpenGL: wanted = {gl}; break;
         case tt2::RendererPref::Software: break;
     }
     std::vector<Backend> chain;
@@ -65,6 +89,7 @@ inline const char* backend_title(Backend b) {
     switch (b) {
         case Backend::Vulkan: return "Vulkan";
         case Backend::OpenGL: return "OpenGL";
+        case Backend::OpenGLES: return "OpenGL ES";
         case Backend::Software: return "Software";
     }
     return "Software";
