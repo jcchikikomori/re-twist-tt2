@@ -618,6 +618,12 @@ public:
         chunks_.clear();
     }
 
+    // SDL_EVENT_RENDER_DEVICE_RESET (T2.4): the renderer lost every texture
+    // (Android can drop the GL context while the app is in the background).
+    // Let go of them; each image and font loads again when next drawn.
+    // Sounds are untouched.
+    void device_lost() { release_art(); }
+
     // Deviation UX-9 (upscale.hpp): upscale the art 2x with Super-xBR as it
     // loads. The work runs on worker threads; the 1x texture shows until
     // poll_upscales() swaps the 2x one in, so a big image never stalls a
@@ -1619,6 +1625,11 @@ struct SideFillTextures {
         if (right) SDL_DestroyTexture(right);
         left = right = nullptr;
     }
+    // After a render device reset: built again on the next draw.
+    void reset() {
+        release();
+        out_w = out_h = 0;
+    }
     static SDL_Texture* make(SDL_Renderer* ren, int w, int h, Side side) {
         std::vector<std::uint8_t> px = side_fill_rgba(w, h, side);
         if (px.empty()) return nullptr;
@@ -2102,6 +2113,14 @@ int main(int argc, char** argv) {
         menu_highscores_layer, menu_credits_layer, menu_improvements_layer, menu_notice_layer, profile_layer, import_layer;
     // The player dialogs under the top one (deepest: select, name input, message).
     std::array<DialogLayer, 2> profile_under_layers;
+    // At shutdown, and after a render device reset (T2.4).
+    const auto release_layers = [&] {
+        for (DialogLayer* l : {&game_under_layer, &game_layer, &game_credits_layer, &menu_layer, &menu_help_layer,
+                               &menu_settings_layer, &menu_highscores_layer, &menu_credits_layer,
+                               &menu_improvements_layer, &menu_notice_layer, &profile_layer, &import_layer})
+            l->release();
+        for (DialogLayer& l : profile_under_layers) l.release();
+    };
 
     // Hand pointer over clickable items, hourglass on the load
     // screen, arrow everywhere else. The original's cursor handling
@@ -2623,6 +2642,16 @@ int main(int argc, char** argv) {
                 with_play([](auto& g) { g.leave(); });   // 0x427b20 / 0x4169d0: closing the window saves a running round
             }
             if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) with_play([](auto& g) { g.focus_lost(); });
+            // T2.4: a lost device takes every texture with it; each comes back
+            // lazily. Lost render targets need nothing: the dialog layers are
+            // drawn again every frame (a closing fade may blank for 200 ms).
+            if (e.type == SDL_EVENT_RENDER_DEVICE_RESET) {
+                assets.device_lost();
+                side_fill.reset();
+                release_layers();
+                std::printf("render: device reset, textures reload\n");
+            }
+            if (e.type == SDL_EVENT_RENDER_TARGETS_RESET) std::printf("render: targets reset\n");
             if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
                 std::printf("display: %s\n", check_presentation(ren).c_str());
             // Before any routing, so Alt+Enter (and its auto-repeat) never
@@ -3167,11 +3196,7 @@ int main(int argc, char** argv) {
 #endif
     assets.release();   // before the mixer and the renderer it came from
     audio_out.close();
-    for (DialogLayer* l : {&game_under_layer, &game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
-                           &menu_highscores_layer, &menu_credits_layer, &menu_improvements_layer, &menu_notice_layer, &profile_layer,
-                           &import_layer})
-        l->release();
-    for (DialogLayer& l : profile_under_layers) l.release();
+    release_layers();
     side_fill.release();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
