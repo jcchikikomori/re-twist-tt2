@@ -32,7 +32,7 @@ namespace tt2 {
 // wraps `tt2 --import`).
 inline constexpr const char* IMPORT_ROOTS[] = {
     "images/splash",     "images/loadscene", "images/selectionscene", "images/gui", "images/gamescene",
-    "images/trophyscene", "fonts",           "music",                 "sound",
+    "images/trophyscene", "images/blitzscene", "fonts",              "music",                 "sound",
 };
 // The script's "is this an install?" check.
 inline constexpr const char* INSTALL_PROBE = "properties/resources.xml";

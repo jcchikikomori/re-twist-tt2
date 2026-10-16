@@ -247,9 +247,10 @@ So a tie goes **above** the existing equal score, and with the default
 10 prefilled entries a new score must beat 1000 to get in. Worked
 example: table `[10000 … 1000]`, insert 2000 → index 8, `1000` dropped.
 
-### 4.3 Round end (`0x416440`, CONFIRMED)
+### 4.3 Game over (Lightning `0x416440`, CONFIRMED)
 
-When the round's score is > 0 the scene builds an entry (current player's
+`0x416440` is the Lightning game over (lightning.md §4.2); Classic's is `0x427d10`
+and works the same way. When the game's score is > 0 the scene builds an entry (current player's
 name, score, extra = round number via `%d`), inserts it into the mode's
 table, and shows the "new high score" dialog when the returned index is
 not -1, otherwise the plain end-of-game dialog.
@@ -358,7 +359,7 @@ simplified:
 | `0x406e90` | `HighScoreManager::table(name)` + default fill trigger |
 | `0x406f70` | default table fill |
 | `0x4068d0` | results dialog: mode → table key |
-| `0x416440` | round end: insert score, pick dialog |
+| `0x416440` | Lightning game over: insert score, pick dialog |
 | `0x42d9b0` | main menu init: open name input when no players |
 | `0x42f1a0` | main menu welcome label / WOTD button |
 | `0x456cf0` | `HighScoreEntry` ctor |

@@ -53,6 +53,7 @@
 #include "tt2/utf8_path.hpp"
 #include "tt2/word_tree.hpp"
 #include "tt2ui/bitmap_font.hpp"
+#include "tt2ui/blitz_scene.hpp"
 #include "tt2ui/asset_import.hpp"
 #include "tt2ui/data_paths.hpp"
 #include "tt2ui/dialog_fade.hpp"
@@ -163,6 +164,22 @@ const std::map<std::string, std::string> kImageFiles = {
     {"IMAGE_PANEL_CORNERR", "images/gamescene/panel_cornerR.png"},
     {"IMAGE_PANEL_SIDEL", "images/gamescene/panel_sideL.png"},
     {"IMAGE_PANEL_SIDER", "images/gamescene/panel_sideR.png"},
+    {"IMAGE_IMAGE_POPUP_6", "images/gamescene/image_popup_6.png"},
+    {"IMAGE_HINT_LETTERS", "images/gamescene/hint_letters.png"},
+    // SCENE_BLITZ (resources.xml section "blitzscene"); its panel pieces
+    // share ids with gamescene's, so they carry the section.
+    {"blitzscene/BACKGROUND_BLITZ", "images/blitzscene/background_blitz.png"},
+    {"IMAGE_TIMERBAR", "images/blitzscene/timerBar.PNG"},
+    {"IMAGE_BLITZ_MARK", "images/blitzscene/x.png"},
+    {"IMAGE_PAUSEVEIL", "images/blitzscene/pauseshield.png"},
+    {"IMAGE_BTN_ARROW_UP", "images/blitzscene/btn_arrow_up.png"},
+    {"IMAGE_BTN_ARROW_DOWN", "images/blitzscene/btn_arrow_down.png"},
+    {"blitzscene/IMAGE_PANEL_BG", "images/blitzscene/panel_bg.png"},
+    {"blitzscene/IMAGE_PANEL_TOP", "images/blitzscene/panel_top.png"},
+    {"blitzscene/IMAGE_PANEL_BOTTOM", "images/blitzscene/panel_bottom.png"},
+    {"blitzscene/IMAGE_PANEL_SIDER", "images/blitzscene/panel_sideR.png"},
+    {"blitzscene/IMAGE_PANEL_CORNERR", "images/blitzscene/panel_cornerR.png"},
+    {"blitzscene/IMAGE_PANEL_CORNERTOPR", "images/blitzscene/panel_cornertopR.png"},
     {"BUTTON_OK", "images/gui/button_ok.png"},
     {"BUTTON_CANCEL", "images/gui/button_cancel.png"},
     {"BUTTON_ADD", "images/gui/button_add.png"},
@@ -281,6 +298,11 @@ const std::map<SoundId, std::string> kSoundFiles = {
     {SoundId::Slider, "sound/slider_4.ogg"},
     {SoundId::TrophyWon, "sound/game_trophy_won.ogg"},
     {SoundId::MusicTrophyRoom, "music/music_trophy_room.ogg"},
+    {SoundId::LightningStartRound, "sound/lightning_start_round.ogg"},
+    {SoundId::LightningTimeAdded, "sound/lightning_time_added.ogg"},
+    {SoundId::LightningTimeLow, "sound/lightning_time_low.ogg"},
+    {SoundId::LightningHint, "sound/lightning_hint.ogg"},
+    {SoundId::LightningSkip, "sound/lightning_skip.ogg"},
 };
 // The few resources.xml sounds whose attribute is spelled `volume` (the
 // `volue` ones are never read; help-and-settings.md §3.3).
@@ -957,9 +979,9 @@ void draw_sprite(SDL_Renderer* ren, Assets& assets, const SpriteState& s, float 
     SDL_Rect src{s.sheet.frame_x(s.frame), s.sheet.frame_y(s.frame), s.sheet.frame_w, s.sheet.frame_h};
     SDL_FRect dst{s.left() + ox, s.top() + oy, static_cast<float>(s.sheet.frame_w),
                   static_cast<float>(s.sheet.frame_h)};
-    if (s.scale != 1.0f || s.scale_y != 1.0f) {
+    if (s.scale != 1.0f || s.scale_x != 1.0f || s.scale_y != 1.0f) {
         // Scale about the anchor point (x, y); clipped sprites never scale.
-        const float sx = s.scale, sy = s.scale * s.scale_y;
+        const float sx = s.scale * s.scale_x, sy = s.scale * s.scale_y;
         if (sx <= 0.0f || sy <= 0.0f) return;
         dst.x = s.x + ox + (s.left() - s.x) * sx;
         dst.y = s.y + oy + (s.top() - s.y) * sy;
@@ -1201,14 +1223,17 @@ void draw_dialog(SDL_Renderer* ren, Assets& assets, const Dialog& d, const std::
 
 // One letter ball: IMAGE_LETTERBALL_ANIM row = letter, frame 11 = the
 // resting pearl. (ox, oy) shifts a dialog-local ball onto the screen.
-void draw_letter_ball(SDL_Renderer* ren, Assets& assets, const LetterBall& b, float ox, float oy) {
+void draw_letter_ball(SDL_Renderer* ren, Assets& assets, const LetterBall& b, float ox, float oy,
+                      float scale = 1.0f, float alpha = 1.0f) {
     const SheetSpec balls = sheet("IMAGE_LETTERBALL_ANIM", 1020, 1560, 17, 26, 442);
     SpriteState sp = sprite("BALL", balls, b.x + ox, b.y + oy);
     sp.anchor = Anchor::Center;
     sp.frame = b.sheet_frame();   // pearl at rest, flip frames while revealing
+    sp.scale = scale;
+    sp.alpha = alpha;
     draw_sprite(ren, assets, sp);
     // Placeholder: royal-blue letter once the flip shows it (frame 3+).
-    if (assets.image(balls).placeholder && b.frame >= 3) {
+    if (assets.image(balls).placeholder && b.frame >= 3 && scale >= 0.9f && alpha >= 0.5f) {
         const std::string ch(1, static_cast<char>(b.letter - 'a' + 'A'));
         Font& font = assets.font("PLACEHOLDER_5");
         for (SDL_Texture* t : font.layers) if (t) SDL_SetTextureColorMod(t, 0x10, 0x3c, 0xb0);
@@ -1226,6 +1251,7 @@ const char* popup_placeholder_text(PopupKind k) {
         case PopupKind::Bingo: return "BINGO!\nNEXT ROUND!";
         case PopupKind::AlreadyGuessed: return "ALREADY\nFOUND";
         case PopupKind::EnoughOfLength: return "THAT LENGTH\nIS FULL";
+        case PopupKind::ExtraTime: return "+8 SECONDS";
         case PopupKind::NoneOfLength: return "NO WORDS OF\nTHAT LENGTH";
         case PopupKind::Definitions: return "CLICK A FOUND\nWORD TO LOOK\nIT UP";
     }
@@ -1410,6 +1436,58 @@ void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
                              "PLACEHOLDER_3", 20);
     }
     // 0x429510: the trophy and its FONT_TROPHYNAMES title, bottom right.
+    if (g.trophy_popup_id() >= 0) {
+        const SpriteState& t = g.trophy_popup();
+        if (t.visible) draw_sprite(ren, assets, t);
+        const SpriteState& l = g.trophy_label();
+        if (l.visible) draw_text_scaled(ren, assets, "FONT_TROPHYNAMES", l.name, l.x, l.y, l.scale, l.alpha);
+    }
+}
+
+// SCENE_BLITZ (dialogs.xml order): background, the list panel, the time
+// bar, the cells, hint letters and balls, the marks, the UI bar, the
+// buttons, PAUSE_VEIL over the list, then the two popups.
+void draw_blitz(SDL_Renderer* ren, Assets& assets, const BlitzScene& g) {
+    draw_sprite(ren, assets, sprite("BACKGROUND", sheet(g.background_id(), SCREEN_W, SCREEN_H), 0, 0));
+    for (const auto& p : g.panel()) draw_sprite(ren, assets, p);
+    draw_sprite(ren, assets, g.timer_bar());
+    for (const auto& box : g.letter_boxes()) draw_sprite(ren, assets, box);
+    const SheetSpec hints = hint_letter_sheet();
+    for (const auto& h : g.hint_letters()) {
+        draw_sprite(ren, assets, h);
+        if (assets.image(hints).placeholder) {
+            const std::string ch(1, static_cast<char>('A' + h.frame - 1));
+            draw_text(ren, assets, "PLACEHOLDER_5", ch, h.x, h.y, TextAlign::Center, Anchor::Center, -1);
+        }
+    }
+    for (const auto& b : g.balls()) draw_letter_ball(ren, assets, b.ball, 0, 0, b.scale, b.alpha);
+    for (const auto& m : g.marks()) draw_sprite(ren, assets, m);
+
+    draw_sprite(ren, assets, sprite("UI_BAR", sheet("IMAGE_UI_BAR", 800, 54), 0, 547));
+    draw_text(ren, assets, "FONT_UI_LABELS", "SCORE:", 244, 574, TextAlign::Right, Anchor::Center, -1);
+    draw_text(ren, assets, "FONT_UI_NUMBERS", g.score_text(), 251, 574, TextAlign::Left, Anchor::Center, -1);
+    draw_text(ren, assets, "FONT_UI_LABELS", "ROUND:", 537, 574, TextAlign::Right, Anchor::Center, -1);
+    draw_text(ren, assets, "FONT_UI_NUMBERS", g.round_text(), 542, 574, TextAlign::Left, Anchor::Center, -1);
+    draw_text(ren, assets, "FONT_UI_LABELS", "TIME:", 707, 574, TextAlign::Right, Anchor::Center, -1);
+    draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_minutes_text(), 749, 574, TextAlign::Right, Anchor::Center, -1);
+    draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_seconds_text(), 752, 574, TextAlign::Left, Anchor::Center, -1);
+
+    for (const MenuButton& b : g.buttons()) {
+        draw_sprite(ren, assets, b.sprite);
+        if (b.sprite.visible && assets.image(b.sprite.sheet).placeholder) {
+            std::string label = b.sprite.name.substr(7);
+            for (auto& c : label) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            draw_text(ren, assets, "PLACEHOLDER_2", label, b.sprite.left() + b.sprite.sheet.frame_w * 0.5f,
+                      b.sprite.top() + b.sprite.sheet.frame_h * 0.5f, TextAlign::Center, Anchor::Center, -1);
+        }
+    }
+    if (g.pause_veil()) draw_sprite(ren, assets, sprite("PAUSE_VEIL", sheet("IMAGE_PAUSEVEIL", 220, 545), 0, 0));
+
+    if (g.popup_kind()) {
+        const SpriteState& p = g.popup();
+        draw_sprite_or_label(ren, assets, p, p.scale >= 0.9f ? popup_placeholder_text(*g.popup_kind()) : "",
+                             "PLACEHOLDER_3", 20);
+    }
     if (g.trophy_popup_id() >= 0) {
         const SpriteState& t = g.trophy_popup();
         if (t.visible) draw_sprite(ren, assets, t);
@@ -1666,7 +1744,7 @@ int main(int argc, char** argv) {
     std::string debug_player;
     std::string data_dir = TT2_DATA_DIR;
     bool data_dir_given = false;
-    std::string auto_play;     // --play untimed|timed: start a game as soon as the menu is up
+    std::string auto_play;     // --play untimed|timed|lightning: start a game as soon as the menu is up
     bool hover_set = false;    // --hover X,Y: the cursor parked on one point (smoke tests)
     float hover_x = 0, hover_y = 0;
     std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
@@ -1709,7 +1787,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--renderer") && i + 1 < argc) renderer_flag = argv[++i];
         else if (!std::strcmp(argv[i], "--help")) {
             std::printf("usage: tt2 [--assets DIR] [--data-dir DIR] [--save-dir DIR] [--player NAME]\n"
-                        "           [--play untimed|timed] [--speed N] [--exit-after MS]\n"
+                        "           [--play untimed|timed|lightning] [--speed N] [--exit-after MS]\n"
                         "           [--import DIR] [--asset-dir DIR] [--asset-manifest FILE]\n"
                         "           [--renderer auto|vulkan|opengl|software]\n"
                         "\n"
@@ -2005,23 +2083,31 @@ int main(int argc, char** argv) {
     // (TRANSITION_DEFAULT: 500 ms to black, then 500 ms back; each half
     // uses FadeBlackTransition's full `time`, 0x46c362 / 0x46c78f).
     std::unique_ptr<GameScene> game;
+    std::unique_ptr<BlitzScene> blitz;   // SCENE_BLITZ (Lightning) instead of `game`
+    // The scene being played, Classic or Lightning: most of the front end
+    // talks to both through the same member names.
+    auto with_play = [&](auto&& fn) {
+        if (game) fn(*game);
+        else if (blitz) fn(*blitz);
+    };
     // SCENE_TROPHY: opened from the menu (0x42e390) and left by its MENU
     // button (0x42fcb0), both through TRANSITION_DEFAULT like the game.
     std::unique_ptr<TrophyRoom> trophy_room;
     bool pending_trophies = false, pending_trophy_exit = false;
     constexpr int GAME_FADE_HALF_MS = 500;
     int game_fade_out = 0, game_fade_in = 0;
-    bool pending_start = false, pending_timed = false, pending_exit = false;
+    bool pending_start = false, pending_exit = false;
+    tt2::GameMode pending_mode = tt2::GameMode::Timed;
     // Saved game to continue in the next start_game (0x4242a0 / 0x42a460).
     std::unique_ptr<tt2::SavedGame> pending_resume;
-    auto mode_name = [](bool timed) { return tt2::save_mode_name(timed ? tt2::GameMode::Timed : tt2::GameMode::Untimed); };
+    auto mode_name = [](tt2::GameMode m) { return tt2::save_mode_name(m); };
     // 0x5fdea8: the mode last chosen on the menu, Timed at launch; the high
     // scores open on its tab (0x4063f0).
     tt2::GameMode last_mode = tt2::GameMode::Timed;
-    auto begin_game = [&](bool timed) {
-        last_mode = timed ? tt2::GameMode::Timed : tt2::GameMode::Untimed;
+    auto begin_game = [&](tt2::GameMode m) {
+        last_mode = m;
         pending_start = true;
-        pending_timed = timed;
+        pending_mode = m;
         game_fade_out = GAME_FADE_HALF_MS;
     };
     // Yes/no MESSAGE word wrap in the label's own font (game-scene.md §6).
@@ -2105,7 +2191,7 @@ int main(int argc, char** argv) {
         const bool fullscreen = improvements.legacy_fullscreen();
         if (menu_settings) menu_settings->sync_fullscreen(fullscreen);
         if (menu_improvements) menu_improvements->sync_window(improvements.window);
-        if (game) game->window_mode_changed(fullscreen);
+        with_play([&](auto& g) { g.window_mode_changed(fullscreen); });
     };
     // "Continue the game?" (CTEXT_START_SAVEGAME, 0x42dc80) on the menu. Port
     // improvement: the original never shows it in play (a save just resumes,
@@ -2113,34 +2199,36 @@ int main(int argc, char** argv) {
     // IMPROVEMENTS -> ASK TO RESUME Off brings that back.
     Dialog menu_dialog;
     bool menu_dialog_open = false;
-    bool menu_dialog_timed = false;
+    tt2::GameMode menu_dialog_mode = tt2::GameMode::Timed;
     // Loads the current player's save for the next begin_game().
-    auto load_resume = [&](bool timed) {
+    auto load_resume = [&](tt2::GameMode m) {
         const std::string player = players.current() ? players.current()->name : std::string();
         auto g = std::make_unique<tt2::SavedGame>();
-        if (store.load_saved_game(player, mode_name(timed), *g)) pending_resume = std::move(g);
+        if (store.load_saved_game(player, mode_name(m), *g)) pending_resume = std::move(g);
         else std::fprintf(stderr, "warning: saved game for %s is unreadable; starting again\n", player.c_str());
     };
-    auto request_game = [&](bool timed) {
+    auto request_game = [&](tt2::GameMode m) {
         if (!players.current()) { profile.open_player_select(); return; }
-        if (!save_dir.empty() && store.has_saved_game(players.current()->name, mode_name(timed))) {
+        if (!save_dir.empty() && store.has_saved_game(players.current()->name, mode_name(m))) {
             if (!improvements.resume_prompt) {   // the original: resume without asking
-                load_resume(timed);
-                begin_game(timed);
+                load_resume(m);
+                begin_game(m);
                 return;
             }
             menu_dialog =
                 build_yes_no(game_strings::SAVEGAME_HEADER, game_strings::SAVEGAME_BODY, false, wrap_message);
             menu_dialog_open = true;
-            menu_dialog_timed = timed;
+            menu_dialog_mode = m;
             return;
         }
-        begin_game(timed);
+        begin_game(m);
     };
     // Entering the menu: the profile check (0x42d9b0), then --play.
     auto menu_entered = [&] {
         profile.on_menu_entered();
-        if (!auto_play.empty()) request_game(auto_play == "timed");
+        if (auto_play == "timed") request_game(tt2::GameMode::Timed);
+        else if (auto_play == "lightning") request_game(tt2::GameMode::Blitz);
+        else if (!auto_play.empty()) request_game(tt2::GameMode::Untimed);
     };
 
     // The missing-assets prompt (import_prompt.hpp): asked once per launch,
@@ -2201,21 +2289,22 @@ int main(int argc, char** argv) {
         assets.play_sound(SoundId::Button);
         menu_dialog_open = false;
         const std::string player = players.current() ? players.current()->name : std::string();
-        const char* mode = mode_name(menu_dialog_timed);
+        const char* mode = mode_name(menu_dialog_mode);
         if (name == "BUTTON_YES") {
-            load_resume(menu_dialog_timed);
+            load_resume(menu_dialog_mode);
         } else if (name == "BUTTON_NO") {
             store.remove_saved_game(player, mode);   // "Select 'No' to start again."
         } else {
             return;
         }
-        begin_game(menu_dialog_timed);
+        begin_game(menu_dialog_mode);
     };
     services.menu_action = [&](const std::string& name) {
         if (name == "BUTTON_QUIT") running = false;
         else if (name == "BUTTON_CHANGENAME") profile.open_player_select();
-        else if (name == "BUTTON_PLAY_UNTIMED") request_game(false);
-        else if (name == "BUTTON_PLAY") request_game(true);
+        else if (name == "BUTTON_PLAY_UNTIMED") request_game(tt2::GameMode::Untimed);
+        else if (name == "BUTTON_PLAY") request_game(tt2::GameMode::Timed);
+        else if (name == "BUTTON_BLITZ") request_game(tt2::GameMode::Blitz);
         else if (name == "BUTTON_HOWTOPLAY") menu_help.emplace();
         else if (name == "BUTTON_HIGHSCORES")
             menu_highscores.emplace(highscores, HighScoreDialog::Opener::Menu, last_mode,
@@ -2257,7 +2346,7 @@ int main(int argc, char** argv) {
         gs.settings = settings_host;
         gs.on_exit = [&] { pending_exit = true; game_fade_out = GAME_FADE_HALF_MS; };
         const std::string player = players.current()->name;
-        const std::string mode = mode_name(pending_timed);
+        const std::string mode = mode_name(pending_mode);
         gs.save_game = [&store, player, mode, &save_dir](const tt2::SavedGame& g) {
             if (save_dir.empty()) return;
             if (!store.save_saved_game(player, mode, g))
@@ -2267,13 +2356,23 @@ int main(int argc, char** argv) {
         gs.discard_save = [&store, player, mode, &save_dir] {
             if (!save_dir.empty()) store.remove_saved_game(player, mode);
         };
-        game = std::make_unique<GameScene>(common_tree, full_tree, *players.current(), &highscores, pending_timed,
-                                           gs, static_cast<std::int64_t>(seed_ticks()), pending_resume.get());
+        if (pending_mode == tt2::GameMode::Blitz) {
+            // 0x415a70: MUSIC_in-game_1 (at 0.7; the port has no per-stream gain).
+            blitz = std::make_unique<BlitzScene>(common_tree, full_tree, *players.current(), &highscores, gs,
+                                                 static_cast<std::int64_t>(seed_ticks()), pending_resume.get());
+            std::string racks;
+            for (const auto& w : blitz->words()) racks += (racks.empty() ? "" : " ") + w.answer;
+            std::printf("game: lightning round %d, words %s\n", blitz->round_number(), racks.c_str());
+        } else {
+            const bool timed = pending_mode == tt2::GameMode::Timed;
+            game = std::make_unique<GameScene>(common_tree, full_tree, *players.current(), &highscores, timed,
+                                               gs, static_cast<std::int64_t>(seed_ticks()), pending_resume.get());
+            std::printf("game: %s, rack %s, %zu slots\n", timed ? "timed" : "untimed", game->rack().c_str(),
+                        game->slots().size());
+        }
         if (pending_resume) std::printf("game: resumed round %d\n", pending_resume->round);
         pending_resume.reset();
         assets.play_stream(SoundId::MusicInGame1);
-        std::printf("game: %s, rack %s, %zu slots\n", pending_timed ? "timed" : "untimed", game->rack().c_str(),
-                    game->slots().size());
     };
 
     const SelectionScene::HitTest hit = [&](const MenuButton& b, float px, float py) {
@@ -2330,18 +2429,20 @@ int main(int argc, char** argv) {
                 pick(profile.dialog().buttons, TooltipSurface::PlayerSelect, "players");
             return;
         }
-        if (game) {
-            if (const SettingsDialog* sd = game->settings_dialog()) { pick_settings(*sd, "game-settings"); return; }
-            switch (game->dialog_kind()) {
-                case GameDialog::None: pick(game->buttons(), TooltipSurface::Game, "game"); break;
-                case GameDialog::PauseMenu: pick(game->dialog().buttons, TooltipSurface::PauseMenu, "pause"); break;
-                case GameDialog::Tutorial:
-                case GameDialog::NextRound:
-                case GameDialog::PassRound:
-                case GameDialog::EndGame:
-                case GameDialog::Congrats: pick(game->dialog().buttons, TooltipSurface::RoundDialog, "round"); break;
-                default: break;
-            }
+        if (game || blitz) {
+            with_play([&](auto& g) {
+                if (const SettingsDialog* sd = g.settings_dialog()) { pick_settings(*sd, "game-settings"); return; }
+                switch (g.dialog_kind()) {
+                    case GameDialog::None: pick(g.buttons(), TooltipSurface::Game, "game"); break;
+                    case GameDialog::PauseMenu: pick(g.dialog().buttons, TooltipSurface::PauseMenu, "pause"); break;
+                    case GameDialog::Tutorial:
+                    case GameDialog::NextRound:
+                    case GameDialog::PassRound:
+                    case GameDialog::EndGame:
+                    case GameDialog::Congrats: pick(g.dialog().buttons, TooltipSurface::RoundDialog, "round"); break;
+                    default: break;
+                }
+            });
             return;
         }
         if (menu_dialog_open || menu_improvements || menu_help || menu_highscores) return;
@@ -2373,9 +2474,9 @@ int main(int argc, char** argv) {
             }
             if (e.type == SDL_EVENT_QUIT) {
                 running = false;
-                if (game) game->leave();   // 0x427b20: closing the window saves a running round
+                with_play([](auto& g) { g.leave(); });   // 0x427b20 / 0x4169d0: closing the window saves a running round
             }
-            if (game && e.type == SDL_EVENT_WINDOW_FOCUS_LOST) game->focus_lost();
+            if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) with_play([](auto& g) { g.focus_lost(); });
             if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
                 std::printf("display: %s\n", check_presentation(ren).c_str());
             // Before any routing, so Alt+Enter (and its auto-repeat) never
@@ -2418,26 +2519,40 @@ int main(int argc, char** argv) {
                     profile.mouse_up(e.button.x, e.button.y);
                 continue;
             }
-            if (game) {
-                if (e.type == SDL_EVENT_TEXT_INPUT) {
-                    for (const char* c = e.text.text; *c; ++c) game->type_letter(*c);
-                }
-                if (e.type == SDL_EVENT_KEY_DOWN) {
+            if (game || blitz) {
+                with_play([&](auto& g) {
+                    if (e.type == SDL_EVENT_TEXT_INPUT) {
+                        for (const char* c = e.text.text; *c; ++c) g.type_letter(*c);
+                    }
+                    if (e.type == SDL_EVENT_KEY_DOWN) {
+                        switch (e.key.key) {
+                            case SDLK_BACKSPACE: g.backspace(); break;
+                            case SDLK_RETURN:
+                            case SDLK_KP_ENTER: g.key_return(); break;
+                            case SDLK_DELETE: g.key_delete(); break;
+                            case SDLK_SPACE: g.key_space(); break;
+                            case SDLK_ESCAPE: g.key_escape(); break;
+                            default: break;
+                        }
+                    }
+                    if (e.type == SDL_EVENT_MOUSE_MOTION) g.mouse_move(e.motion.x, e.motion.y);
+                    if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
+                        g.mouse_down(e.button.x, e.button.y);
+                    if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
+                        g.mouse_up(e.button.x, e.button.y);
+                });
+                // 0x415c50: Tab, Down and Right go to the next word, Up and
+                // Left to the previous one (INFERRED key codes 0x14..0x17).
+                if (blitz && e.type == SDL_EVENT_KEY_DOWN) {
                     switch (e.key.key) {
-                        case SDLK_BACKSPACE: game->backspace(); break;
-                        case SDLK_RETURN:
-                        case SDLK_KP_ENTER: game->key_return(); break;
-                        case SDLK_DELETE: game->key_delete(); break;
-                        case SDLK_SPACE: game->key_space(); break;
-                        case SDLK_ESCAPE: game->key_escape(); break;
+                        case SDLK_TAB:
+                        case SDLK_DOWN:
+                        case SDLK_RIGHT: blitz->key_word(true); break;
+                        case SDLK_UP:
+                        case SDLK_LEFT: blitz->key_word(false); break;
                         default: break;
                     }
                 }
-                if (e.type == SDL_EVENT_MOUSE_MOTION) game->mouse_move(e.motion.x, e.motion.y);
-                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
-                    game->mouse_down(e.button.x, e.button.y);
-                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
-                    game->mouse_up(e.button.x, e.button.y);
                 continue;
             }
             if (trophy_room) {
@@ -2534,7 +2649,7 @@ int main(int argc, char** argv) {
         else if (menu_highscores) hot = dialog_pointer_hot(menu_highscores->dialog());
         else if (menu_settings) hot = menu_settings->pointer_hot();
         else if (menu_improvements) hot = menu_improvements->pointer_hot();
-        else if (game) hot = game->pointer_over_clickable();
+        else if (game || blitz) with_play([&](auto& g) { hot = g.pointer_over_clickable(); });
         else if (trophy_room) hot = trophy_room->pointer_over_clickable();
         else if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             hot = flow.selection()->pointer_over_clickable();
@@ -2572,6 +2687,7 @@ int main(int argc, char** argv) {
                 else if (pending_exit) {
                     pending_exit = false;
                     game.reset();
+                    blitz.reset();
                     assets.play_stream(SoundId::MusicMenu);
                     std::printf("t=%ld ms: back to the menu\n", simulated_ms);
                 }
@@ -2621,7 +2737,7 @@ int main(int argc, char** argv) {
         // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter;
         // '=' IMPROVEMENTS, then '<' / '>' its display mode, '(' / ')' its resolution, '[' / ']' its filter,
         // '*' its upscaler, '{' its renderer, '|' OK (then OK on "Restart needed"), '~' CANCEL.
-        if (!game && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
+        if (!game && !blitz && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
             flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
             if (auto_type_ms >= 300) {
@@ -2667,35 +2783,39 @@ int main(int argc, char** argv) {
             }
         }
         if (trophy_room) trophy_room->update(dt);
-        if (game) {
-            game->update(dt);
+        if (game || blitz) {
+            with_play([&](auto& g) { g.update(dt); });
             // --type: one key every 300 ms while a round is being played.
             auto_type_ms += dt;
             while (!auto_type.empty() && auto_type_ms >= 300) {
                 auto_type_ms -= 300;
                 const char c = auto_type.front();
                 auto_type.erase(0, 1);
-                if (c == '\n' || c == '|') game->key_return();
-                else if (c == ' ') game->key_space();
-                else if (c == '_') game->key_delete();                 // Delete = CLEAR
-                else if (c == '~') game->key_escape();                  // pause menu / back
-                else if (c == '$') game->dialog_press("BUTTON_STOP");   // pause menu STOP
-                else if (c == '?') game->dialog_press("BUTTON_HOWTOPLAY");   // pause menu HOW TO PLAY
-                else if (c == '#') game->dialog_press("BUTTON_SETTINGS");    // pause menu SETTINGS
-                else if (c == '^') toggle_fullscreen();                      // Alt+Enter
-                else if (c == '%')                                            // the shown PASS / GIVE UP
-                    for (const char* n : {"BUTTON_Pass_2", "BUTTON_Pass", "BUTTON_GiveUp"}) game->press(n);
-                else if (c == '}') game->press("BUTTON_NextRound");         // qualified: next round
-                else if (c == '!') game->dialog_press("SWITCH_FULLSCREEN");  // settings: fullscreen
-                else if (c == '@') game->dialog_press("BUTTON_INFO");        // settings: credits
-                else if (c >= '6' && c <= '8') game->dialog_press(SettingsDialog::length_switch(c - '0'));
-                else if (c == '<') game->dialog_press("BUTTON_PREV");       // help: previous page
-                else if (c == '>') {
-                    if (game->dialog_kind() == GameDialog::HowToPlay || game->dialog_kind() == GameDialog::Settings)
-                        game->dialog_press("BUTTON_NEXT");                  // help or credits: next page
-                    else game->press("BUTTON_NextRound");                   // NEXT ROUND once qualified
-                }
-                else game->type_letter(c);
+                // Lightning: '[' / ']' the previous / next word (Up / Tab).
+                if (blitz && (c == '[' || c == ']')) { blitz->key_word(c == ']'); continue; }
+                with_play([&](auto& g) {
+                    if (c == '\n' || c == '|') g.key_return();
+                    else if (c == ' ') g.key_space();
+                    else if (c == '_') g.key_delete();                 // Delete = CLEAR
+                    else if (c == '~') g.key_escape();                  // pause menu / back
+                    else if (c == '$') g.dialog_press("BUTTON_STOP");   // pause menu STOP
+                    else if (c == '?') g.dialog_press("BUTTON_HOWTOPLAY");   // pause menu HOW TO PLAY
+                    else if (c == '#') g.dialog_press("BUTTON_SETTINGS");    // pause menu SETTINGS
+                    else if (c == '^') toggle_fullscreen();                   // Alt+Enter
+                    else if (c == '%')                                         // the shown PASS / GIVE UP
+                        for (const char* n : {"BUTTON_Pass_2", "BUTTON_Pass", "BUTTON_GiveUp"}) g.press(n);
+                    else if (c == '}') g.press("BUTTON_NextRound");         // qualified: next round
+                    else if (c == '!') g.dialog_press("SWITCH_FULLSCREEN");  // settings: fullscreen
+                    else if (c == '@') g.dialog_press("BUTTON_INFO");        // settings: credits
+                    else if (c >= '6' && c <= '8') g.dialog_press(SettingsDialog::length_switch(c - '0'));
+                    else if (c == '<') g.dialog_press("BUTTON_PREV");       // help: previous page
+                    else if (c == '>') {
+                        if (g.dialog_kind() == GameDialog::HowToPlay || g.dialog_kind() == GameDialog::Settings)
+                            g.dialog_press("BUTTON_NEXT");                  // help or credits: next page
+                        else g.press("BUTTON_NextRound");                   // NEXT ROUND once qualified
+                    }
+                    else g.type_letter(c);
+                });
             }
         } else if (!boot_prompt_open()) {
             flow.update(dt);
@@ -2727,7 +2847,7 @@ int main(int argc, char** argv) {
             std::printf("t=%ld ms: scene %d\n", simulated_ms, static_cast<int>(last_scene));
             if (last_scene == SceneId::Selection) menu_entered();
         }
-        const bool want_text = profile.wants_text_input() || (game && !profile.open());
+        const bool want_text = profile.wants_text_input() || ((game || blitz) && !profile.open());
         if (want_text != text_input_on) {
             text_input_on = want_text;
             if (text_input_on) SDL_StartTextInput(win); else SDL_StopTextInput(win);
@@ -2743,6 +2863,8 @@ int main(int argc, char** argv) {
         const LayerSize layer_px = layer_size(out_w, out_h, render_opts.hires_layers, render_caps.max_texture_size);
         if (game) {
             draw_game(ren, assets, *game);
+        } else if (blitz) {
+            draw_blitz(ren, assets, *blitz);
         } else if (trophy_room) {
             draw_trophy_room(ren, assets, *trophy_room);
         } else if (!boot_prompt_open()) {   // black behind the boot prompt
@@ -2756,37 +2878,43 @@ int main(int argc, char** argv) {
         // The dialog still open under the top one (the pause menu under
         // "Exit Game?", SETTINGS or HOW TO PLAY), with its own backdrop:
         // each GF2 dialog darkens what is behind it (dodarkenbackground).
-        const Dialog* game_under = game ? game->under_dialog() : nullptr;
-        const int game_under_id = game_under ? static_cast<int>(game->under_kind()) : 0;
-        const int game_top_id = game ? static_cast<int>(game->dialog_kind()) : 0;
+        const Dialog* game_under = nullptr;
+        const Dialog* game_credits = nullptr;   // DIALOG_CREDITS over the in-game settings
+        int game_under_id = 0, game_top_id = 0;
+        with_play([&](auto& g) {
+            game_under = g.under_dialog();
+            game_under_id = game_under ? static_cast<int>(g.under_kind()) : 0;
+            game_top_id = static_cast<int>(g.dialog_kind());
+            game_credits = g.settings_dialog() ? g.settings_dialog()->credits() : nullptr;
+        });
         hand_off_layers(game_under_layer, game_under_id, game_layer, game_top_id);
         draw_dialog_layer(ren, layer_px, game_under_layer, game_under_id, dt,
                           [&] { draw_dialog(ren, assets, *game_under); });
         draw_dialog_layer(ren, layer_px, game_layer, game_top_id, dt, [&] {
-            if (game->settings_dialog()) {
-                draw_settings(ren, assets, *game->settings_dialog());
-                return;
-            }
-            if (game->dialog_kind() == GameDialog::HowToPlay) {
-                draw_help(ren, assets, game->dialog());
-                return;
-            }
-            draw_dialog(ren, assets, game->dialog());
-            // 0x409100: the burst is linked in under its ball.
-            const SheetSpec particle = sheet("IMAGE_PARTICLEBALL", 18, 18);
-            for (const Particle& p : game->dialog_particles()) {
-                SpriteState sp = sprite("PARTICLE", particle, p.x() + game->dialog().left(),
-                                        p.y() + game->dialog().top());
-                sp.anchor = Anchor::Center;
-                sp.alpha = p.alpha();
-                draw_sprite(ren, assets, sp);
-            }
-            for (const LetterBall& b : game->dialog_balls())
-                draw_letter_ball(ren, assets, b, game->dialog().left(), game->dialog().top());
+            with_play([&](const auto& g) {
+                if (g.settings_dialog()) {
+                    draw_settings(ren, assets, *g.settings_dialog());
+                    return;
+                }
+                if (g.dialog_kind() == GameDialog::HowToPlay) {
+                    draw_help(ren, assets, g.dialog());
+                    return;
+                }
+                draw_dialog(ren, assets, g.dialog());
+                // 0x409100: the burst is linked in under its ball.
+                const SheetSpec particle = sheet("IMAGE_PARTICLEBALL", 18, 18);
+                for (const Particle& p : g.dialog_particles()) {
+                    SpriteState sp = sprite("PARTICLE", particle, p.x() + g.dialog().left(), p.y() + g.dialog().top());
+                    sp.anchor = Anchor::Center;
+                    sp.alpha = p.alpha();
+                    draw_sprite(ren, assets, sp);
+                }
+                for (const LetterBall& b : g.dialog_balls())
+                    draw_letter_ball(ren, assets, b, g.dialog().left(), g.dialog().top());
+            });
         });
         // DIALOG_CREDITS opens over the settings (0x40c760) with its own
         // backdrop and fade.
-        const Dialog* game_credits = game && game->settings_dialog() ? game->settings_dialog()->credits() : nullptr;
         draw_dialog_layer(ren, layer_px, game_credits_layer, game_credits ? 1 : 0, dt,
                           [&] { draw_dialog(ren, assets, *game_credits); });
         draw_dialog_layer(ren, layer_px, menu_layer, menu_dialog_open ? 1 + static_cast<int>(menu_dialog.kind) : 0, dt,

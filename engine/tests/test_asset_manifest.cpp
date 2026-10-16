@@ -75,7 +75,8 @@ TEST(manifest_roots_match_the_import_script) {
     const std::vector<std::string> roots(std::begin(IMPORT_ROOTS), std::end(IMPORT_ROOTS));
     const std::vector<std::string> script = {"images/splash", "images/loadscene", "images/selectionscene",
                                              "images/gui",    "images/gamescene", "images/trophyscene",
-                                             "fonts",         "music",            "sound"};
+                                             "images/blitzscene", "fonts",        "music",
+                                             "sound"};
     ASSERT_TRUE(roots == script);
     ASSERT_EQ(std::string(INSTALL_PROBE), std::string("properties/resources.xml"));
 }

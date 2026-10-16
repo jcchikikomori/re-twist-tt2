@@ -56,6 +56,12 @@ enum class SoundId {
     // Trophies (docs/reverse-engineering/trophies.md).
     TrophyWon,          // SOUND_game_trophy_won (sound/game_trophy_won.ogg)
     MusicTrophyRoom,    // Stream MUSIC_trophy_room (music/music_trophy_room.ogg)
+    // Lightning (docs/reverse-engineering/lightning.md, section "default").
+    LightningStartRound,   // SOUND_lightning_start_round (sound/lightning_start_round.ogg)
+    LightningTimeAdded,    // SOUND_lightning_time_added  (sound/lightning_time_added.ogg)
+    LightningTimeLow,      // SOUND_lightning_time_low    (sound/lightning_time_low.ogg)
+    LightningHint,         // SOUND_lightning_hint        (sound/lightning_hint.ogg)
+    LightningSkip,         // SOUND_lightning_skip        (sound/lightning_skip.ogg)
 };
 
 // What the scenes need from the application.

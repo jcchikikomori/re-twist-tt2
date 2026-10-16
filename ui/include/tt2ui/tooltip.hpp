@@ -75,7 +75,7 @@ inline constexpr const char* INGAME_MENU = "Show the game menu";
 // dialogs (BUTTON_SETTINGS on the menu and in the pause menu).
 enum class TooltipSurface {
     Selection,      // the main menu scene
-    Game,           // the Classic scene's own buttons
+    Game,           // the Classic and Lightning scenes' own buttons
     PauseMenu,      // DIALOG_MENU
     RoundDialog,    // DIALOG_TUTORIAL / NEXTROUND / PASSROUND / ENDGAME / CONGRATS
     PlayerSelect,   // DIALOG_PLAYERSELECT
@@ -98,7 +98,8 @@ inline const char* tooltip_text(TooltipSurface surface, std::string_view name) {
             if (name == "BUTTON_Twist") return s::TWIST;
             if (name == "BUTTON_Enter") return s::ENTER;
             if (name == "BUTTON_LastWord") return s::LAST_WORD;
-            if (name == "BUTTON_Clear") return s::CLEAR;
+            // Lightning's word arrows reuse CTOOLTIP_Clear (sic, dialogs.xml SCENE_BLITZ).
+            if (name == "BUTTON_Clear" || name == "BUTTON_PREVWORD" || name == "BUTTON_NEXTWORD") return s::CLEAR;
             if (name == "BUTTON_NextRound") return s::NEXT_ROUND;
             if (name == "BUTTON_Pass" || name == "BUTTON_Pass_2" || name == "BUTTON_GiveUp") return s::GIVE_UP;
             if (name == "BUTTON_Menu") return s::INGAME_MENU;

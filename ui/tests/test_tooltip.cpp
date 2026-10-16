@@ -79,6 +79,11 @@ TEST(tooltip_place_flips_at_the_right_edge) {
 TEST(tooltip_text_follows_dialogs_xml) {
     ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Game, "BUTTON_Twist")), std::string("Scramble the letters"));
     ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Game, "BUTTON_Pass_2")), std::string("End this game"));
+    // Lightning's word arrows reuse CTOOLTIP_Clear (sic).
+    ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Game, "BUTTON_NEXTWORD")),
+              std::string(tooltip_text(TooltipSurface::Game, "BUTTON_Clear")));
+    ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Game, "BUTTON_PREVWORD")),
+              std::string(tooltip_text(TooltipSurface::Game, "BUTTON_Clear")));
     // The same name differs by surface.
     ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Selection, "BUTTON_HOWTOPLAY")),
               std::string("View the game instructions"));
@@ -94,6 +99,7 @@ TEST(tooltip_text_follows_dialogs_xml) {
 TEST(tooltip_text_is_empty_for_widgets_without_one) {
     ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Selection, "BUTTON_IMPROVEMENTS")), std::string());
     ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Selection, "BUTTON_PLAY_UNTIMED")), std::string());
+    ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Selection, "BUTTON_BLITZ")), std::string());
     ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Game, "BUTTON_STOP")), std::string());
     ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Settings, "BUTTON_OK")), std::string());
     ASSERT_EQ(std::string(tooltip_text(TooltipSurface::PlayerSelect, "NAM")), std::string());

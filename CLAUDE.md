@@ -39,7 +39,7 @@ ctest --test-dir build --output-on-failure    # unit tests
 
 | Path | Owner / purpose |
 | --- | --- |
-| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp`, `round_crossword.hpp`, `profile.hpp` (players, progression, high scores; spec in `docs/reverse-engineering/profiles.md`), `trophies.hpp` (when each trophy is won; spec in `docs/reverse-engineering/trophies.md`), `profile_store.hpp` (plain-text save files), `settings.hpp` (volumes and window mode, `settings.txt`), `improvements.hpp` (the port's display options, `improvements.txt`; unknown keys are skipped), `saved_game.hpp` (the resumable Classic game), `sha256.hpp`, `asset_manifest.hpp` (which original files the importer copies, and their hashes), `utf8_path.hpp` (UTF-8 paths under C++17 and C++20). |
+| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp` (Lightning rules; spec in `docs/reverse-engineering/lightning.md`), `round_crossword.hpp`, `profile.hpp` (players, progression, high scores; spec in `docs/reverse-engineering/profiles.md`), `trophies.hpp` (when each trophy is won; spec in `docs/reverse-engineering/trophies.md`), `profile_store.hpp` (plain-text save files), `settings.hpp` (volumes and window mode, `settings.txt`), `improvements.hpp` (the port's display options, `improvements.txt`; unknown keys are skipped), `saved_game.hpp` (the resumable Classic and Lightning games), `sha256.hpp`, `asset_manifest.hpp` (which original files the importer copies, and their hashes), `utf8_path.hpp` (UTF-8 paths under C++17 and C++20). |
 | `engine/tests/` | Unit tests, one file per header plus `test_main.cpp` (the in-tree test harness). |
 | `src/main.cpp` | The driver / smoke test for the engine. |
 | `tools/tree_cli.cpp` | Dictionary tool: `decode`, `encode`, `merge`, `diff`, `verify`. Replaces the old `tools/tree-cli.ts`. |
@@ -172,8 +172,11 @@ the address-level walkthrough of the gameplay code is in
 ### Lightning / Blitz
 
 - Words per round: `n = min(10, floor(5 + 0.2·(round−1)))`.
-- Timer: 80.3 s, +8 s per word, capped at 80.3 s.
-- Score per word: `10·len·(len−hints)`. Only bingos count.
+- Timer: 80.3 s, +8 s per word, capped at 80.3 s. Time out ends the game
+  (no lives).
+- Score per word: `10·len·(len−hints)`. Only bingos count. The round's
+  last word adds +1000.
+- Hints are automatic: 9 s on a word, then every 4 s.
 
 ### Word of the Day
 
@@ -216,6 +219,8 @@ the address-level walkthrough of the gameplay code is in
   `welcome_flow.hpp`, `bitmap_font.hpp` for the GF2 `fonts/*.xml`
   format, `profile_dialogs.hpp` for the name-input / player-select
   dialogs, `game_scene.hpp` for the Classic Untimed / Timed scene,
+  `blitz_scene.hpp` for the Lightning scene (`docs/reverse-engineering/lightning.md`),
+  `scene_popups.hpp` for the message and trophy popups both scenes share,
   `game_dialogs.hpp` for its pause menu, confirmations and round-end
   dialogs, `help_dialog.hpp` for HOW TO PLAY, `settings_dialog.hpp`
   for SETTINGS, `highscore_dialog.hpp` for HIGH SCORES, `improvements_dialog.hpp` for the port's IMPROVEMENTS

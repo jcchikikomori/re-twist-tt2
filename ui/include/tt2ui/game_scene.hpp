@@ -28,6 +28,7 @@
 #include "tt2/word_tree.hpp"
 #include "tt2ui/game_dialogs.hpp"
 #include "tt2ui/help_dialog.hpp"
+#include "tt2ui/scene_popups.hpp"
 #include "tt2ui/highscore_dialog.hpp"
 #include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/trophy_room.hpp"
@@ -389,62 +390,6 @@ constexpr int WARNING_MS = 10000;         // 0x425c50: +0x304 (countdown starts 
 constexpr int LIVES = 3;                  // 0x425420: game over when the miss counter reaches 3
 constexpr int REVEAL_MS = 3000;           // 0x428840 / 0x425420 / 0x428c80: ModifierDelay(3000) after the reveal
 
-// ---------------------------------------------------------------------------
-// Popups (0x428ec0, game-scene.md §5)
-// ---------------------------------------------------------------------------
-// Every message and banner in the scene is one popup, queued by
-// 0x428e20(kind) and shown one at a time. Kind 2 is IMAGE_POPUP_BINGO,
-// kind 1 IMAGE_POPUP_ALLWORDS, any other kind IMAGE_IMAGE_POPUP_<kind>.
-// The COMMENTS (tt_commentary.png) and GAME_OVER (tt_gameover.PNG)
-// sprites in dialogs.xml are never looked up by the exe and stay at
-// alpha 0, so the port does not draw them.
-enum class PopupKind {
-    NotListed = 0,       // image_popup_0: the word isn't in the dictionary
-    AllWords = 1,        // IMAGE_POPUP_ALLWORDS banner
-    Bingo = 2,           // IMAGE_POPUP_BINGO banner
-    AlreadyGuessed = 3,  // image_popup_3
-    EnoughOfLength = 5,  // image_popup_5
-    NoneOfLength = 8,    // image_popup_8
-    Definitions = 10,    // image_popup_10: click entered words for definitions
-};
-
-constexpr float POPUP_X = 400.0f;          // 0x423a20: +0x34c = [0x59b984]
-constexpr float POPUP_Y = 150.0f;          // 0x423a20: +0x350 = [0x59b980]
-constexpr int POPUP_FADE_IN_MS = 150;      // ModifierAlpha(0 -> 1, 0x96)
-constexpr int POPUP_GROW_MS = 250;         // ModifierScale(0 -> 1.2, 0xfa, smoothstep 0x4513d0)
-constexpr float POPUP_OVERSHOOT = 1.2f;    // [0x59b998]
-constexpr int POPUP_SETTLE_MS = 100;       // ModifierScale(1.2 -> 1, 0x64, linear)
-constexpr int POPUP_BANNER_FRAME_MS = 50;  // ModifierFrame(one pass, 0x32)
-constexpr int POPUP_BANNER_HOLD_MS = 1000; // ModifierDelay(0x3e8) after the frames
-constexpr int POPUP_MESSAGE_HOLD_MS = 900; // ModifierDelay(0x384)
-constexpr int POPUP_FADE_OUT_MS = 250;     // ModifierAlpha(1 -> 0, 0xfa)
-
-inline bool popup_is_banner(PopupKind k) { return k == PopupKind::Bingo || k == PopupKind::AllWords; }
-
-// Banner sheets from resources.xml; the message sizes are the PNG sizes.
-inline SheetSpec popup_sheet(PopupKind k) {
-    switch (k) {
-        case PopupKind::Bingo: return sheet("IMAGE_POPUP_BINGO", 1900, 420, 5, 3, 15);
-        case PopupKind::AllWords: return sheet("IMAGE_POPUP_ALLWORDS", 2280, 420, 6, 3, 18);
-        case PopupKind::NotListed: return sheet("IMAGE_IMAGE_POPUP_0", 254, 97);
-        case PopupKind::AlreadyGuessed: return sheet("IMAGE_IMAGE_POPUP_3", 295, 97);
-        case PopupKind::EnoughOfLength: return sheet("IMAGE_IMAGE_POPUP_5", 339, 103);
-        case PopupKind::NoneOfLength: return sheet("IMAGE_IMAGE_POPUP_8", 301, 102);
-        case PopupKind::Definitions: return sheet("IMAGE_IMAGE_POPUP_10", 326, 121);
-    }
-    return SheetSpec{};
-}
-
-// Fade in, grow to 1.2 and settle, hold (a banner runs its frames
-// first), fade out. Worked example: a message is on screen for
-// 150 + 250 + 100 + 900 + 250 = 1650 ms; the 15-frame bingo banner for
-// 150 + 250 + 100 + 15*50 + 1000 + 250 = 2500 ms.
-inline int popup_duration_ms(PopupKind k) {
-    const int frames = popup_is_banner(k) ? popup_sheet(k).frames * POPUP_BANNER_FRAME_MS + POPUP_BANNER_HOLD_MS
-                                          : POPUP_MESSAGE_HOLD_MS;
-    return POPUP_FADE_IN_MS + POPUP_GROW_MS + POPUP_SETTLE_MS + frames + POPUP_FADE_OUT_MS;
-}
-
 enum class GamePhase {
     Playing,
     Reveal,      // round over: missing words shown, waiting REVEAL_MS
@@ -519,9 +464,6 @@ public:
           services_(std::move(services)), rng_(rng_seed), bag_(common, profile.bag) {
         particle_rng_.set_seed(rng_seed + 1);
         build_buttons();
-        popup_.visible = false;
-        trophy_sprite_.visible = false;
-        trophy_label_.visible = false;
         if (!(resume && resume_game(*resume))) {
             start_round(1);
             open_tutorial_once();
@@ -567,16 +509,16 @@ public:
         return nullptr;
     }
     // The popup on screen (hidden when none), its kind, and how many wait.
-    const SpriteState& popup() const { return popup_; }
-    std::optional<PopupKind> popup_kind() const { return popup_kind_; }
-    std::size_t popups_waiting() const { return popup_waiting_.size(); }
+    const SpriteState& popup() const { return popups_.sprite(); }
+    std::optional<PopupKind> popup_kind() const { return popups_.kind(); }
+    std::size_t popups_waiting() const { return popups_.waiting(); }
     // The trophy popup (0x429510): the trophy art and its FONT_TROPHYNAMES
     // title, both hidden when none is up; the id on show (-1 = none) and
     // how many wait.
-    const SpriteState& trophy_popup() const { return trophy_sprite_; }
-    const SpriteState& trophy_label() const { return trophy_label_; }
-    int trophy_popup_id() const { return trophy_id_; }
-    std::size_t trophies_waiting() const { return trophy_waiting_.size(); }
+    const SpriteState& trophy_popup() const { return trophies_.sprite(); }
+    const SpriteState& trophy_label() const { return trophies_.label(); }
+    int trophy_popup_id() const { return trophies_.id(); }
+    std::size_t trophies_waiting() const { return trophies_.waiting(); }
     const char* background_id() const { return timed_ ? "gamescene/BACKGROUND_TIMED" : "gamescene/BACKGROUND"; }
     bool dialog_open() const { return dialog_kind_ != GameDialog::None; }
     GameDialog dialog_kind() const { return dialog_kind_; }
@@ -878,22 +820,10 @@ public:
         if (paused()) return;
         const int round_before = round_number_;
         queue_.update(dt_ms);
-        // 0x426860: when no popup is up, the next queued one starts.
-        if (!popup_kind_ && !popup_waiting_.empty()) {
-            const PopupKind next = popup_waiting_.front();
-            popup_waiting_.pop_front();
-            start_popup(next);
-        }
-        popup_queue_.update(dt_ms);
+        popups_.update(dt_ms);
         // 0x426860 @0x426ce6: the next trophy shows when no dialog or
         // round-end step is pending and none is up. It does not stop the clock.
-        if (trophy_id_ < 0 && !trophy_waiting_.empty() && !dialog_open() && queue_.empty()) {
-            const int next = trophy_waiting_.front();
-            trophy_waiting_.pop_front();
-            start_trophy_popup(next);
-        }
-        trophy_queue_.update(dt_ms);
-        trophy_label_queue_.update(dt_ms);
+        if (trophies_.update(dt_ms, !dialog_open() && queue_.empty())) play(SoundId::TrophyWon);
         if (phase_ == GamePhase::Playing && round_number_ == round_before) round_elapsed_ms_ += dt_ms;
         for (auto& v : slots_)
             if (v.flipping()) v.flip_ms += dt_ms;
@@ -998,7 +928,7 @@ private:
             b.reveal_elapsed_ms = 0;
             balls_.push_back(b);
         }
-        popup_waiting_.clear();   // 0x425c50 -> 0x42ace0: queued popups are dropped
+        popups_.drop_waiting();   // 0x425c50 -> 0x42ace0: queued popups are dropped
         // 0x425c50: +0x370 (twisted this round) clears every round; the
         // streaks (+0x36c, +0x374) only on round 1 of a new game.
         twisted_this_round_ = false;
@@ -1477,9 +1407,7 @@ private:
     }
 
     // ---- presentation helpers --------------------------------------
-    // 0x428e20: add to the popup queue; update() shows it when the
-    // screen is free.
-    void queue_popup(PopupKind k) { popup_waiting_.push_back(k); }
+    void queue_popup(PopupKind k) { popups_.push(k); }
 
     // 0x424730: the first accepted word that is neither the first bingo
     // nor the round's last word queues popup 10, once. The flag (+0x1f0)
@@ -1490,68 +1418,9 @@ private:
         definitions_hint_shown_ = true;
         queue_popup(PopupKind::Definitions);
     }
-    // 0x428ec0: centred at (400, 150), alpha 0 and scale 0, then the
-    // modifier chain (each step starts when the previous one ends).
-    void start_popup(PopupKind k) {
-        popup_kind_ = k;
-        popup_ = sprite("POPUP", popup_sheet(k), POPUP_X, POPUP_Y);
-        popup_.anchor = Anchor::Center;
-        popup_.alpha = 0.0f;
-        popup_.scale = 0.0f;
-        popup_queue_.clear();
-        popup_queue_.push_alpha(&popup_, 0.0f, 1.0f, POPUP_FADE_IN_MS);
-        popup_queue_.push_scale(&popup_, 0.0f, POPUP_OVERSHOOT, POPUP_GROW_MS, Easing::Smoothstep);
-        popup_queue_.push_scale(&popup_, POPUP_OVERSHOOT, 1.0f, POPUP_SETTLE_MS);
-        if (popup_is_banner(k)) {
-            popup_queue_.push_frames(&popup_, 0, -1, POPUP_BANNER_FRAME_MS);
-            popup_queue_.push_delay(POPUP_BANNER_HOLD_MS);
-        } else {
-            popup_queue_.push_delay(POPUP_MESSAGE_HOLD_MS);
-        }
-        popup_queue_.push_alpha(&popup_, 1.0f, 0.0f, POPUP_FADE_OUT_MS);
-        // 0x4235c0 clears the "popup up" flag (+0x348).
-        popup_queue_.push_method([this] {
-            popup_.visible = false;
-            popup_kind_.reset();
-        });
-    }
     void play(SoundId id) { if (services_.play_sound) services_.play_sound(id); }
 
-    // 0x429480: award sites push their result; -1 (nothing won) is dropped
-    // here instead of at 0x429510.
-    void queue_trophy(int id) {
-        if (id >= 0) trophy_waiting_.push_back(id);
-    }
-    // 0x429510: IMAGE_TROPHY<id+1> at (725, 475) and the title at (725, 535),
-    // both grow in, hold 2 s and fade out (3.5 s); SOUND_game_trophy_won.
-    void start_trophy_popup(int id) {
-        trophy_id_ = id;
-        play(SoundId::TrophyWon);
-        trophy_sprite_ = trophy_sprite(id, TROPHY_POPUP_X, TROPHY_POPUP_Y);
-        trophy_sprite_.alpha = 0.0f;
-        trophy_sprite_.scale = TROPHY_START_SCALE;
-        trophy_label_ = SpriteState{};
-        trophy_label_.name = trophy_title(id);
-        trophy_label_.anchor = Anchor::Center;
-        trophy_label_.x = TROPHY_POPUP_X;
-        trophy_label_.y = TROPHY_LABEL_Y;
-        trophy_label_.alpha = 0.0f;
-        trophy_label_.scale = 0.0f;
-        trophy_queue_.clear();
-        trophy_label_queue_.clear();
-        push_trophy_reveal(trophy_queue_, &trophy_sprite_, TROPHY_REST_SCALE, TROPHY_OVERSHOOT);
-        trophy_queue_.push_delay(TROPHY_POPUP_HOLD_MS);
-        trophy_queue_.push_alpha(&trophy_sprite_, 1.0f, 0.0f, TROPHY_POPUP_FADE_OUT_MS);
-        // 0x4235d0 clears the busy flag (+0x368).
-        trophy_queue_.push_method([this] {
-            trophy_sprite_.visible = false;
-            trophy_label_.visible = false;
-            trophy_id_ = -1;
-        });
-        push_trophy_reveal(trophy_label_queue_, &trophy_label_, 1.0f, TROPHY_LABEL_OVERSHOOT);
-        trophy_label_queue_.push_delay(TROPHY_POPUP_HOLD_MS);
-        trophy_label_queue_.push_alpha(&trophy_label_, 1.0f, 0.0f, TROPHY_POPUP_FADE_OUT_MS);
-    }
+    void queue_trophy(int id) { trophies_.push(id); }
 
     // dialogs.xml SCENE_GAME: 119x200 sheets (4 rows of 50) and 157x208
     // sheets (4 rows of 52) for the big round-end buttons.
@@ -1637,24 +1506,15 @@ private:
     std::vector<MenuButton> buttons_;
     bool ball_hot_ = false;   // pointer over a letter ball (hand cursor)
     bool word_hot_ = false;   // pointer over a shown word (hand cursor)
-    SpriteState popup_;
-    std::optional<PopupKind> popup_kind_;    // set while a popup is up (+0x348)
-    std::deque<PopupKind> popup_waiting_;    // 0x428e20 queue (+0x334)
+    MessagePopups popups_;                   // +0x334 queue, +0x348 the one up
     bool definitions_hint_shown_ = false;    // +0x1f0: popup 10 already queued
-    ModifierQueue queue_, popup_queue_;
+    ModifierQueue queue_;
     // Trophies (docs/reverse-engineering/trophies.md).
-    static constexpr float TROPHY_POPUP_X = 725.0f, TROPHY_POPUP_Y = 475.0f, TROPHY_LABEL_Y = 535.0f;
-    static constexpr float TROPHY_LABEL_OVERSHOOT = 1.2f;
-    static constexpr int TROPHY_POPUP_HOLD_MS = 2000;
-    static constexpr int TROPHY_POPUP_FADE_OUT_MS = 500;
+    TrophyPopups trophies_;
     std::int32_t no_twist_streak_ = 0;       // +0x36c
     std::int32_t bingo_streak_ = 0;          // +0x374
     bool twisted_this_round_ = false;        // +0x370
     int round_elapsed_ms_ = 0;               // 120000 - (+0x2fc), counted in every mode
-    std::deque<int> trophy_waiting_;         // +0x354
-    int trophy_id_ = -1;                     // +0x368 busy, and which trophy
-    SpriteState trophy_sprite_, trophy_label_;
-    ModifierQueue trophy_queue_, trophy_label_queue_;
     GameDialog dialog_kind_ = GameDialog::None;
     Dialog dialog_;
 };

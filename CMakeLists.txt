@@ -216,6 +216,7 @@ if(TT2_BUILD_TESTS)
         engine/tests/test_profile.cpp
         engine/tests/test_saved_game.cpp
         engine/tests/test_trophies.cpp
+        engine/tests/test_round_lightning.cpp
         engine/tests/test_settings.cpp
         engine/tests/test_improvements.cpp
         engine/tests/test_sha256.cpp
@@ -243,6 +244,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_tooltip.cpp
         ui/tests/test_trophy_room.cpp
         ui/tests/test_highscore_dialog.cpp
+        ui/tests/test_blitz_scene.cpp
         ui/tests/test_asset_import.cpp
         ui/tests/test_folder_picker.cpp
         ui/tests/test_import_prompt.cpp

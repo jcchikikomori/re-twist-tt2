@@ -203,8 +203,9 @@ are shared with Classic, but the rules differ:
 - Round complete: `+1000`.
 - Timer: 80,300 ms at round start, **+8,000 ms per solved word**, capped at
   80,300 ms.
-- Hint button (visible in `images/blitzscene/button_hint.PNG`): reveals one
-  rack letter for free; using it subtracts from the per-word score.
+- Hints come by themselves: 9 s on a word, then every 4 s, each one a ghost
+  letter of the answer that costs `10 * len` points. `button_hint.PNG` ships
+  but `dialogs.xml` places no hint button. See `lightning.md`.
 
 ## 7. Crossword mode
 

@@ -106,22 +106,14 @@ int main(int argc, char** argv) {
     std::printf("final score: %d  (qualified=%d)\n",
                 round.score(), round.qualified() ? 1 : 0);
 
-    // 4. Lightning smoke test.
+    // 4. Lightning smoke test: deal round 1, solve the first word.
     tt2::LightningRound lightning(common, full);
-    lightning.start_round(tt2::millis());
-    auto spec = lightning.pick_spec(/*round=*/1, rng, bag);
-    std::printf("\n--- Lightning round ---\n");
-    std::printf("rack: %s (target length %zu)\n",
-                spec.rack.c_str(), spec.target_length);
-    const auto s1 = lightning.solve(spec.rack, /*hints=*/0);
-    std::printf("solved with 0 hints: +%d (score=%d)\n", s1.points, lightning.score());
-    const auto s2 = lightning.solve(spec.rack, /*hints=*/2);
-    std::printf("solved with 2 hints: +%d (score=%d)\n", s2.points, lightning.score());
-    const auto end = lightning.end_round();
-    if (end.round_complete_bonus) {
-        std::printf("round-complete bonus: +%d (score=%d)\n",
-                    tt2::scoring::LIGHTNING_ROUND_BONUS, lightning.score());
-    }
+    lightning.start(1, rng, bag, 8);
+    std::printf("\n--- Lightning round 1 (%zu words) ---\n", lightning.words().size());
+    for (const auto& w : lightning.words()) std::printf("word: %s\n", w.word.c_str());
+    const auto s1 = lightning.submit(lightning.current_word().word);
+    std::printf("solved the first word: +%d, +%d ms (score=%d, time=%d ms)\n", s1.points, s1.time_added_ms,
+                lightning.score(), lightning.time_ms());
 
     return 0;
 }

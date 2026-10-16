@@ -68,7 +68,7 @@ Player counters (C): TWISTS `+0xa0`, SOLVED `+0xa4`, uncommon/HARD_SOLVED `+0xa8
 | id | Trophy | Site | Rule (C unless tagged) |
 | --- | --- | --- | --- |
 | 0/1/2 | Quick Draw / Straight Shooter / Bull's-eye | 0x40f120 called from word-accept 0x424730 @0x42481f with EDX=`scene+0x36c` (E14, E15) | exact `== 5 / 10 / 20` |
-| 3-6 | Brainstorm, Rolling Thunder, Lightning Reflexes, Nick of Time | U: not traced. Candidates: Blitz word handler 0x4116e0 (push @0x41187c) and Blitz round end 0x416910 (E25, E26) | — |
+| 3-6 | Brainstorm, Rolling Thunder, Lightning Reflexes, Nick of Time | Blitz ENTER 0x4116e0, the round's last word, slots `+0x4c..+0x58` (lightning.md §5) | per round: no twist (`+0x3bc`), no pass (`+0x3bd`), no hint (`+0x3be`), time left `<= 3000` ms |
 | 7 | Speed Speller | 0x428840 (round finished) @0x42888b, slot `+0x5c` (E18) | `115000 <= scene+0x2fc <= 120000` ms |
 | 8 | Puzzle Pro | Crisscross solved 0x41e930, slot `+0x60` (E24) | `scene+0x370 == 0` (never twisted) |
 | 9 | Perfect Puzzler | 0x41e930, slot `+0x64` (E24) | `scene+0x371 == 0` (no rejected word) |
@@ -106,7 +106,8 @@ Details:
     `scene+0x30c` == "CLASSIC_TIMED" (0x5906b8) → 0 / == "CLASSIC_UNTIMED" (0x58fe00) → 1 (E8, E9).
     `scene+0x264 = 1` is set by round-finished 0x428840 (all words found, or timer expired with a
     bingo) (E18). So it counts a round that was passed, at the moment the player continues.
-  - 2 (I: Lightning): 0x413030 `mov eax,2`, called from 0x416910 (E25, E26).
+  - 2 = Lightning: 0x413030 `mov eax,2`, called from 0x416910 when DIALOG_NEXTROUND closes (E25, E26;
+    lightning.md §4.1).
   - 3 (I: Crossword): 0x41b000 `mov eax,3` (E25).
   - 4 = WORD_OF_THE_DAY: 0x426860 pending-action case 3, mode == 0x5906c8 "WORD_OF_THE_DAY",
     `mov eax,4` @0x426b74 (E11).
@@ -170,8 +171,8 @@ Rules above are implemented as read; the deliberate differences:
   reveal ends, so leaving mid-reveal still counts it as seen.
 - **Music volume.** `MUSIC_trophy_room` plays at the music volume; the port has no per-stream gain
   for the original's 0.7.
-- **Lightning and Crossword trophies** (ids 3-6, 8, 9) and the Lightning / Crossword round counts
-  wait for those modes; until then Well Rounded and the round tiers cannot be won.
+- **Crossword trophies** (ids 8, 9) and the Crossword round count wait for that mode; until then
+  Well Rounded and the round tiers cannot be won. Lightning's (ids 3-6, round count 2) are in.
 - **Popup art.** No placeholder exists for `FONT_TROPHYNAMES` or the trophy images; they need the
   imported assets, like the rest of the game today.
 

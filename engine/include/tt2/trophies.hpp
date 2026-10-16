@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "tt2/profile.hpp"
 
@@ -127,6 +128,28 @@ inline int award_speed_speller(PlayerProfile& p, int elapsed_ms) {
 // 0x424730: every slot filled in a round without a twist.
 inline int award_look_ma(PlayerProfile& p, bool twisted_this_round) {
     return twisted_this_round ? -1 : award_trophy(p, TROPHY_LOOK_MA);
+}
+
+// 0x4116e0, the round's last word in Lightning: one check per trophy, in
+// id order, with the round's flags and the clock before anything is added.
+inline constexpr int NICK_OF_TIME_MS = 3000;   // `t < 3001`
+struct LightningRoundFlags {
+    bool twisted = false;   // +0x3bc
+    bool passed = false;    // +0x3bd
+    bool hinted = false;    // +0x3be
+    int time_ms = 0;        // +0x2fc
+};
+inline std::vector<int> award_lightning_round(PlayerProfile& p, const LightningRoundFlags& f) {
+    std::vector<int> won;
+    auto check = [&](bool ok, int id) {
+        const int r = ok ? award_trophy(p, id) : -1;
+        if (r >= 0) won.push_back(r);
+    };
+    check(!f.twisted, TROPHY_BRAINSTORM);
+    check(!f.passed, TROPHY_ROLLING_THUNDER);
+    check(!f.hinted, TROPHY_LIGHTNING_REFLEXES);
+    check(f.time_ms <= NICK_OF_TIME_MS, TROPHY_NICK_OF_TIME);
+    return won;
 }
 
 }  // namespace tt2

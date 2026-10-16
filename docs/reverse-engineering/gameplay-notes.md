@@ -192,6 +192,8 @@ Note: step 3 sets the uncommon out-flag **before** step 4 runs, so in principle 
 - **Only bingo words are accepted** (guess length must equal rack length, @0x41179a).
 - Score per word: `10 × len × (len − min(len, hintLettersUsed))` (@0x4117dd..0x411825), so hints cost points. Round complete adds **+1000** (@0x411bc0).
 - Timer: **80,300 ms** at round start (0x139ac @0x413980). Each solved word adds **+8,000 ms**, capped at 80,300 (@0x4119a4..0x4119d0).
+- Hints are **automatic**: 9 s on the current word, then one every 4 s (0x415300 -> 0x4131f0). The shipped
+  `dialogs.xml` has no hint button. Full flow, layout and timings: [lightning.md](lightning.md).
 - The strings `BLITZ_TIME_DECREMENT` and `CROSSWORD_WORD_NUMBER_INCREMENT` from `properties/default.xml` **don't appear in the exe**, so they're unused. **CONFIRMED**
 
 ### Crossword (CrisscrossScene) — CONFIRMED
@@ -204,7 +206,7 @@ Note: step 3 sets the uncommon out-flag **before** step 4 runs, so in principle 
 ### Round advance
 - Classic: when time runs out, if the qualified flag (`table+0x88`, set by any bingo) is set, you advance to the next round. Otherwise 0x425420 runs the pass / end-game path ("Sorry, you didn't qualify…") (@0x426f2b..0x42701b). **CONFIRMED**
   Untimed works the same way: the bingo enables Next Round. Finding all words also ends the round early. **INFERRED for the button wiring**
-- Lightning: the round ends when all n bingo words are solved (0x411680 is the "every word's `+0x88` flag set" check; the +1000 is at 0x411bc0). If the timer hits 0, the game is lost. **INFERRED for the loss path** — 2026-10-13: the only reference to `SOUND_game_clock_timeup` is in the Classic scene (0x426f46), so the Blitz timer-out handler has not been located yet.
+- Lightning: the round ends when all n bingo words are solved (0x411680 is the "every word's `+0x88` flag set" check; the +1000 is at 0x411bc0). If the timer hits 0, the game is lost: the update 0x415300 @0x41597f calls 0x411e10 when `scene+0x2fc <= 0`. There are no lives and no time-up sound (2026-10-16, [lightning.md](lightning.md) §3). **CONFIRMED**
 
 ### Crossword word set (CONFIRMED, 0x41ba40 setup; re-verified 2026-10-13 with Ghidra 12.1.4)
 - Root length `L = min(5 + rand%4, playerMaxLen)` from the game's Java-style LCG (`DAT_005fde90`), then the same 0x43d550 pick loop as Classic (free skip of longer words, exact hit accepted, otherwise the closest shorter word over 5 tries).
