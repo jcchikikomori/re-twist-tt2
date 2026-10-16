@@ -92,3 +92,56 @@ TEST(pick_classic_skips_longer_words) {
         ASSERT_EQ(w.size(), std::size_t(5));
     }
 }
+
+TEST(next_word_walks_the_shuffled_deck) {
+    // 0x43d550: the pool shuffled with the seed, read at INDEX.
+    auto t = small_dict();
+    Bag b(t, BagState{7, 0});
+    std::vector<std::string> deck = b.pool();
+    Random(7).shuffle(deck);
+    std::vector<std::string> expected;
+    for (const auto& w : deck) {
+        if (b.is_playable(w)) expected.push_back(w);
+        if (expected.size() == 10) break;
+    }
+    for (const auto& w : expected) ASSERT_EQ(b.next_word(), w);
+    // Not the alphabetical pool order (the bug), and another seed differs.
+    Bag sorted(t, BagState{7, 0});
+    std::vector<std::string> in_pool_order;
+    for (const auto& w : b.pool()) {
+        if (sorted.is_playable(w)) in_pool_order.push_back(w);
+        if (in_pool_order.size() == 10) break;
+    }
+    ASSERT_TRUE(in_pool_order != expected);
+    Bag other(t, BagState{8, 0});
+    std::vector<std::string> seq;
+    for (int i = 0; i < 10; ++i) seq.push_back(other.next_word());
+    ASSERT_TRUE(seq != expected);
+}
+
+TEST(pick_classic_longer_words_do_not_use_up_attempts) {
+    // ~98% of this deck is 8 letters, so a 5 sits behind long runs of
+    // longer words; the free skip still reaches it every time.
+    auto words = small_dict().words();
+    std::vector<std::string> fives;
+    auto expand = [&](auto self, const std::string& prefix, int depth) -> void {
+        if (depth == 0) { fives.push_back(prefix); return; }
+        for (char c : {'a', 'b', 'c', 'd', 'e'})
+            if (prefix.empty() || prefix.back() != c) self(self, prefix + c, depth - 1);
+    };
+    expand(expand, "", 5);
+    words.insert(words.end(), fives.begin(), fives.end());
+    auto t = WordTree::from_words(words);
+    Bag b(t, BagState{3, 0});
+    Random r(0);
+    for (int i = 0; i < 20; ++i) ASSERT_EQ(b.pick_classic(5, r).size(), std::size_t(5));
+}
+
+TEST(pick_classic_without_a_short_enough_word_still_returns) {
+    // Port guard: small_dict() has only 8-letter words, so after a whole
+    // deck of skips the next word is taken as it is.
+    auto t = small_dict();
+    Bag b(t, BagState{1, 0});
+    Random r(0);
+    ASSERT_EQ(b.pick_classic(5, r).size(), std::size_t(8));
+}

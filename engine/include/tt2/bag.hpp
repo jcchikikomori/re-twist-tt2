@@ -86,8 +86,10 @@ public:
             shuffled_.reset();
         }
         ensure_shuffled();
-        for (std::size_t tries = 0; tries < pool_.size(); ++tries) {
-            const std::string& word = pool_[state_.index % pool_.size()];
+        // 0x43d607: word = shuffled[INDEX % size].
+        const std::vector<std::string>& deck = shuffled_->second;
+        for (std::size_t tries = 0; tries < deck.size(); ++tries) {
+            const std::string& word = deck[state_.index % deck.size()];
             state_.index += 1;
             if (is_playable(word)) return word;
         }
@@ -98,13 +100,18 @@ public:
     // skip longer-than-target words for free, accept an exact match,
     // otherwise keep the closest shorter one over at most
     // CLASSIC_ATTEMPTS tries.
+    // A longer word does not use up an attempt (0x426008: "free skip").
+    // Port guard: after a whole deck of longer words (a dictionary with
+    // no word that short) the next word is taken as it is.
     std::string pick_classic(std::size_t target_length, Random& /*rng*/) {
         std::string best;
         bool have_best = false;
-        for (int i = 0; i < CLASSIC_ATTEMPTS; ++i) {
+        int attempts = 0;
+        for (std::size_t skips = 0; attempts < CLASSIC_ATTEMPTS && skips <= pool_.size();) {
             const std::string& word = next_word();
-            if (word.size() > target_length) continue;        // free skip
-            if (word.size() == target_length) return word;    // exact hit
+            if (word.size() > target_length) { ++skips; continue; }   // free skip
+            if (word.size() == target_length) return word;           // exact hit
+            ++attempts;
             if (!have_best || word.size() > best.size()) {
                 best = word;
                 have_best = true;

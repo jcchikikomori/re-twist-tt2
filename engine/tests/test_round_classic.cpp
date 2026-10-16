@@ -153,10 +153,10 @@ TEST(classic_round_duplicate_after_accept) {
 TEST(classic_round_uncommon_guess_fills_a_slot) {
     auto com = common();
     auto ful = full();
-    Random rng(0);
-    Bag bag(com);
     ClassicRound r(com, ful, ClassicRound::Config{});
-    const auto res = r.start(rng, bag, 0);
+    // A fixed rack: the bag's order depends on its seed. "alert" has the
+    // full-only "tale" / "real" and 4-letter slots for them.
+    const auto res = r.start_with_rack("alert");
     // Pick a full-only word spellable from the rack whose length has
     // slots on the board.
     std::string extra;
