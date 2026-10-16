@@ -605,3 +605,69 @@ TEST(improvements_resume_prompt_row_works_on_software_and_never_needs_a_restart)
     ASSERT_TRUE(d.notice() == nullptr);
     ASSERT_TRUE(d.values().resume_prompt);
 }
+
+// Android (T1.4, docs/plans/android-support.md): always full screen, so no
+// DISPLAY MODE or RESOLUTION rows; the renderer row names OpenGL ES.
+namespace {
+ImprovementsDialog::Context on_android(Backend active) {
+    ImprovementsDialog::Context c;
+    c.active = active;
+    c.platform = Platform::Android;
+    return c;
+}
+std::vector<std::string> row_ids(const ImprovementsDialog& d) {
+    std::vector<std::string> ids;
+    for (const auto& r : d.rows()) ids.push_back(r.id);
+    return ids;
+}
+}  // namespace
+
+TEST(improvements_android_has_no_display_mode_or_resolution_rows) {
+    Rig r;
+    const ImprovementsDialog d(windowed(), r.services(), on_android(Backend::OpenGLES));
+    const std::vector<std::string> want = {"WIDESCREEN_FILL", "FILTER", "UPSCALER", "RENDERER",
+                                           "VSYNC", "FRAME_LIMIT", "RESUME_PROMPT"};
+    ASSERT_TRUE(row_ids(d) == want);
+    ASSERT_TRUE(d.row("WINDOW") == nullptr && d.row("RESOLUTION") == nullptr);
+    ASSERT_TRUE(d.dialog().label("LABEL_WINDOW") == nullptr);
+    ASSERT_TRUE(d.dialog().button("BUTTON_RESOLUTION_NEXT") == nullptr);
+    ASSERT_EQ(d.dialog().h, improvements_dialog_height(7));
+    ASSERT_TRUE(d.dialog().h <= SCREEN_H);
+}
+
+TEST(improvements_desktop_rows_are_unchanged) {
+    Rig r;
+    const ImprovementsDialog d(windowed(), r.services());
+    const std::vector<std::string> want = {"WINDOW", "RESOLUTION", "WIDESCREEN_FILL", "FILTER", "UPSCALER",
+                                           "RENDERER", "VSYNC", "FRAME_LIMIT", "RESUME_PROMPT"};
+    ASSERT_TRUE(row_ids(d) == want);
+    ASSERT_EQ(d.dialog().h, improvements_dialog_height(9));
+}
+
+TEST(improvements_android_window_buttons_do_nothing) {
+    Rig r;
+    tt2::Improvements imp;
+    imp.window = tt2::WindowMode::Borderless;
+    ImprovementsDialog d(imp, r.services(), on_android(Backend::OpenGLES));
+    ASSERT_TRUE(d.press("BUTTON_WINDOW_NEXT") == ImprovementsDialog::Result::None);
+    ASSERT_TRUE(d.press("BUTTON_RESOLUTION_PREV") == ImprovementsDialog::Result::None);
+    ASSERT_TRUE(d.values().window == tt2::WindowMode::Borderless);
+    ASSERT_TRUE(r.sounds.empty());
+    // The other rows still cycle.
+    d.press("BUTTON_VSYNC_NEXT");
+    ASSERT_TRUE(!d.values().vsync);
+}
+
+TEST(improvements_android_renderer_row_names_opengl_es) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), on_android(Backend::OpenGLES));
+    ASSERT_EQ(value(d, "RENDERER"), std::string("Auto (OpenGL ES)"));
+    ASSERT_EQ(d.row("RENDERER")->choices[2], std::string("OpenGL ES"));
+    d.press("BUTTON_RENDERER_NEXT");
+    d.press("BUTTON_RENDERER_NEXT");
+    ASSERT_TRUE(d.values().renderer == tt2::RendererPref::OpenGL);   // saved as "opengl", means GLES there
+    ASSERT_EQ(value(d, "RENDERER"), std::string("OpenGL ES"));
+    // Desktop keeps plain OpenGL.
+    const ImprovementsDialog desk(windowed(), r.services());
+    ASSERT_EQ(desk.row("RENDERER")->choices[2], std::string("OpenGL"));
+}

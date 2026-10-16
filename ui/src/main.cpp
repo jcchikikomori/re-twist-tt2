@@ -2038,6 +2038,7 @@ int main(int argc, char** argv) {
     if (!save_dir.empty() && store.has_improvements() && !store.load(improvements))
         std::fprintf(stderr, "warning: %s is unreadable; using the display options from settings.txt\n",
                      store.improvements_path().string().c_str());
+    improvements = tt2ui::display_for_platform(improvements, tt2ui::THIS_PLATFORM);   // Android: full screen
     settings.fullscreen = improvements.legacy_fullscreen();
     // The renderer this run starts with: the file's, or --renderer for this run only.
     const tt2::RendererPref launch_renderer = renderer_flag.empty() ? improvements.renderer : renderer_override;
@@ -2287,6 +2288,7 @@ int main(int argc, char** argv) {
     // Alt+Enter (deviation, see is_fullscreen_shortcut): flip between a
     // window and borderless, save both files, and keep open dialogs in step.
     auto toggle_fullscreen = [&] {
+        if (!tt2ui::window_modes_offered(tt2ui::THIS_PLATFORM)) return;   // always full screen
         tt2::Improvements imp = improvements;
         imp.set_window(imp.toggled_window());   // back to the last fullscreen mode picked (UX-5)
         commit_improvements(imp);

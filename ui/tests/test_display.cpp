@@ -86,3 +86,26 @@ TEST(pick_resolution_with_nothing_offered_is_800x600) {
     // Nothing smaller offered: the first one.
     ASSERT_TRUE(pick_resolution({Resolution{1280, 720}}, Resolution{1024, 768}) == (Resolution{1280, 720}));
 }
+
+// Android is always full screen (T1.4): the saved mode is ignored, the file keeps it.
+TEST(display_for_android_is_always_borderless) {
+    for (tt2::WindowMode m : {tt2::WindowMode::Windowed, tt2::WindowMode::Borderless, tt2::WindowMode::Native}) {
+        tt2::Improvements imp;
+        imp.window = m;
+        imp.resolution = {1024, 768};
+        const tt2::Improvements out = display_for_platform(imp, Platform::Android);
+        ASSERT_TRUE(out.window == tt2::WindowMode::Borderless);
+        ASSERT_TRUE(out.resolution == imp.resolution);   // untouched; Borderless never reads it
+        ASSERT_TRUE(out.renderer == imp.renderer && out.vsync == imp.vsync);
+    }
+    ASSERT_TRUE(!window_modes_offered(Platform::Android));
+}
+
+TEST(display_for_desktop_keeps_the_saved_mode) {
+    for (tt2::WindowMode m : {tt2::WindowMode::Windowed, tt2::WindowMode::Borderless, tt2::WindowMode::Native}) {
+        tt2::Improvements imp;
+        imp.window = m;
+        ASSERT_TRUE(display_for_platform(imp, Platform::Desktop).window == m);
+    }
+    ASSERT_TRUE(window_modes_offered(Platform::Desktop));
+}

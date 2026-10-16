@@ -19,18 +19,11 @@
 #include <vector>
 
 #include "tt2/improvements.hpp"
+#include "tt2ui/platform.hpp"
 
 namespace tt2ui {
 
 enum class Backend { Vulkan, OpenGL, OpenGLES, Software };
-
-enum class Platform { Desktop, Android };
-
-#ifdef __ANDROID__
-inline constexpr Platform THIS_PLATFORM = Platform::Android;
-#else
-inline constexpr Platform THIS_PLATFORM = Platform::Desktop;
-#endif
 
 // What RendererPref::OpenGL means: desktop OpenGL, or OpenGL ES on Android.
 inline Backend opengl_backend(Platform platform) {

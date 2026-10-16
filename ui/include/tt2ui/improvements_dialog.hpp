@@ -88,6 +88,7 @@ public:
         tt2::RendererPref launched = tt2::RendererPref::Auto;
         DisplayInfo display;          // the sizes and modes this display allows (UX-5)
         bool native_failed = false;   // Native was asked for but fell back to Borderless
+        Platform platform = THIS_PLATFORM;   // Android: no DISPLAY MODE / RESOLUTION rows
     };
 
     // One cycle row. `id` names its buttons and labels: LABEL_<id>,
@@ -195,11 +196,13 @@ private:
     Dialog& top() { return notice_ ? *notice_ : dialog_; }
 
     void build() {
-        rows_.push_back(Row{"WINDOW", improvements_strings::WINDOW,
-                            {improvements_strings::WINDOWED, improvements_strings::BORDERLESS,
-                             improvements_strings::NATIVE},
-                            0, true, {}});
-        rows_.push_back(Row{"RESOLUTION", improvements_strings::RESOLUTION, {}, 0, true, {}});
+        if (window_modes_offered(context_.platform)) {   // always full screen on Android (display.hpp)
+            rows_.push_back(Row{"WINDOW", improvements_strings::WINDOW,
+                                {improvements_strings::WINDOWED, improvements_strings::BORDERLESS,
+                                 improvements_strings::NATIVE},
+                                0, true, {}});
+            rows_.push_back(Row{"RESOLUTION", improvements_strings::RESOLUTION, {}, 0, true, {}});
+        }
         rows_.push_back(Row{"WIDESCREEN_FILL", improvements_strings::WIDESCREEN_FILL,
                             {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}});
         rows_.push_back(Row{"FILTER", improvements_strings::FILTER,
@@ -209,7 +212,7 @@ private:
                             {improvements_strings::OFF, improvements_strings::SUPER_XBR}, 0, true, {}});
         rows_.push_back(Row{"RENDERER", improvements_strings::RENDERER,
                             {improvements_strings::AUTO, backend_title(Backend::Vulkan),
-                             backend_title(opengl_backend(THIS_PLATFORM)),
+                             backend_title(opengl_backend(context_.platform)),
                              backend_title(Backend::Software)},
                             0, true, {}});
         rows_.push_back(Row{"VSYNC", improvements_strings::VSYNC,
