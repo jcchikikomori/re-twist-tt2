@@ -2499,6 +2499,21 @@ int main(int argc, char** argv) {
     int dump_accum_ms = 0;
     int dump_index = 0;
     bool text_input_on = false;
+    // Text input on, with the name box as its area (T2.3): on Android SDL
+    // puts its hidden text field there and the window pans so the keyboard
+    // leaves the box in view; a desktop input method opens beside it.
+    auto start_text_input = [&] {
+        const ViewRect box = profile.name_box();
+        if (!box.empty()) {
+            float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+            SDL_RenderCoordinatesToWindow(ren, box.x, box.y, &x0, &y0);
+            SDL_RenderCoordinatesToWindow(ren, box.x + box.w, box.y + box.h, &x1, &y1);
+            const SDL_Rect area{static_cast<int>(x0), static_cast<int>(y0), static_cast<int>(x1 - x0),
+                                static_cast<int>(y1 - y0)};
+            SDL_SetTextInputArea(win, &area, 0);
+        }
+        SDL_StartTextInput(win);
+    };
     int auto_type_ms = 0;
     SceneId last_scene = flow.current();
     // Tooltips: the cursor in canvas units, and the one tooltip on screen.
@@ -2648,7 +2663,7 @@ int main(int argc, char** argv) {
                     profile.mouse_down(e.button.x, e.button.y);
                 // A tap on the name box brings the on-screen keyboard back
                 // after Back put it away; SDL shows it again when hidden.
-                if (profile.take_keyboard_request() && text_input_on) SDL_StartTextInput(win);
+                if (profile.take_keyboard_request() && text_input_on) start_text_input();
                 if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
                     profile.mouse_up(e.button.x, e.button.y);
                 continue;
@@ -2994,7 +3009,7 @@ int main(int argc, char** argv) {
         const bool want_text = profile.wants_text_input();
         if (want_text != text_input_on) {
             text_input_on = want_text;
-            if (text_input_on) SDL_StartTextInput(win); else SDL_StopTextInput(win);
+            if (text_input_on) start_text_input(); else SDL_StopTextInput(win);
         }
         if (exit_after_ms >= 0 && simulated_ms >= exit_after_ms) running = false;
 

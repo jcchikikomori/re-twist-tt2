@@ -109,3 +109,33 @@ TEST(display_for_desktop_keeps_the_saved_mode) {
     }
     ASSERT_TRUE(window_modes_offered(Platform::Desktop));
 }
+
+// Phones and tablets (T2.3): the worked examples from the Android plan. In
+// landscape a phone's camera cutout sits on a short edge, inside a pillar
+// bar: any phone wider than 4:3 has bars of at least 1/8 of its width, far
+// deeper than a punch-hole (SDL draws into the cutout, CUTOUT_MODE_ALWAYS).
+TEST(fit_4x3_on_a_20_by_9_phone_leaves_480_pixel_bars) {
+    const Fit4x3 f = fit_4x3(2400, 1080);
+    ASSERT_EQ(f.scale, 1.8f);
+    ASSERT_EQ(f.game.x, 480.0f);
+    ASSERT_EQ(f.game.w, 1440.0f);
+    ASSERT_EQ(f.game.h, 1080.0f);
+    const PillarBars b = pillar_bars(2400, 1080);
+    ASSERT_EQ(b.left.w, 480.0f);
+    ASSERT_EQ(b.right.x, 1920.0f);
+    ASSERT_EQ(b.right.w, 480.0f);
+}
+
+TEST(fit_4x3_on_a_16_by_10_tablet_keeps_the_half_pixel) {
+    const Fit4x3 f = fit_4x3(2560, 1600);
+    ASSERT_EQ(f.game.w, 2133.0f);                          // 2133.33 floored
+    ASSERT_EQ(f.game.x, 213.5f);
+    ASSERT_EQ(pillar_bars(2560, 1600).right.w, 213.5f);
+}
+
+TEST(fit_4x3_on_the_test_tablet_matches_the_device_log) {
+    // Galaxy Tab A7 Lite, full screen: "game 137,0 1066x800".
+    const Fit4x3 f = fit_4x3(1340, 800);
+    ASSERT_EQ(f.game.x, 137.0f);
+    ASSERT_EQ(f.game.w, 1066.0f);
+}

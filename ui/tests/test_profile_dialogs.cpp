@@ -584,3 +584,18 @@ TEST(tapping_outside_the_name_box_asks_for_no_keyboard) {
     f.flow.mouse_down(10, 10);                              // off the dialog
     ASSERT_TRUE(!f.flow.take_keyboard_request());
 }
+
+// The name box as the text input area (T2.3): canvas units, only while a
+// name is asked for.
+TEST(name_box_is_the_input_area_while_a_name_is_asked_for) {
+    Fixture f;
+    ASSERT_TRUE(f.flow.name_box().empty());                 // no dialog yet
+    f.flow.on_menu_entered();
+    const ViewRect r = f.flow.name_box();
+    // 237x41, centred at (198, 101) in the 402x223 dialog at (199, 188).
+    ASSERT_EQ(r.x, 199.0f + 198.0f - 118.5f);
+    ASSERT_EQ(r.y, 188.0f + 101.0f - 20.5f);
+    ASSERT_EQ(r.w, 237.0f);
+    ASSERT_EQ(r.h, 41.0f);
+    ASSERT_TRUE(r.y + r.h <= static_cast<float>(SCREEN_H));
+}
