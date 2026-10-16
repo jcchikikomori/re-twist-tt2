@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Full screen, no action bar: SDL draws the whole window. Phase 4 adds the splash. -->
+    <style name="AppTheme" parent="android:Theme.DeviceDefault.NoActionBar.Fullscreen" />
+</resources>

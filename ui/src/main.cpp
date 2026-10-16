@@ -25,6 +25,11 @@
 //                      frame dumps show hover frames and tooltips (smoke tests)
 
 #include <SDL3/SDL.h>
+#ifdef __ANDROID__
+// Renames main() to SDL_main(), the symbol SDLActivity looks up in
+// libmain.so. Desktop builds keep a plain main() without it.
+#include <SDL3/SDL_main.h>
+#endif
 #include <SDL3_image/SDL_image.h>
 #include <SDL3_mixer/SDL_mixer.h>
 
