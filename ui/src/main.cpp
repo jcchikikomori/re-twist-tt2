@@ -1793,6 +1793,7 @@ int main(int argc, char** argv) {
     std::string manifest_path;    // --asset-manifest FILE: replaces data/original-assets.sha256
     std::string import_pick;      // --import-pick DIR: answers the in-game folder picker (smoke tests)
     std::string save_dir = tt2::default_save_dir().string();
+    [[maybe_unused]] bool save_dir_given = false;   // read on Android only
     int speed = 1;
     long exit_after_ms = -1;
     std::string dump_dir;      // --dump-frames DIR: write BMP frames (for the README GIF)
@@ -1827,7 +1828,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--import") && i + 1 < argc) import_from = argv[++i];
         else if (!std::strcmp(argv[i], "--asset-manifest") && i + 1 < argc) manifest_path = argv[++i];
         else if (!std::strcmp(argv[i], "--import-pick") && i + 1 < argc) import_pick = argv[++i];
-        else if (!std::strcmp(argv[i], "--save-dir") && i + 1 < argc) save_dir = argv[++i];
+        else if (!std::strcmp(argv[i], "--save-dir") && i + 1 < argc) { save_dir = argv[++i]; save_dir_given = true; }
         else if (!std::strcmp(argv[i], "--speed") && i + 1 < argc) speed = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--exit-after") && i + 1 < argc) exit_after_ms = std::atol(argv[++i]);
         else if (!std::strcmp(argv[i], "--dump-frames") && i + 1 < argc) dump_dir = argv[++i];
@@ -1888,13 +1889,16 @@ int main(int argc, char** argv) {
     // The APK's assets/data/ is invisible to std::filesystem, so it is
     // copied into the files folder first (bundled_data.hpp), on the first
     // launch and after each update. SDL_LoadFile reads APK assets.
+    // Saves and the import live beside it (tt2ui::android_dirs).
+    const char* android_files = SDL_GetAndroidInternalStoragePath();
+    if (!android_files) {
+        std::fprintf(stderr, "android: no internal storage path: %s\n", SDL_GetError());
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Text Twist 2", "The game could not start.", nullptr);
+        return 1;
+    }
+    const tt2ui::AndroidDirs android = tt2ui::android_dirs(android_files);
+    if (!save_dir_given) save_dir = android.saves;
     if (!data_dir_given) {
-        const char* files = SDL_GetAndroidInternalStoragePath();
-        if (!files) {
-            std::fprintf(stderr, "bundled data: no internal storage path: %s\n", SDL_GetError());
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Text Twist 2", "The game could not start.", nullptr);
-            return 1;
-        }
         const auto read_asset = [](const std::string& rel, std::string& bytes) {
             size_t size = 0;
             void* p = SDL_LoadFile(("data/" + rel).c_str(), &size);
@@ -1905,7 +1909,7 @@ int main(int argc, char** argv) {
         };
         std::string manifest;
         read_asset(tt2ui::BUNDLE_MANIFEST, manifest);
-        data_dir = std::string(files) + "/data";
+        data_dir = android.data;
         const auto r = tt2ui::ensure_bundled_data(manifest, tt2::utf8_path(data_dir), read_asset);
         if (!r.ok) {
             std::fprintf(stderr, "bundled data: %s\n", r.error.c_str());
@@ -1938,12 +1942,19 @@ int main(int argc, char** argv) {
     if (!manifest_ok) std::fprintf(stderr, "warning: no valid asset manifest at %s; importing is off\n", manifest_path.c_str());
     // SDL_GetPrefPath creates its folder, so it only runs when the per-user
     // folder is actually needed and --asset-dir didn't name one.
-    const auto pref_path = [] {
+    const auto pref_path = [&] {
         std::string out;
+#ifdef __ANDROID__
+        // SDL_GetPrefPath would return the bare files folder (android_dirs).
+        std::error_code ec;
+        std::filesystem::create_directories(tt2::utf8_path(android.imported_assets), ec);
+        if (!ec) out = android.imported_assets;
+#else
         if (char* p = SDL_GetPrefPath(tt2ui::PREF_ORG, tt2ui::PREF_APP)) {
             out = p;
             SDL_free(p);
         }
+#endif
         return out;
     };
     const bool needs_user_dir = !import_from.empty() || (assets_flag.empty() && assets_env.empty());

@@ -56,6 +56,30 @@ inline std::string resolve_user_asset_dir(const std::string& flag, const std::fu
     return flag.empty() ? pref_path() : flag;
 }
 
+// Android has no HOME or APPDATA for default_save_dir(), and its
+// SDL_GetPrefPath ignores PREF_ORG / PREF_APP and returns the app's files
+// folder itself (SDL_GetAndroidInternalStoragePath()). Importing there
+// would be fatal: the importer replaces its whole folder when it commits,
+// which would take data/ and the saves with it. So the desktop layout is
+// rebuilt under that folder, which only this app can read or write:
+//   <files>/data/                            the APK's data/ (bundled_data.hpp)
+//   <files>/re-twist-tt2/                    saves, as default_save_dir()
+//   <files>/re-twist-tt2/imported-assets/    the import, as SDL_GetPrefPath()
+struct AndroidDirs {
+    std::string data;
+    std::string saves;
+    std::string imported_assets;   // trailing '/', like SDL_GetPrefPath
+};
+
+inline AndroidDirs android_dirs(std::string files_dir) {
+    while (files_dir.size() > 1 && files_dir.back() == '/') files_dir.pop_back();
+    AndroidDirs d;
+    d.data = files_dir + "/" + BUNDLED_DATA_DIR;
+    d.saves = files_dir + "/" + PREF_ORG;
+    d.imported_assets = d.saves + "/" + PREF_APP + "/";
+    return d;
+}
+
 enum class AssetSource {
     Flag,        // --assets DIR
     Env,         // TT2_ASSETS
