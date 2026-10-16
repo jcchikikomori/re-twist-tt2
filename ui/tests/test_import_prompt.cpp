@@ -299,3 +299,61 @@ TEST(import_from_settings_cancelled_pick_closes) {
     ASSERT_TRUE(f.state() == ImportPromptFlow::State::Closed);   // no launch warning to go back to
     ASSERT_EQ(fake.starts, 0);
 }
+
+// The Android import dialog's side of the shared text (T3.6) and its
+// report back (T3.3).
+TEST(import_text_finds_every_constant_by_name) {
+    ASSERT_EQ(std::string(import_text("PROMPT_HEADER")), std::string(import_strings::PROMPT_HEADER));
+    ASSERT_EQ(std::string(import_text("PROMPT_BODY")), std::string(import_strings::PROMPT_BODY));
+    ASSERT_EQ(std::string(import_text("FAILED_HEADER")), std::string("Import failed"));
+    ASSERT_EQ(std::string(import_text("ZIP_BODY")), std::string(import_strings::ZIP_BODY));
+    ASSERT_EQ(std::string(import_text("BUTTON_CHOOSE_ZIP")), std::string("Choose ZIP"));
+    ASSERT_EQ(std::string(import_text("NO_ZIP_PICKER_BODY")), std::string(import_strings::NO_ZIP_PICKER_BODY));
+}
+
+TEST(import_text_unknown_name_is_empty) {
+    ASSERT_EQ(std::string(import_text("")), std::string());
+    ASSERT_EQ(std::string(import_text("prompt_header")), std::string());   // exact names only
+    ASSERT_EQ(std::string(import_text("PROMPT_HEADER ")), std::string());
+    ASSERT_EQ(std::string(import_text("IMPORT_STEP_BYTES")), std::string());   // not a string
+}
+
+TEST(import_error_kind_names_round_trip) {
+    using K = ImportError::Kind;
+    const std::pair<const char*, K> all[] = {{"None", K::None},           {"NotAnInstall", K::NotAnInstall},
+                                             {"EmptyManifest", K::EmptyManifest}, {"Missing", K::Missing},
+                                             {"Mismatch", K::Mismatch},   {"WriteFailed", K::WriteFailed},
+                                             {"CommitFailed", K::CommitFailed}, {"BadArchive", K::BadArchive}};
+    for (const auto& [name, kind] : all) {
+        K got = K::None;
+        ASSERT_TRUE(import_error_kind_from_name(name, got));
+        ASSERT_TRUE(got == kind);
+    }
+    K untouched = K::Missing;
+    ASSERT_TRUE(!import_error_kind_from_name("mismatch", untouched));
+    ASSERT_TRUE(!import_error_kind_from_name("", untouched));
+    ASSERT_TRUE(untouched == K::Missing);
+}
+
+TEST(android_failure_text_matches_the_desktop_for_the_same_error) {
+    // AC-3.8: Kotlin reports {Mismatch, 3, paths}; C++ builds the text.
+    ImportError e;
+    ASSERT_TRUE(import_error_kind_from_name("Mismatch", e.kind));
+    e.count = 3;
+    e.paths = {"images/gui/a.png", "fonts/b.xml", "sound/c.ogg"};
+    ASSERT_EQ(import_failure_text(e),
+              std::string("3 files did not match.\nNothing was copied.\nimages/gui/a.png\nfonts/b.xml\nsound/c.ogg"));
+}
+
+TEST(after_external_import_trusts_the_folder) {
+    auto o = after_external_import(true, ImportStatus::Imported);
+    ASSERT_TRUE(o.reload && !o.disagree);
+    o = after_external_import(false, ImportStatus::NotImported);   // Not now, cancel, or a failure
+    ASSERT_TRUE(!o.reload && !o.disagree);
+    o = after_external_import(true, ImportStatus::Incomplete);     // Kotlin said yes, the folder says no
+    ASSERT_TRUE(!o.reload && o.disagree);
+    o = after_external_import(false, ImportStatus::Imported);      // Not now: the earlier import stays loaded
+    ASSERT_TRUE(!o.reload && !o.disagree);
+    o = after_external_import(true, ImportStatus::Stale);
+    ASSERT_TRUE(!o.reload && o.disagree);
+}

@@ -80,6 +80,7 @@
 #include "audio.hpp"
 #include "folder_picker.hpp"
 #ifdef __ANDROID__
+#include "android_import.hpp"
 #include "tt2ui/bundled_data.hpp"
 #endif
 #include "display_sdl.hpp"
@@ -2406,11 +2407,31 @@ int main(int argc, char** argv) {
     };
     import_services.play_sound = [&](SoundId id) { assets.play_sound(id); };
     import_services.wrap = wrap_message;
+#ifdef __ANDROID__
+    // Phase 3: on Android the whole import, its dialog included, is Kotlin
+    // (importer/ZipImporter.kt). It gets the manifest and the finished stamp
+    // text, so the folder it writes passes import_status() unchanged; its
+    // "closed" event comes back through the event loop.
+    const Uint32 android_import_event = tt2android::register_import_event();
+    bool android_import_open = false;
+    auto open_android_import = [&](bool ask_first) {
+        const std::string stamp = tt2ui::serialize_stamp({tt2ui::manifest_digest(manifest), manifest.entries.size()});
+        android_import_open = android_import_event != 0 &&
+                              tt2android::open_import(manifest.serialize(), stamp, import_dir, ask_first);
+        if (!android_import_open) std::fprintf(stderr, "assets: the import dialog did not open\n");
+    };
+    start_import_from_settings = [&] {
+        import_from_settings = true;
+        open_android_import(false);
+        std::printf("assets: re-import from settings\n");
+    };
+#else
     start_import_from_settings = [&] {
         import_from_settings = true;
         import_prompt.emplace(import_services, false);   // straight to the picker
         std::printf("assets: re-import from settings\n");
     };
+#endif
 
     auto menu_dialog_press = [&](const std::string& name) {
         if (name.empty() || !menu_dialog_open) return;
@@ -2453,11 +2474,19 @@ int main(int argc, char** argv) {
     };
     WelcomeFlow flow(services, seed_ticks() + 1);
     if (asset_choice.prompt) {
+#ifdef __ANDROID__
+        open_android_import(true);
+#else
         import_prompt.emplace(import_services);
+#endif
         std::printf("t=0 ms: assets: prompt shown\n");
     }
     // The boot prompt holds the welcome flow: no splash timer behind it.
+#ifdef __ANDROID__
+    auto boot_prompt_open = [&] { return (import_prompt || android_import_open) && !import_from_settings; };
+#else
     auto boot_prompt_open = [&] { return import_prompt && !import_from_settings; };
+#endif
     auto start_game = [&] {
         GameScene::Services gs;
         gs.play_sound = [&](SoundId id) { assets.play_sound(id); };
@@ -2652,6 +2681,19 @@ int main(int argc, char** argv) {
                 std::printf("render: device reset, textures reload\n");
             }
             if (e.type == SDL_EVENT_RENDER_TARGETS_RESET) std::printf("render: targets reset\n");
+#ifdef __ANDROID__
+            // The Kotlin import dialog closed. Its word is checked against the
+            // folder, as a launch would (after_external_import).
+            if (android_import_event != 0 && e.type == android_import_event) {
+                android_import_open = false;
+                const tt2ui::ImportStatus now = tt2ui::import_status(tt2::utf8_path(import_dir), manifest);
+                const tt2ui::ExternalImportOutcome o = tt2ui::after_external_import(e.user.code != 0, now);
+                if (o.disagree) std::fprintf(stderr, "import: reported done, but the folder is %s\n", tt2ui::to_string(now));
+                if (o.reload) import_services.on_imported();
+                std::printf("t=%ld ms: assets: prompt closed\n", simulated_ms);
+                import_from_settings = false;   // on boot, the flow now runs on to the menu
+            }
+#endif
             if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
                 std::printf("display: %s\n", check_presentation(ren).c_str());
             // Before any routing, so Alt+Enter (and its auto-repeat) never
