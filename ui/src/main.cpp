@@ -79,6 +79,9 @@
 #include "tt2ui/profile_dialogs.hpp"
 #include "audio.hpp"
 #include "folder_picker.hpp"
+#ifdef __ANDROID__
+#include "tt2ui/bundled_data.hpp"
+#endif
 #include "display_sdl.hpp"
 #include "render_backend_sdl.hpp"
 #include "tt2ui/welcome_flow.hpp"
@@ -335,23 +338,12 @@ bool file_exists(const std::string& path) {
 }
 
 bool read_text(const std::string& path, std::string& out) {
-#ifdef __ANDROID__
-    // Relative paths are APK assets there, which only SDL's file API can
-    // open (T0.3 of docs/plans/android-support.md; T1.1 copies them out).
-    size_t size = 0;
-    void* bytes = SDL_LoadFile(path.c_str(), &size);
-    if (!bytes) return false;
-    out.assign(static_cast<const char*>(bytes), size);
-    SDL_free(bytes);
-    return true;
-#else
     std::ifstream in(tt2::utf8_path(path), std::ios::binary);
     if (!in) return false;
     std::ostringstream ss;
     ss << in.rdbuf();
     out = ss.str();
     return true;
-#endif
 }
 
 // Procedural letter ball for IMAGE_LETTERBALL_ANIM (placeholder build):
@@ -1893,9 +1885,37 @@ int main(int argc, char** argv) {
     // (AppImage, Windows zip) carry it next to the executable; a source
     // build falls back to TT2_DATA_DIR.
 #ifdef __ANDROID__
-    // The APK's assets/data/ (android/app/build.gradle.kts). std::filesystem
-    // can't see inside the APK, so there is nothing to probe.
-    if (!data_dir_given) data_dir = "data";
+    // The APK's assets/data/ is invisible to std::filesystem, so it is
+    // copied into the files folder first (bundled_data.hpp), on the first
+    // launch and after each update. SDL_LoadFile reads APK assets.
+    if (!data_dir_given) {
+        const char* files = SDL_GetAndroidInternalStoragePath();
+        if (!files) {
+            std::fprintf(stderr, "bundled data: no internal storage path: %s\n", SDL_GetError());
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Text Twist 2", "The game could not start.", nullptr);
+            return 1;
+        }
+        const auto read_asset = [](const std::string& rel, std::string& bytes) {
+            size_t size = 0;
+            void* p = SDL_LoadFile(("data/" + rel).c_str(), &size);
+            if (!p) return false;
+            bytes.assign(static_cast<const char*>(p), size);
+            SDL_free(p);
+            return true;
+        };
+        std::string manifest;
+        read_asset(tt2ui::BUNDLE_MANIFEST, manifest);
+        data_dir = std::string(files) + "/data";
+        const auto r = tt2ui::ensure_bundled_data(manifest, tt2::utf8_path(data_dir), read_asset);
+        if (!r.ok) {
+            std::fprintf(stderr, "bundled data: %s\n", r.error.c_str());
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Text Twist 2",
+                                     "The game's files could not be set up. Reinstalling it may help.", nullptr);
+            return 1;
+        }
+        std::printf("bundled data: %s (%s, %zu files copied)\n", data_dir.c_str(),
+                    r.action == tt2ui::BundleAction::Keep ? "up to date" : "copied", r.files);
+    }
 #else
     if (!data_dir_given) {
         std::string exe_dir;

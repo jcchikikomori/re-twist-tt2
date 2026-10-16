@@ -266,6 +266,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_help_dialog.cpp
         ui/tests/test_settings_dialog.cpp
         ui/tests/test_data_paths.cpp
+        ui/tests/test_bundled_data.cpp
         ui/tests/test_dialog_fade.cpp
         ui/tests/test_tooltip.cpp
         ui/tests/test_trophy_room.cpp

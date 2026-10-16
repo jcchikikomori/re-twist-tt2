@@ -65,10 +65,12 @@ val fetchSdlJava by tasks.registering {
     }
 }
 
-// The game's data/ as APK assets (assets/data/), read through SDL's file
-// API. An allow-list, the same files CMake's install() ships: the source
-// tree's data/ may also hold the player's own GameHouse common.tree and
-// full.tree, which must never be packaged.
+// The game's data/ as APK assets (assets/data/). An allow-list, the same
+// files CMake's install() ships: the source tree's data/ may also hold the
+// player's own GameHouse common.tree and full.tree, which must never be
+// packaged. The game copies them into its files folder on first launch
+// (ui/include/tt2ui/bundled_data.hpp), guided by bundle-manifest.txt:
+// "<sha256> <size> <path>" per file, which also stamps the copy.
 val bundledAssetsDir = layout.buildDirectory.dir("generated/tt2-assets")
 
 val bundleGameData by tasks.registering(Sync::class) {
@@ -78,6 +80,15 @@ val bundleGameData by tasks.registering(Sync::class) {
         into("data")
     }
     into(bundledAssetsDir)
+    doLast {
+        val data = bundledAssetsDir.get().dir("data").asFile
+        val lines = data.walkTopDown().filter { it.isFile }.map { file ->
+            val sha = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+                .joinToString("") { "%02x".format(it) }
+            "$sha ${file.length()} ${file.relativeTo(data).invariantSeparatorsPath}"
+        }.sorted().toList()
+        data.resolve("bundle-manifest.txt").writeText(lines.joinToString("\n", postfix = "\n"))
+    }
 }
 
 android {
