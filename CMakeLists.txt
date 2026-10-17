@@ -285,11 +285,14 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_side_fill.cpp
         ui/tests/test_render_options.cpp
         ui/tests/test_upscale.cpp
+        ui/tests/test_import_contract.cpp
     )
     target_include_directories(tt2_ui_tests PRIVATE engine/tests)
     target_link_libraries(tt2_ui_tests PRIVATE tt2_ui_logic tt2_platform)
     # The generated placeholder art the tests check (data/placeholder/).
-    target_compile_definitions(tt2_ui_tests PRIVATE TT2_SOURCE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+    # ui/tests/import-contract/: the Android importer's contract (T3.4).
+    target_compile_definitions(tt2_ui_tests PRIVATE TT2_SOURCE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+                                                    TT2_UI_TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/ui/tests")
     add_test(NAME tt2_ui_unit_tests COMMAND tt2_ui_tests)
 endif()
 

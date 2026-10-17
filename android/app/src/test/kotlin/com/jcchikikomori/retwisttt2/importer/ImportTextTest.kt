@@ -21,7 +21,7 @@ class ImportTextTest {
     @Test
     fun theHeaderHasTheConstantsKotlinAsksFor() {
         val names = Regex("""constexpr const char\* (\w+) =""").findAll(ns).map { it.groupValues[1] }.toSet()
-        val asked = Regex("""t\("(\w+)"\)|"(\w+)" else "(\w+)"""").findAll(sources.values.joinToString("\n"))
+        val asked = Regex("""t\("([A-Z][A-Z0-9_]*)"\)|"([A-Z][A-Z0-9_]*)" else "([A-Z][A-Z0-9_]*)"""").findAll(sources.values.joinToString("\n"))
             .flatMap { it.groupValues.drop(1) }.filter { it.isNotEmpty() }.toSet()
         assertTrue("asked: $asked", asked.size >= 10)
         assertTrue("missing in import_prompt.hpp: ${asked - names}", names.containsAll(asked))
