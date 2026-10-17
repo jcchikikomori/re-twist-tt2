@@ -189,7 +189,8 @@ if(TT2_BUILD_UI)
             # SDLActivity dlopen()s libmain.so and calls its SDL_main. There
             # is no folder dialog on Android: android_import.cpp opens the Kotlin
             # ZIP importer instead.
-            add_library(tt2_app SHARED ${TT2_APP_SOURCES} ui/src/folder_picker_android.cpp ui/src/android_import.cpp)
+            add_library(tt2_app SHARED ${TT2_APP_SOURCES} ui/src/folder_picker_android.cpp ui/src/android_import.cpp
+                ui/src/android_splash.cpp)
             set_target_properties(tt2_app PROPERTIES OUTPUT_NAME main)
             target_link_libraries(tt2_app PRIVATE log)   # stdout/stderr -> logcat
         else()

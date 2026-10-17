@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Full screen, no action bar: SDL draws the whole window. Phase 4 adds the splash. -->
-    <style name="AppTheme" parent="android:Theme.DeviceDefault.NoActionBar.Fullscreen" />
+    <!-- The tile's dark blue (packaging/linux/tt2.svg, the gradient's bottom stop). -->
+    <color name="splash_background">#FF0B2F8A</color>
+
+    <!-- Full screen, no action bar: SDL draws the whole window.
+         Splash (T4.2, D5): Android 12's system splash shows the icon's pearl
+         on the dark blue while libmain.so loads, then hands over at the
+         window's first draw. windowBackground is the same blue, so the gap
+         before SDL's first GL frame shows no black or white flash. -->
+    <style name="AppTheme" parent="android:Theme.DeviceDefault.NoActionBar.Fullscreen">
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="android:windowBackground">@color/splash_background</item>
+    </style>
 </resources>

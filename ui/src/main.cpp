@@ -81,6 +81,7 @@
 #include "folder_picker.hpp"
 #ifdef __ANDROID__
 #include "android_import.hpp"
+#include "android_splash.hpp"
 #include "tt2ui/bundled_data.hpp"
 #endif
 #include "display_sdl.hpp"
@@ -2638,6 +2639,9 @@ int main(int argc, char** argv) {
     };
     SDL_AddEventWatch(background_watch, &on_background);
 #endif
+#ifdef __ANDROID__
+    bool first_frame_shown = false;
+#endif
     while (running) {
         // --hover: a motion event at that canvas point every frame, handed
         // straight to the loop below (the dummy driver drops pushed motion).
@@ -3225,6 +3229,13 @@ int main(int argc, char** argv) {
             }
         }
         SDL_RenderPresent(ren);
+#ifdef __ANDROID__
+        // T4.2: the system splash has been held over the loading; it can go now.
+        if (!first_frame_shown) {
+            first_frame_shown = true;
+            tt2android::first_frame_shown();
+        }
+#endif
         if (const std::uint64_t wait = frame_pacer.wait_ns(SDL_GetTicksNS(), frame_budget_ns(improvements.frame_limit)))
             SDL_DelayPrecise(wait);
     }
