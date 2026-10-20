@@ -109,6 +109,8 @@ val licensesDir = layout.buildDirectory.dir("generated/tt2-licenses")
 val repoLicenses = mapOf(
     "re-twist-tt2.txt" to rootProject.file("../LICENSE"),
     "super-xbr.txt" to rootProject.file("../third_party/super-xbr/LICENSE"),
+    // Apache 2.0, which asks for the licence text with the binaries.
+    "kotlin-stdlib.txt" to rootProject.file("../third_party/kotlin/LICENSE"),
 )
 
 val bundleLicenses by tasks.registering {

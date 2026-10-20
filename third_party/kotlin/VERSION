@@ -1,0 +1,6 @@
+The Kotlin standard library, compiled into the Android APK, not vendored
+artifacts: org.jetbrains.kotlin:kotlin-stdlib:2.0.21 and its dependency
+           org.jetbrains:annotations:13.0 (android/gradle/libs.versions.toml)
+license: Apache 2.0, for both; neither jar carries a NOTICE file
+source of LICENSE: https://raw.githubusercontent.com/JetBrains/kotlin/v2.0.21/license/LICENSE.txt
+sha256: cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30  LICENSE

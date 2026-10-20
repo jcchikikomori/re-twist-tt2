@@ -37,7 +37,7 @@ unzip -Z1 "$APK" | sort > "$WORK/entries"
 for f in lib/arm64-v8a/libmain.so lib/arm64-v8a/libSDL3.so \
     assets/data/open-common.tree assets/data/open-full.tree assets/data/LICENSE.md \
     assets/data/original-assets.sha256 assets/data/bundle-manifest.txt \
-    assets/licenses/re-twist-tt2.txt assets/licenses/super-xbr.txt \
+    assets/licenses/re-twist-tt2.txt assets/licenses/super-xbr.txt assets/licenses/kotlin-stdlib.txt \
     assets/licenses/SDL3.txt assets/licenses/SDL3_image.txt assets/licenses/SDL3_mixer.txt; do
     grep -qxF "$f" "$WORK/entries" || fail "missing $f"
 done
