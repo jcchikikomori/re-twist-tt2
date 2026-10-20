@@ -305,7 +305,7 @@ TEST(settings_credits_last_page_lists_the_software_licenses) {
 // The licences page in the placeholder fonts (the imported originals measure
 // within a few pixels of them): every glyph exists, no line overflows the
 // 708 px credits area, and the list ends above the message, which ends left
-// of PREV.
+// of PREV. Both the desktop and the Android page.
 TEST(credits_licenses_page_fits_its_fonts) {
     auto font = [](const char* name) {
         std::ifstream in(std::string(TT2_SOURCE_DATA_DIR) + "/placeholder/fonts/" + name + ".xml");
@@ -315,7 +315,6 @@ TEST(credits_licenses_page_fits_its_fonts) {
         ASSERT_TRUE(BitmapFont::parse(ss.str(), f));
         return f;
     };
-    const Dialog c = build_credits();
     int lines_checked = 0;
     auto fits = [&](const TextLabel& l, const BitmapFont& f, float max_w) {
         std::istringstream in(l.text);
@@ -325,15 +324,58 @@ TEST(credits_licenses_page_fits_its_fonts) {
             ++lines_checked;
         }
     };
-    const TextLabel& heading = *c.label("P2_HEADING_0");
-    const TextLabel& lines = *c.label("P2_LINES_0");
-    const TextLabel& message = *c.label("P2_MESSAGE");
-    fits(heading, font("font_dialog_headers2"), CREDITS_AREA_W);
-    fits(lines, font("font_nextround02"), CREDITS_AREA_W);
-    const float prev_left = CREDITS_TURN_X - 119 / 2.0f;
-    fits(message, font("font_highscore_text"), prev_left - message.x);
-    ASSERT_EQ(lines_checked, 1 + 8 + 2);
-    ASSERT_TRUE(lines.y + CREDITS_LINE_H * text_line_count(lines.text) <= message.y);
+    auto check = [&](Platform platform, int list_lines) {
+        const Dialog c = build_credits(platform);
+        lines_checked = 0;
+        const TextLabel& heading = *c.label("P2_HEADING_0");
+        const TextLabel& lines = *c.label("P2_LINES_0");
+        const TextLabel& message = *c.label("P2_MESSAGE");
+        fits(heading, font("font_dialog_headers2"), CREDITS_AREA_W);
+        fits(lines, font("font_nextround02"), CREDITS_AREA_W);
+        const float prev_left = CREDITS_TURN_X - 119 / 2.0f;
+        fits(message, font("font_highscore_text"), prev_left - message.x);
+        ASSERT_EQ(lines_checked, 1 + list_lines + 2);
+        ASSERT_TRUE(lines.y + CREDITS_LINE_H * text_line_count(lines.text) <= message.y);
+    };
+    check(Platform::Desktop, 8);
+    check(Platform::Android, 5);
+}
+
+// Each page names what its own packages carry, and says where the texts are:
+// the desktop zip and AppImage have a licenses/ folder; an installed APK has
+// nothing next to it, so its texts are inside the APK (assets/licenses/, the
+// bundleLicenses Gradle task, required by scripts/ci-apk-check.sh).
+TEST(credits_licenses_page_matches_the_platform) {
+    const Dialog desktop = build_credits(Platform::Desktop);
+    const Dialog android = build_credits(Platform::Android);
+    const std::string d_list = desktop.label("P2_LINES_0")->text;
+    const std::string a_list = android.label("P2_LINES_0")->text;
+    const std::string d_msg = desktop.label("P2_MESSAGE")->text;
+    const std::string a_msg = android.label("P2_MESSAGE")->text;
+    auto has = [](const std::string& text, const char* what) { return text.find(what) != std::string::npos; };
+
+    // Shared: what every package compiles in.
+    for (const char* both : {"Super-xBR", "SDL3, SDL3_image and SDL3_mixer", "stb_image", "Luckiest Guy"}) {
+        ASSERT_TRUE(has(d_list, both));
+        ASSERT_TRUE(has(a_list, both));
+    }
+    // Desktop only: the folder picker and the package runtimes.
+    for (const char* desktop_only : {"tinyfiledialogs", "MinGW-w64", "GCC runtime", "AppImage runtime"}) {
+        ASSERT_TRUE(has(d_list, desktop_only));
+        ASSERT_TRUE(!has(a_list, desktop_only));
+    }
+    // Android only: Kotlin.
+    ASSERT_TRUE(has(a_list, "Kotlin standard library (Apache 2.0)"));
+    ASSERT_TRUE(!has(d_list, "Kotlin"));
+    // Where the texts are. Neither says "next to the game": the AppImage and
+    // an installed APK have no folder beside them.
+    ASSERT_TRUE(has(d_msg, "zip or AppImage") && !has(d_msg, "APK"));
+    ASSERT_TRUE(has(a_msg, "APK") && has(a_msg, "assets/licenses"));
+    ASSERT_TRUE(!has(d_msg, "next to the game") && !has(a_msg, "next to the game"));
+    // The dialog the settings open is the host's own.
+    ASSERT_EQ(CreditsDialog().dialog().label("P2_MESSAGE")->text,
+              build_credits(THIS_PLATFORM).label("P2_MESSAGE")->text);
+    ASSERT_EQ(CreditsDialog(Platform::Android).dialog().label("P2_MESSAGE")->text, a_msg);
 }
 
 TEST(credits_prev_is_hidden_on_the_first_page) {
