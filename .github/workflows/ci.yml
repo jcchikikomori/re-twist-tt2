@@ -7,7 +7,8 @@
 #   Windows package uses; SDL3 is built from the pinned releases there
 #   too (TT2_FETCH_SDL3), so every decoder is compiled in.
 # Each job also smoke-runs the game headless when the UI was built.
-# - Android: the Kotlin importer's unit tests (the APK build is Phase 5).
+# - Android: the Kotlin importer's unit tests, then the debug APK (NDK) and
+#   a check of what it carries (scripts/ci-apk-check.sh).
 name: CI
 
 on:
@@ -106,12 +107,12 @@ jobs:
           scripts/ci-import-smoke.sh ./build/tt2 ./build/tt2-assets "$RUNNER_TEMP/import-smoke"
           test ! -e "$HOME/.local/share/re-twist-tt2/imported-assets"
 
-  # The Android importer's JVM tests (android/, Kotlin). No NDK and no
-  # device: testDebugUnitTest compiles only the Kotlin, against the
-  # runner's preinstalled Android SDK. Like the import smoke above, the
-  # fixtures are synthetic bytes; real assets never come near CI.
+  # The Android app. The importer's JVM tests need no NDK and no device;
+  # the debug APK builds the repository's CMakeLists.txt with the NDK the
+  # Gradle file pins. Like the import smoke above, every fixture is
+  # synthetic bytes; real assets never come near CI.
   android:
-    name: Android (Kotlin unit tests)
+    name: Android (unit tests, debug APK)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
@@ -125,6 +126,26 @@ jobs:
       - name: Unit tests
         working-directory: android
         run: ./gradlew testDebugUnitTest --console=plain
+
+      # The versions come from build.gradle.kts, so a bump there can't
+      # leave CI on the old ones. Quick when the runner already has them.
+      - name: NDK and CMake
+        run: |
+          ndk=$(sed -n 's/^ *ndkVersion = "\(.*\)"/\1/p' android/app/build.gradle.kts)
+          cmake=$(sed -n 's/^ *version = "\(.*\)"/\1/p' android/app/build.gradle.kts)
+          test -n "$ndk" && test -n "$cmake"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" "cmake;$cmake" > /dev/null
+
+      - name: Debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --console=plain
+
+      # Licences present, assets/ on the allow-list, and no file from the
+      # original game under any name; then proof the check catches each.
+      - name: APK contents
+        run: |
+          scripts/ci-apk-check.sh android/app/build/outputs/apk/debug/app-debug.apk data/original-assets.sha256
+          scripts/ci-apk-check-test.sh android/app/build/outputs/apk/debug/app-debug.apk data/original-assets.sha256
 
   windows:
     name: Windows (MSYS2 UCRT64)

@@ -17,8 +17,33 @@ fun cmakeMatch(pattern: String): String =
         ?: throw GradleException("CMakeLists.txt: no match for /$pattern/")
 
 val gameVersion = cmakeMatch("""project\(tt2\s+VERSION\s+(\d+\.\d+\.\d+)""")
-val sdlUrl = cmakeMatch("""FetchContent_Declare\(SDL3\s+URL\s+(\S+)""")
-val sdlSha256 = cmakeMatch("""FetchContent_Declare\(SDL3\s+URL\s+\S+\s+URL_HASH\s+SHA256=([0-9a-f]{64})""")
+
+// The tarballs CMake's FetchContent builds from: name -> (URL, SHA-256).
+val sdlPins = listOf("SDL3", "SDL3_image", "SDL3_mixer").associateWith { name ->
+    cmakeMatch("""FetchContent_Declare\($name\s+URL\s+(\S+)""") to
+        cmakeMatch("""FetchContent_Declare\($name\s+URL\s+\S+\s+URL_HASH\s+SHA256=([0-9a-f]{64})""")
+}
+
+// Downloads a pinned tarball into build/sdl3/, unless a copy with the
+// pinned SHA-256 is already there.
+fun pinnedTarball(name: String): File {
+    val (url, sha256) = sdlPins.getValue(name)
+    val tarball = layout.buildDirectory.file("sdl3/${url.substringAfterLast('/')}").get().asFile
+    fun hash(): String = MessageDigest.getInstance("SHA-256")
+        .digest(tarball.readBytes()).joinToString("") { "%02x".format(it) }
+    if (!tarball.isFile || hash() != sha256) {
+        tarball.parentFile.mkdirs()
+        URI(url).toURL().openStream().use { input ->
+            tarball.outputStream().use { input.copyTo(it) }
+        }
+        val got = hash()
+        if (got != sha256) {
+            tarball.delete()
+            throw GradleException("$url: SHA-256 $got, expected $sha256")
+        }
+    }
+    return tarball
+}
 
 // D10 in the plan: versionCode comes from SemVer, MAJOR*10000 + MINOR*100 + PATCH
 // (0.6.0 -> 600), so every release installs over the previous one.
@@ -31,28 +56,13 @@ val gameVersionCode = gameVersion.split('.').map(String::toInt).let { (major, mi
 // the app dies at startup with "JNI method not found". Gradle compiles Java
 // before CMake's FetchContent runs, so this task fetches the tarball itself,
 // checks the pinned SHA-256 and extracts only org/libsdl/app/.
-val sdlTarball = layout.buildDirectory.file("sdl3/${sdlUrl.substringAfterLast('/')}")
 val sdlJavaDir = layout.buildDirectory.dir("generated/sdl3-java")
 
 val fetchSdlJava by tasks.registering {
-    inputs.property("url", sdlUrl)
-    inputs.property("sha256", sdlSha256)
+    inputs.property("pin", sdlPins.getValue("SDL3").toString())
     outputs.dir(sdlJavaDir)
     doLast {
-        val tarball = sdlTarball.get().asFile
-        fun sha256(): String = MessageDigest.getInstance("SHA-256")
-            .digest(tarball.readBytes()).joinToString("") { "%02x".format(it) }
-        if (!tarball.isFile || sha256() != sdlSha256) {
-            tarball.parentFile.mkdirs()
-            URI(sdlUrl).toURL().openStream().use { input ->
-                tarball.outputStream().use { input.copyTo(it) }
-            }
-            val got = sha256()
-            if (got != sdlSha256) {
-                tarball.delete()
-                throw GradleException("$sdlUrl: SHA-256 $got, expected $sdlSha256")
-            }
-        }
+        val tarball = pinnedTarball("SDL3")
         val out = sdlJavaDir.get().asFile
         project.delete(out)
         project.copy {
@@ -88,6 +98,37 @@ val bundleGameData by tasks.registering(Sync::class) {
             "$sha ${file.length()} ${file.relativeTo(data).invariantSeparatorsPath}"
         }.sorted().toList()
         data.resolve("bundle-manifest.txt").writeText(lines.joinToString("\n", postfix = "\n"))
+    }
+}
+
+// The notices of everything compiled into the APK, as assets/licenses/: the
+// same files and names CMake's install() gives the AppImage and the zip (the
+// fonts' and the dictionaries' licences travel inside data/). The SDL texts
+// come from the pinned tarballs, so they always match the code that's built.
+val licensesDir = layout.buildDirectory.dir("generated/tt2-licenses")
+val repoLicenses = mapOf(
+    "re-twist-tt2.txt" to rootProject.file("../LICENSE"),
+    "super-xbr.txt" to rootProject.file("../third_party/super-xbr/LICENSE"),
+)
+
+val bundleLicenses by tasks.registering {
+    inputs.property("pins", sdlPins.toString())
+    inputs.files(repoLicenses.values)
+    outputs.dir(licensesDir)
+    doLast {
+        project.delete(licensesDir)
+        val out = licensesDir.get().dir("licenses").asFile
+        out.mkdirs()
+        repoLicenses.forEach { (name, file) -> file.copyTo(out.resolve(name)) }
+        sdlPins.keys.forEach { name ->
+            project.copy {
+                from(project.tarTree(project.resources.gzip(pinnedTarball(name))))
+                include("*/LICENSE.txt")
+                eachFile { path = "$name.txt" }
+                into(out)
+            }
+            if (!out.resolve("$name.txt").isFile) throw GradleException("$name: no LICENSE.txt in its tarball")
+        }
     }
 }
 
@@ -128,6 +169,7 @@ android {
 
     sourceSets["main"].java.srcDir(sdlJavaDir)
     sourceSets["main"].assets.srcDir(bundledAssetsDir)
+    sourceSets["main"].assets.srcDir(licensesDir)
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -143,7 +185,7 @@ kotlin {
     jvmToolchain(17)
 }
 
-tasks.named("preBuild") { dependsOn(fetchSdlJava, bundleGameData) }
+tasks.named("preBuild") { dependsOn(fetchSdlJava, bundleGameData, bundleLicenses) }
 
 // JVM unit tests for the Kotlin importer (./gradlew testDebugUnitTest): no
 // device, synthetic random bytes only, never real assets.
