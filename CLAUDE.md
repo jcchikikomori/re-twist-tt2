@@ -1,8 +1,9 @@
 # CLAUDE.md — re-twist-tt2
 
-A native desktop recreation of **Text Twist 2** (GameHouse, 2008), written
-in portable C++17. The whole game fits in one CMake project; there is no
-web, no JavaScript, no Capacitor.
+A native recreation of **Text Twist 2** (GameHouse, 2008) for the desktop
+and Android, written in portable C++17. The whole game fits in one CMake
+project; there is no web, no JavaScript, no Capacitor. The Android app
+(`android/`) wraps that same CMake build in Gradle.
 
 The **main goal is updating the dictionary**: the original game's `.tree`
 word lists are fully decoded, and this project can read and write them
@@ -22,6 +23,11 @@ the engine.
   releases instead, with every image and audio decoder compiled in (CI,
   the AppImage and the Windows zip all use it). Check a build's decoders
   with `tt2 --probe-media ui/tests/media/probe.jpg` (also `.png`, `.ogg`).
+- **Android:** Gradle (AGP 8.7, Kotlin 2.0, JDK 17), NDK 27.2.12479018,
+  CMake 3.22.1, `minSdk` 31, arm64-v8a only. The C++ is `libmain.so`,
+  loaded by SDL3's `SDLActivity`; Kotlin holds only `MainActivity` and the
+  ZIP importer. `android/app/build.gradle.kts` reads the version and the
+  SDL3 pins from `CMakeLists.txt`, never a copy.
 - **No container required.** The project compiles on the host directly;
   `podman` / `docker` is optional for reproducing the same toolchain.
 
@@ -33,6 +39,11 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure    # unit tests
 ./build/tt2_engine data/open-common.tree data/open-full.tree
 ./build/tt2-tree   verify data/open-full.tree
+
+# Android (from android/; needs ANDROID_HOME or local.properties, JDK 17)
+./gradlew testDebugUnitTest    # Kotlin importer tests, no NDK, no device
+./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
+scripts/ci-apk-check.sh android/app/build/outputs/apk/debug/app-debug.apk data/original-assets.sha256
 ```
 
 ## Layout
@@ -44,9 +55,13 @@ ctest --test-dir build --output-on-failure    # unit tests
 | `src/main.cpp` | The driver / smoke test for the engine. |
 | `tools/tree_cli.cpp` | Dictionary tool: `decode`, `encode`, `merge`, `diff`, `verify`. Replaces the old `tools/tree-cli.ts`. |
 | `tools/assets_cli.cpp` | `tt2-assets`: `manifest <install>` writes the original-asset manifest (paths + SHA-256 only), `verify <dir> <manifest>` checks a folder. |
+| `android/` | The Android app. `app/build.gradle.kts` (version from `CMakeLists.txt`, `versionCode` MAJOR\*10000+MINOR\*100+PATCH; SDL Java glue and licence texts from the pinned tarballs; `data/` packaged by an allow-list; release signing from `TT2_KEYSTORE*`, see `docs/android-signing.md`; debug builds are `….retwisttt2.debug`). `MainActivity.kt` (holds the splash until `onFirstFrame()`, opens the importer), `importer/` (`AssetManifest.kt`, `ZipImporter.kt`: the Kotlin twin of `asset_import.hpp`; `ImportDialog.kt`; `ImportBridge.kt`: JNI to C++ for every message). Tests in `app/src/test/`. |
+| `tools/gen_android_icon.py` | Writes the adaptive launcher icon (`res/drawable/ic_launcher_*.xml`, `res/mipmap-anydpi-v26/`) from `packaging/linux/tt2.svg`'s geometry. Standard library only, deterministic; re-run and commit the output after changing it. |
+| `scripts/` | `ci-import-smoke.sh` (synthetic desktop import), `ci-apk-check.sh` (what an APK may carry: required libs and licences, an `assets/` allow-list, no file whose SHA-256 is in the manifest) and `ci-apk-check-test.sh` (proves the check catches each case), `import-original.sh`. |
 | `tools/gen_placeholders.py` | Writes the open placeholder art into `data/placeholder/` (bitmap fonts from `third_party/fonts/`, dialog frame, buttons; palette sampled from the original), plus a copy drawn at twice the size in `data/placeholder/2x/` for GPU renderers. Run it with `/usr/bin/python3` (Pillow 9.0.1 reproduces the committed bytes); re-run and commit the output after changing it. |
 | `third_party/fonts/` | Luckiest Guy (Apache 2.0) and Arimo (OFL), unaltered; read only by the generator. |
 | `third_party/tinyfiledialogs/` | Vendored, unaltered (zlib): the native folder picker for the importer. Its own C target, outside `-Werror`. |
+| `third_party/kotlin/` | `LICENSE` (Apache 2.0, verbatim from Kotlin v2.0.21) and `VERSION`: the notice for kotlin-stdlib and JetBrains annotations in the APK. Update both with `libs.versions.toml`'s Kotlin version. |
 | `third_party/super-xbr/` | `LICENSE` (Hyllian's MIT notice, verbatim) and `VERSION` (upstream commit, shader hashes) for the Super-xBR port in `ui/include/tt2ui/upscale.hpp`; a test keeps the header's copy of the notice identical. |
 | `packaging/linux/` | The desktop file, icon, and the AppImage runtime's licence (`packages.yml` installs it). Every package ships the third-party notices in `licenses/` (`TT2_LICENSE_INSTALL_DIR`). |
 | `data/` | Runtime dictionaries. The open-license `open-common.tree` + `open-full.tree` are committed; the original GameHouse `common.tree` + `full.tree` are gitignored. |
@@ -126,6 +141,16 @@ the one that fits the deployer.
    CI never touches real assets: it imports a synthetic install
    of random bytes (`scripts/ci-import-smoke.sh`), always with
    `--asset-dir`. A real import is a manual, user-initiated step.
+   - **Android:** the player picks a ZIP of their install; the same
+     manifest and stamp apply, and the files land in the app's private
+     storage. The Kotlin tests use synthetic ZIPs only, and
+     `ui/tests/import-contract/` (shared by the C++ and Kotlin tests)
+     holds made-up files. Every APK is checked by `scripts/ci-apk-check.sh`,
+     so a build that picked up the player's `data/common.tree` /
+     `full.tree` or any original file fails.
+   - **Import text lives only in `import_prompt.hpp`.** Kotlin gets it
+     through JNI (`ImportBridge`), and `ImportTextTest` fails if a
+     message is copied into Kotlin or `res/`.
 
 ## Reference: how the original works
 
@@ -232,15 +257,22 @@ the address-level walkthrough of the gameplay code is in
   Borderless / Native modes), `side_fill.hpp` / `palette.hpp` for the
   generated side bars on wide screens, `render_options.hpp` for what the
   renderer does with the filter and hi-res dialog layers (software keeps
-  Sharp, 800x600), `credits_dialog.hpp` for CREDITS, `asset_import.hpp` /
+  Sharp, 800x600), `credits_dialog.hpp` for CREDITS, `platform.hpp`
+  (`Platform` passed as a value, so desktop tests cover the Android
+  choices), `data_paths.hpp` (where data, saves and imports live;
+  `android_dirs()`), `bundled_data.hpp` (Android: copies `data/` out of
+  the APK on first launch), `asset_import.hpp` /
   `import_prompt.hpp` / `folder_picker.hpp` for importing the original
   assets, `tooltip.hpp` for the hover tooltips
   (`docs/reverse-engineering/tooltips.md`), `trophy_room.hpp` for SCENE_TROPHY and the
   trophy texts the in-game trophy popup shares, `dialog_fade.hpp` for the
   dialog backdrop and show / hide fades),
   `ui/src/main.cpp` is the SDL3 front end (`ui/src/audio.cpp` wraps
-  SDL3_mixer, its rules in `audio_mix.hpp`), and `ui/tests/` holds the
-  headless tests. Timings and layout for the welcome flow come from
+  SDL3_mixer, its rules in `audio_mix.hpp`; on Android `android_import.cpp`
+  opens the Kotlin importer and exports its JNI text functions,
+  `android_splash.cpp` reports the first frame, and
+  `folder_picker_android.cpp` stands in for tinyfiledialogs), and
+  `ui/tests/` holds the headless tests. Timings and layout for the welcome flow come from
   `docs/reverse-engineering/welcome-flow.md`, the game scene geometry
   from `docs/reverse-engineering/game-scene.md`, help and settings from
   `docs/reverse-engineering/help-and-settings.md`;

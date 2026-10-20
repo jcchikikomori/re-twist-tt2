@@ -1,14 +1,14 @@
 # re-twist-tt2
 
-A native desktop recreation of **Text Twist 2** (GameHouse, 2008) in portable C++17.
+A native recreation of **Text Twist 2** (GameHouse, 2008) in portable C++17, for the desktop and Android.
 
 The original shipped a 25 k-word common list and a 117 k-word full list, both locked inside a
 Win32 install. This project decodes the game logic and the `.tree` dictionary format, and ships a
 public-domain **2008 → 2026 dictionary update** (ENABLE2k, 173 528 words). Swapping dictionaries is
 a file swap; the engine does not change.
 
-It builds with CMake on Linux, macOS and Windows. There is no web layer, no JavaScript, no
-Capacitor.
+It builds with CMake on Linux, macOS and Windows; the Android app wraps the same CMake build in
+Gradle and the NDK. There is no web layer, no JavaScript, no Capacitor.
 
 <img width="1282" height="752" alt="image" src="https://github.com/user-attachments/assets/759e3d30-e1ad-444e-b532-36081cb60f0e" />
 
@@ -21,6 +21,8 @@ Capacitor.
   the pinned releases (SDL 3.4.18, SDL_image 3.4.8, SDL_mixer 3.2.4) for distros that don't package
   them yet. When they are missing, CMake skips the UI and still builds the engine, the tools and the
   tests (`-DTT2_BUILD_UI=OFF` skips it on purpose).
+- **Android:** Android 12+ on 64-bit ARM. The same C++ is compiled with the NDK (27.2) and loaded by SDL3's
+  `SDLActivity`; a little Kotlin adds the ZIP importer and the splash screen. Building needs JDK 17.
 - **Reverse engineering:** [REA](https://github.com/morluto/rea) and Ghidra, against a locally
   owned install. Nothing from that install is committed.
 
@@ -118,6 +120,7 @@ Konsole). In a source checkout, `scripts/import-original.sh` does the same.
 | Steam Deck | `/home/deck/.local/share/re-twist-tt2/imported-assets/` |
 | Windows | `%APPDATA%\re-twist-tt2\imported-assets\` |
 | macOS (untested) | `~/Library/Application Support/re-twist-tt2/imported-assets/` |
+| Android | the app's own storage (`files/re-twist-tt2/imported-assets/`); other apps can't see it |
 
 The game prints the folder it uses at start (`assets: ...`). Profiles and saves live in the parent
 folder (`--save-dir` moves them); `--asset-dir DIR` moves the imported assets.
@@ -128,19 +131,60 @@ Every file is checked against the SHA-256 checksums in `data/original-assets.sha
 file names and checksums only. One missing or different file means nothing is copied, and a failed
 import keeps the previous one. The game's DLL and `.nfo` files are never copied.
 
+## Android
+
+### Install
+
+1. Download `re-twist-tt2-vX.Y.Z-android.apk` from the
+   [Releases](https://github.com/jcchikikomori/re-twist-tt2/releases) page on the device. It needs Android 12 or
+   newer on a 64-bit ARM (arm64-v8a) device.
+1. Open it. Android asks once whether your browser or file manager may install apps; allow it, then install.
+1. Later versions install over this one and keep your players, saves and imported assets: every release is signed
+   with the same key ([docs/android-signing.md](docs/android-signing.md)).
+
+### Import the original assets
+
+On Android the game imports a **ZIP** of your Text Twist 2 folder, one file that is easy to copy to a device:
+
+1. On a computer, zip the folder that holds `Text Twist 2.exe`. A ZIP of the folder itself or of its contents both
+   work. Copy the ZIP to the device, for example into Downloads.
+1. Start the game. It asks for the original game; choose **Choose ZIP** and pick the file.
+1. The game checks every file inside the ZIP against the same checksums as on the desktop, copies them, and checks
+   the copies. Nothing is kept unless every file checks out. The next launch doesn't ask again.
+
+**Not now** keeps the placeholders for this session. **SETTINGS → ORIGINAL ASSETS → IMPORT** imports later. The
+game keeps its own copy, so the ZIP can be deleted afterwards. Limits: the ZIP up to 1 GiB, each file up to
+16 MiB, 256 MiB in all (the real game is about 24 MB).
+
+### Build
+
+```bash
+cd android
+./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
+./gradlew testDebugUnitTest    # the Kotlin importer's tests, no device needed
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Gradle needs the Android SDK (platform 35) with NDK 27.2.12479018 and CMake 3.22.1, and JDK 17. Debug builds are
+a separate app, "re-twist-tt2 (debug)" (`com.jcchikikomori.retwisttt2.debug`), so they install next to a release
+instead of over it. Release builds are signed in CI; [docs/android-signing.md](docs/android-signing.md) covers
+the key.
+
 ## CI and downloads
 
 GitHub Actions runs two workflows:
 
 - **CI** (`.github/workflows/ci.yml`), on every push to `main` and every pull request: the unit tests on Linux (GCC,
   warnings as errors, plus an AddressSanitizer / UBSan run) and on Windows (MSYS2 UCRT64), each followed by a headless
-  smoke run of the game and a decode of `ui/tests/media/` (`--probe-media`).
-- **Packages** (`.github/workflows/packages.yml`), on pushes to `main`, `v*` tags and by hand: a Linux **AppImage**
-  and a Windows **zip** (`tt2.exe`, its DLLs and `data/`). A `v*` tag also publishes both on the
-  [Releases](https://github.com/jcchikikomori/re-twist-tt2/releases) page; other runs keep them in the run's
-  *Artifacts* section.
+  smoke run of the game and a decode of `ui/tests/media/` (`--probe-media`). On Android: the Kotlin importer's
+  tests and a debug APK.
+- **Packages** (`.github/workflows/packages.yml`), on pushes to `main`, `v*` tags and by hand: a Linux **AppImage**,
+  a Windows **zip** (`tt2.exe`, its DLLs and `data/`) and a signed Android **APK**. A `v*` tag also publishes all
+  three on the [Releases](https://github.com/jcchikikomori/re-twist-tt2/releases) page; other runs keep them in
+  the run's *Artifacts* section.
 
-Both workflows also import a synthetic install made of random bytes, never real game files.
+Both workflows also import a synthetic install made of random bytes, never real game files. Every APK is checked
+by `scripts/ci-apk-check.sh`: no file in it may have the checksum of a file from the original game.
 
 The packages carry only the open-license dictionaries, the asset checksums and the placeholder art; import the
 original art as above. A packaged game finds its data next to itself (`data/` beside `tt2.exe`, or `share/tt2/data`
@@ -159,6 +203,8 @@ tick **Unblock**.
 │   │                         #   Classic / Lightning / Crossword rounds, profiles, settings,
 │   │                         #   the resumable saved game
 │   └── tests/                # engine unit tests (in-tree harness)
+├── android/                  # the Android app (Gradle): MainActivity, the Kotlin ZIP importer
+│                             #   and its tests; the native code is this repo's CMakeLists.txt
 ├── ui/
 │   ├── include/tt2ui/        # headless scene model: sprites, modifiers, welcome flow,
 │   │                         #   bitmap fonts, profile dialogs, game scene and its dialogs,
@@ -169,12 +215,15 @@ tick **Unblock**.
 ├── tools/tree_cli.cpp        # tt2-tree dictionary tool
 ├── tools/gen_placeholders.py # writes data/placeholder/ (fonts, dialog frame, buttons)
 ├── tools/assets_cli.cpp      # tt2-assets: writes and checks the asset checksum list
-├── third_party/              # tinyfiledialogs (the folder picker), the open fonts for the placeholders
+├── tools/gen_android_icon.py # writes the Android launcher icon from packaging/linux/tt2.svg
+├── third_party/              # tinyfiledialogs (the folder picker), the open fonts for the placeholders,
+│                             #   the Super-xBR and Kotlin licence notices
 ├── data/                     # dictionaries (open-*.tree), original-assets.sha256, placeholder/ art
 ├── data-src/                 # raw word lists for rebuilding the open dictionaries
-├── scripts/                  # import-original.sh (wraps tt2 --import), ci-import-smoke.sh
+├── scripts/                  # import-original.sh (wraps tt2 --import), ci-import-smoke.sh,
+│                             #   ci-apk-check.sh (what an APK may carry) and its test
 ├── packaging/linux/          # desktop entry and original icon for the AppImage
-├── .github/workflows/        # CI (tests) and Packages (AppImage, Windows zip)
+├── .github/workflows/        # CI (tests, debug APK) and Packages (AppImage, Windows zip, APK)
 └── docs/
     ├── reverse-engineering/  # evidence from the original: format specs, scene layouts, timings
     ├── design/               # original-look brief, asset import design, credits
@@ -205,6 +254,7 @@ tick **Unblock**.
 | **Untimed / Timed** | **Playable.** Word grid, pearl letter balls, twist / clear / last word / enter, the 2:00 clock, the in-game popups, pause menu, Exit / Give Up confirmations, round-end reveal, GAME OVER and new high score, resume on the next launch, HOW TO PLAY and SETTINGS. |
 | Lightning, Crossword, Word of the Day | Engine done; the menu entries are still stubs. |
 | Trophies | Slots saved; unlock conditions not reconstructed yet. |
+| Android | Android 12+ tablets and phones (arm64): OpenGL ES first, the ZIP importer, adaptive launcher icon, splash screen, and a signed release APK built in CI. Tested on a Galaxy Tab A7 Lite (Android 14). |
 
 Current work is the animation polish for Untimed (easing, fades, letter flips). The bigger picture
 is in [`ROADMAP.md`](ROADMAP.md).
