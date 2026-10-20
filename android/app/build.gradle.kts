@@ -132,6 +132,21 @@ val bundleLicenses by tasks.registering {
     }
 }
 
+// D3: the release key. The keystore and its password stay on the user's
+// machine and in GitHub secrets (packages.yml), never in the repository.
+// Gradle reads TT2_KEYSTORE (a path), TT2_KEYSTORE_PASSWORD and
+// TT2_KEY_ALIAS from ~/.gradle/gradle.properties or the environment; the
+// key's password is the store's (a PKCS12 keystore has only one). Without
+// them assembleRelease still builds, but unsigned, and nothing installs that.
+fun signingValue(name: String): String? =
+    providers.gradleProperty(name).orElse(providers.environmentVariable(name)).orNull?.takeIf { it.isNotEmpty() }
+
+val releaseSigning = listOf("TT2_KEYSTORE", "TT2_KEYSTORE_PASSWORD", "TT2_KEY_ALIAS").associateWith(::signingValue)
+if (releaseSigning.values.any { it != null } && releaseSigning.values.any { it == null }) {
+    throw GradleException("release signing: set all of ${releaseSigning.keys} or none (missing: " +
+        releaseSigning.filterValues { it == null }.keys + ")")
+}
+
 android {
     namespace = "com.jcchikikomori.retwisttt2"
     compileSdk = 35
@@ -164,6 +179,36 @@ android {
         cmake {
             path = rootCMake
             version = "3.22.1"
+        }
+    }
+
+    signingConfigs {
+        val keystore = releaseSigning["TT2_KEYSTORE"]
+        val password = releaseSigning["TT2_KEYSTORE_PASSWORD"]
+        val alias = releaseSigning["TT2_KEY_ALIAS"]
+        if (keystore != null && password != null && alias != null) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = password
+                keyAlias = alias
+                keyPassword = password
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.findByName("release")
+            // R8 stays off: JNI finds MainActivity's and ImportBridge's
+            // methods by name, and the Kotlin is a small part of the APK.
+            isMinifyEnabled = false
+        }
+        getByName("debug") {
+            // Android only updates an app with an APK signed by the same key.
+            // The suffix makes debug builds (each machine's own debug key) a
+            // separate app, so they install next to a release APK instead of
+            // over it. Separate saves and imported assets, too.
+            applicationIdSuffix = ".debug"
         }
     }
 

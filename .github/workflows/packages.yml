@@ -1,6 +1,7 @@
-# Release builds: a Linux AppImage and a Windows zip (tt2.exe + DLLs +
-# data/). Runs on pushes to main, on version tags (v*), and by hand; a v*
-# tag also publishes both as a GitHub Release.
+# Release builds: a Linux AppImage, a Windows zip (tt2.exe + DLLs +
+# data/) and an Android APK signed with the release key. Runs on pushes to
+# main, on version tags (v*), and by hand; a v* tag also publishes all
+# three as a GitHub Release.
 # The packages carry only the open-license dictionaries and the
 # procedural placeholder art; GameHouse assets are never part of a build.
 name: Packages
@@ -210,12 +211,84 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  # A version tag (v*) publishes both packages as a GitHub Release. Only
+  # The release APK, signed with the key from the repository's secrets
+  # (TT2_KEYSTORE_BASE64, TT2_KEYSTORE_PASSWORD, TT2_KEY_ALIAS; set up as in
+  # docs/android-signing.md). GitHub masks secret values in the log;
+  # the decoded keystore lives in $RUNNER_TEMP for the build step only.
+  android:
+    name: Android APK
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: NDK and CMake
+        run: |
+          ndk=$(sed -n 's/^ *ndkVersion = "\(.*\)"/\1/p' android/app/build.gradle.kts)
+          cmake=$(sed -n 's/^ *version = "\(.*\)"/\1/p' android/app/build.gradle.kts)
+          test -n "$ndk" && test -n "$cmake"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" "cmake;$cmake" > /dev/null
+
+      - name: Release APK
+        working-directory: android
+        env:
+          TT2_KEYSTORE_BASE64: ${{ secrets.TT2_KEYSTORE_BASE64 }}
+          TT2_KEYSTORE_PASSWORD: ${{ secrets.TT2_KEYSTORE_PASSWORD }}
+          TT2_KEY_ALIAS: ${{ secrets.TT2_KEY_ALIAS }}
+        run: |
+          if [ -z "$TT2_KEYSTORE_BASE64" ] || [ -z "$TT2_KEYSTORE_PASSWORD" ] || [ -z "$TT2_KEY_ALIAS" ]; then
+            echo "::error::The release keystore secrets are not set (TT2_KEYSTORE_BASE64, TT2_KEYSTORE_PASSWORD, TT2_KEY_ALIAS)."
+            exit 1
+          fi
+          export TT2_KEYSTORE="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$TT2_KEYSTORE"' EXIT
+          printf '%s' "$TT2_KEYSTORE_BASE64" | base64 -d > "$TT2_KEYSTORE"
+          ./gradlew assembleRelease --console=plain
+
+      # Signed (v2+ scheme, minSdk 31), not with a debug key, and with the
+      # version CMakeLists.txt gives; on a tag that must be the tag's, less
+      # any pre-release part (v0.6.0-beta.1 -> 0.6.0: CMake has no such part).
+      - name: Signature and version
+        run: |
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          tools=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)
+          "$tools/apksigner" verify --min-sdk-version 31 --print-certs "$apk" | tee signature.txt
+          if grep -q 'CN=Android Debug' signature.txt; then echo "::error::signed with a debug key"; exit 1; fi
+          version=$("$tools/aapt2" dump badging "$apk" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          echo "versionName $version"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "v$version" != "${GITHUB_REF_NAME%%-*}" ]; then
+              echo "::error::versionName $version does not match the tag $GITHUB_REF_NAME"
+              exit 1
+            fi
+            name=$GITHUB_REF_NAME
+          else
+            name=${GITHUB_SHA:0:12}
+          fi
+          mv "$apk" "re-twist-tt2-$name-android.apk"
+
+      # Licences present, assets/ on the allow-list, and no file from the
+      # original game under any name (the same check as CI's debug APK).
+      - name: APK contents
+        run: scripts/ci-apk-check.sh re-twist-tt2-*-android.apk data/original-assets.sha256
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: re-twist-tt2-android-apk
+          path: re-twist-tt2-*-android.apk
+          if-no-files-found: error
+
+  # A version tag (v*) publishes every package as a GitHub Release. Only
   # this job may write to the repository; the tag itself is pushed by hand.
   release:
     name: GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [appimage, windows]
+    needs: [appimage, windows, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -232,4 +305,5 @@ jobs:
             zip -r "$GITHUB_WORKSPACE/re-twist-tt2-$GITHUB_REF_NAME-windows-x86_64.zip" .)
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes \
             artifacts/re-twist-tt2-linux-x86_64-appimage/*.AppImage \
-            "re-twist-tt2-$GITHUB_REF_NAME-windows-x86_64.zip"
+            "re-twist-tt2-$GITHUB_REF_NAME-windows-x86_64.zip" \
+            artifacts/re-twist-tt2-android-apk/*.apk
