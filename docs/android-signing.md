@@ -31,8 +31,12 @@ Run these in your own terminal, so the password never shows up anywhere else:
 ```bash
 base64 -w0 ~/re-twist-tt2-release.jks | gh secret set TT2_KEYSTORE_BASE64
 gh secret set TT2_KEYSTORE_PASSWORD     # prompts for the value
-gh secret set TT2_KEY_ALIAS --body re-twist-tt2
+gh variable set TT2_KEY_ALIAS --body re-twist-tt2
 ```
+
+The alias is a variable, not a secret: GitHub masks every secret value wherever it appears in a log, and
+`re-twist-tt2` is also the repository's name, so a secret alias would hide every path and file name in the
+build log.
 
 `.github/workflows/packages.yml` decodes the keystore into the runner's temp folder, builds
 `assembleRelease`, deletes it, and checks the result with `apksigner verify`. The job fails when the secrets

@@ -212,9 +212,11 @@ jobs:
           if-no-files-found: error
 
   # The release APK, signed with the key from the repository's secrets
-  # (TT2_KEYSTORE_BASE64, TT2_KEYSTORE_PASSWORD, TT2_KEY_ALIAS; set up as in
-  # docs/android-signing.md). GitHub masks secret values in the log;
-  # the decoded keystore lives in $RUNNER_TEMP for the build step only.
+  # (TT2_KEYSTORE_BASE64, TT2_KEYSTORE_PASSWORD) and its alias, a plain
+  # variable (TT2_KEY_ALIAS; as a secret, its value "re-twist-tt2" would be
+  # masked everywhere in the log, the repository's name included). Set up as
+  # in docs/android-signing.md. The decoded keystore lives in $RUNNER_TEMP
+  # for the build step only.
   android:
     name: Android APK
     runs-on: ubuntu-22.04
@@ -239,10 +241,10 @@ jobs:
         env:
           TT2_KEYSTORE_BASE64: ${{ secrets.TT2_KEYSTORE_BASE64 }}
           TT2_KEYSTORE_PASSWORD: ${{ secrets.TT2_KEYSTORE_PASSWORD }}
-          TT2_KEY_ALIAS: ${{ secrets.TT2_KEY_ALIAS }}
+          TT2_KEY_ALIAS: ${{ vars.TT2_KEY_ALIAS }}
         run: |
           if [ -z "$TT2_KEYSTORE_BASE64" ] || [ -z "$TT2_KEYSTORE_PASSWORD" ] || [ -z "$TT2_KEY_ALIAS" ]; then
-            echo "::error::The release keystore secrets are not set (TT2_KEYSTORE_BASE64, TT2_KEYSTORE_PASSWORD, TT2_KEY_ALIAS)."
+            echo "::error::Set the secrets TT2_KEYSTORE_BASE64, TT2_KEYSTORE_PASSWORD and the variable TT2_KEY_ALIAS."
             exit 1
           fi
           export TT2_KEYSTORE="$RUNNER_TEMP/release.jks"
