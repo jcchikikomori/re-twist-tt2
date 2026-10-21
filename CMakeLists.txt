@@ -262,6 +262,7 @@ if(TT2_BUILD_TESTS)
     add_executable(tt2_ui_tests
         engine/tests/test_main.cpp
         ui/tests/test_welcome_flow.cpp
+        ui/tests/test_boot_preload.cpp
         ui/tests/test_bitmap_font.cpp
         ui/tests/test_profile_dialogs.cpp
         ui/tests/test_game_scene.cpp

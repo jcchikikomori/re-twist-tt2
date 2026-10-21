@@ -241,8 +241,10 @@ the address-level walkthrough of the gameplay code is in
 - UI work (layout, styling, motion, responsiveness) goes through the
   designer lane. The UI lives in `ui/`: `ui/include/tt2ui/` is the
   headless scene model (`sprite.hpp`, `modifier.hpp`,
-  `welcome_flow.hpp`, `bitmap_font.hpp` for the GF2 `fonts/*.xml`
-  format, `profile_dialogs.hpp` for the name-input / player-select
+  `welcome_flow.hpp`, `boot_preload.hpp` (what the splash and the
+  loading screen preload, taken from the scenes; `Assets::preload` in
+  `main.cpp` decodes it on worker threads), `bitmap_font.hpp` for the
+  GF2 `fonts/*.xml` format, `profile_dialogs.hpp` for the name-input / player-select
   dialogs, `game_scene.hpp` for the Classic Untimed / Timed scene,
   `blitz_scene.hpp` for the Lightning scene (`docs/reverse-engineering/lightning.md`),
   `scene_popups.hpp` for the message and trophy popups both scenes share,

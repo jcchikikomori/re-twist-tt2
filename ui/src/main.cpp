@@ -61,6 +61,7 @@
 #include "tt2/word_tree.hpp"
 #include "tt2ui/bitmap_font.hpp"
 #include "tt2ui/blitz_scene.hpp"
+#include "tt2ui/boot_preload.hpp"
 #include "tt2ui/asset_import.hpp"
 #include "tt2ui/data_paths.hpp"
 #include "tt2ui/dialog_fade.hpp"
@@ -677,35 +678,118 @@ public:
     Image& image(const SheetSpec& spec) {
         auto it = images_.find(spec.image_id);
         if (it != images_.end()) return it->second;
-        Image img;
-        auto f = kImageFiles.find(spec.image_id);
-        SDL_Surface* hires = nullptr;
-        if (f != kImageFiles.end()) {
-            const std::string path = find_art(f->second);
-            const std::string path_2x = placeholder_2x(f->second);
-            if (!path_2x.empty()) hires = IMG_Load(path_2x.c_str());
-            if (file_exists(path)) {
-                img.surface = IMG_Load(path.c_str());
-                if (img.surface) {
-                    img.placeholder = false;
-                    if (img.surface->w != spec.sheet_w() || img.surface->h != spec.sheet_h())
-                        std::fprintf(stderr, "warning: %s is %dx%d, sheet spec says %dx%d\n", path.c_str(),
-                                     img.surface->w, img.surface->h, spec.sheet_w(), spec.sheet_h());
+        // Queued by preload() but not stored yet: take it now (waiting for
+        // its worker if one has started) rather than read the file twice.
+        for (auto j = preload_jobs_.begin(); j != preload_jobs_.end(); ++j)
+            if (j->kind == PreloadJob::Kind::Image && j->spec.image_id == spec.image_id) {
+                Decoded d = j->started ? j->result.get() : decode_image(spec.image_id);
+                ++preload_counts_[j->group].done;
+                preload_jobs_.erase(j);
+                return store_decoded(spec, d);
+            }
+        return store_decoded(spec, decode_image(spec.image_id));
+    }
+
+    // Boot preloading (tt2ui/boot_preload.hpp): the group's images and sounds
+    // are decoded on worker threads; poll_preload() makes their textures and
+    // clips between frames. Anything drawn or played before its turn loads on
+    // the spot, as without a preload.
+    void preload(int group, const tt2ui::PreloadSet& set) {
+        tt2ui::PreloadCount& c = preload_counts_[group];
+        auto queue = [&](PreloadJob j) {
+            j.group = group;
+            preload_jobs_.push_back(std::move(j));
+            ++c.total;
+        };
+        for (const SheetSpec& spec : set.images)
+            if (!images_.count(spec.image_id)) {
+                PreloadJob j;
+                j.kind = PreloadJob::Kind::Image;
+                j.spec = spec;
+                queue(std::move(j));
+            }
+        for (SoundId id : set.sounds)
+            if (audio_ && !chunks_.count(id)) {
+                PreloadJob j;
+                j.kind = PreloadJob::Kind::Sound;
+                j.sound = id;
+                queue(std::move(j));
+            }
+        for (SoundId id : set.streams)
+            if (audio_ && !music_.count(id)) {
+                PreloadJob j;
+                j.kind = PreloadJob::Kind::Stream;
+                j.sound = id;
+                queue(std::move(j));
+            }
+        for (const std::string& id : set.fonts)
+            if (!fonts_.count(id)) {
+                PreloadJob j;
+                j.kind = PreloadJob::Kind::Font;
+                j.font = id;
+                queue(std::move(j));
+            }
+        if (preload_started_ns_ == 0) preload_started_ns_ = SDL_GetTicksNS();
+    }
+    tt2ui::PreloadCount preload_count(int group) const {
+        auto it = preload_counts_.find(group);
+        return it != preload_counts_.end() ? it->second : tt2ui::PreloadCount{};
+    }
+
+    // Once a frame, between frames. Two workers decode, in queue order; then
+    // at most one image becomes a texture per call (the upload of a 5700x864
+    // sheet is the slow part left on this thread) and at most one font loads
+    // (fonts load here, their sheets are small). Clips just change hands.
+    void poll_preload() {
+        constexpr int WORKERS = 2;
+        int running = 0;
+        for (PreloadJob& j : preload_jobs_) {
+            if (j.kind == PreloadJob::Kind::Font) continue;
+            if (j.started) {
+                ++running;
+                continue;
+            }
+            if (running >= WORKERS) break;
+            if (j.kind == PreloadJob::Kind::Image)
+                j.result = std::async(std::launch::async, [this, id = j.spec.image_id] { return decode_image(id); });
+            else
+                j.result = std::async(std::launch::async, [this, id = j.sound, stream = j.kind == PreloadJob::Kind::Stream] {
+                    Decoded d;
+                    d.clip = decode_sound(id, stream);
+                    return d;
+                });
+            j.started = true;
+            ++running;
+        }
+        bool uploaded = false, font_loaded = false;
+        for (auto it = preload_jobs_.begin(); it != preload_jobs_.end();) {
+            PreloadJob& j = *it;
+            if (j.kind == PreloadJob::Kind::Font) {
+                if (font_loaded) { ++it; continue; }
+                font(j.font);
+                font_loaded = true;
+            } else {
+                if (!j.started || j.result.wait_for(std::chrono::seconds(0)) != std::future_status::ready ||
+                    (j.kind == PreloadJob::Kind::Image && uploaded)) {
+                    ++it;
+                    continue;
+                }
+                Decoded d = j.result.get();
+                if (j.kind == PreloadJob::Kind::Image) {
+                    store_decoded(j.spec, d);
+                    uploaded = true;
                 } else {
-                    std::fprintf(stderr, "IMG_Load(%s): %s\n", path.c_str(), SDL_GetError());
+                    auto& clips = j.kind == PreloadJob::Kind::Stream ? music_ : chunks_;
+                    if (!clips.emplace(j.sound, d.clip).second) AudioOut::free_clip(d.clip);   // played meanwhile
                 }
             }
+            tt2ui::PreloadCount& c = preload_counts_[j.group];
+            ++c.done;
+            if (c.finished())
+                std::printf("preload: group %d, %zu files in %llu ms\n", j.group, c.total,
+                            static_cast<unsigned long long>((SDL_GetTicksNS() - preload_started_ns_) / 1000000));
+            it = preload_jobs_.erase(it);
         }
-        if (!img.surface) {
-            img.surface = make_placeholder(spec);
-            img.placeholder = true;
-        }
-        if (hires && img.surface && (hires->w != 2 * img.surface->w || hires->h != 2 * img.surface->h)) {
-            std::fprintf(stderr, "warning: 2x %s is not twice the 1x size; using 1x\n", f->second.c_str());
-            SDL_DestroySurface(hires);
-            hires = nullptr;
-        }
-        return store(spec.image_id, img, hires);
     }
 
     // Font by resources.xml id; falls back to the procedural 5x5 font.
@@ -771,12 +855,8 @@ public:
         if (!audio_) return;
         auto it = chunks_.find(id);
         if (it == chunks_.end()) {
-            MIX_Audio* c = nullptr;
-            auto f = kSoundFiles.find(id);
-            if (f != kSoundFiles.end()) {
-                const std::string path = in_dir(f->second);
-                if (file_exists(path)) c = audio_->load_sound(path);
-            }
+            MIX_Audio* c = take_preloaded_clip(id, PreloadJob::Kind::Sound);
+            if (!c) c = decode_sound(id, false);
             it = chunks_.emplace(id, c).first;
         }
         auto v = kSoundVolumes.find(id);
@@ -798,7 +878,8 @@ private:
     // 1x file for the alpha hit tests (pixel_alpha).
     Image& store(const std::string& key, Image img, SDL_Surface* hires = nullptr) {
         if (img.surface) {
-            SDL_Surface* conv = SDL_ConvertSurface(img.surface, SDL_PIXELFORMAT_RGBA32);
+            SDL_Surface* conv =
+                img.surface->format == SDL_PIXELFORMAT_RGBA32 ? nullptr : SDL_ConvertSurface(img.surface, SDL_PIXELFORMAT_RGBA32);
             if (conv) {
                 SDL_DestroySurface(img.surface);
                 img.surface = conv;
@@ -842,6 +923,7 @@ private:
     // The textures and hit masks, but not the sounds. Upscales in flight are
     // waited for (std::future) and dropped.
     void release_art() {
+        drop_preload();
         upscale_jobs_.clear();
         for (auto& [k, layers] : font_pending_)
             for (SDL_Texture* t : layers) if (t) SDL_DestroyTexture(t);
@@ -921,12 +1003,8 @@ private:
     MIX_Audio* music(SoundId id) {
         auto it = music_.find(id);
         if (it != music_.end()) return it->second;
-        MIX_Audio* m = nullptr;
-        auto f = kSoundFiles.find(id);
-        if (f != kSoundFiles.end()) {
-            const std::string path = in_dir(f->second);
-            if (file_exists(path)) m = audio_->load_music(path);
-        }
+        MIX_Audio* m = take_preloaded_clip(id, PreloadJob::Kind::Stream);
+        if (!m) m = decode_sound(id, true);
         return music_.emplace(id, m).first->second;
     }
 
@@ -940,6 +1018,90 @@ private:
         if (!own.empty() && file_exists(own)) return own;
         if (!placeholder_dir_.empty() && file_exists(placeholder_dir_ + "/" + rel)) return placeholder_dir_ + "/" + rel;
         return own;
+    }
+
+    // A decoded file, before it becomes a texture or a clip.
+    struct Decoded {
+        SDL_Surface* surface = nullptr;   // the 1x file, RGBA32
+        SDL_Surface* hires = nullptr;     // data/placeholder/2x/, if it applies
+        MIX_Audio* clip = nullptr;
+    };
+    // Reads files and decodes them, nothing else: safe on a worker thread
+    // (SDL_image surfaces need no renderer; MIX_LoadAudio is thread-safe).
+    Decoded decode_image(const std::string& id) const {
+        Decoded d;
+        auto f = kImageFiles.find(id);
+        if (f == kImageFiles.end()) return d;
+        const std::string path = find_art(f->second);
+        const std::string path_2x = placeholder_2x(f->second);
+        if (!path_2x.empty()) d.hires = IMG_Load(path_2x.c_str());
+        if (file_exists(path)) {
+            d.surface = IMG_Load(path.c_str());
+            if (!d.surface) std::fprintf(stderr, "IMG_Load(%s): %s\n", path.c_str(), SDL_GetError());
+        }
+        if (d.surface && d.surface->format != SDL_PIXELFORMAT_RGBA32) {
+            SDL_Surface* conv = SDL_ConvertSurface(d.surface, SDL_PIXELFORMAT_RGBA32);
+            if (conv) {
+                SDL_DestroySurface(d.surface);
+                d.surface = conv;
+            }
+        }
+        return d;
+    }
+    MIX_Audio* decode_sound(SoundId id, bool stream) const {
+        if (!audio_) return nullptr;
+        auto f = kSoundFiles.find(id);
+        if (f == kSoundFiles.end()) return nullptr;
+        const std::string path = in_dir(f->second);
+        if (!file_exists(path)) return nullptr;
+        return stream ? audio_->load_music(path) : audio_->load_sound(path);
+    }
+    // The texture for a decoded image; a missing file draws as a placeholder.
+    Image& store_decoded(const SheetSpec& spec, Decoded d) {
+        Image img;
+        img.surface = d.surface;
+        SDL_Surface* hires = d.hires;
+        auto f = kImageFiles.find(spec.image_id);
+        if (img.surface) {
+            img.placeholder = false;
+            if (img.surface->w != spec.sheet_w() || img.surface->h != spec.sheet_h())
+                std::fprintf(stderr, "warning: %s is %dx%d, sheet spec says %dx%d\n", f->second.c_str(),
+                             img.surface->w, img.surface->h, spec.sheet_w(), spec.sheet_h());
+        } else {
+            img.surface = make_placeholder(spec);
+            img.placeholder = true;
+        }
+        if (hires && img.surface && (hires->w != 2 * img.surface->w || hires->h != 2 * img.surface->h)) {
+            std::fprintf(stderr, "warning: 2x %s is not twice the 1x size; using 1x\n", f->second.c_str());
+            SDL_DestroySurface(hires);
+            hires = nullptr;
+        }
+        return store(spec.image_id, img, hires);
+    }
+    // A clip preload() queued but poll_preload() hasn't handed over yet.
+    MIX_Audio* take_preloaded_clip(SoundId id, int kind) {
+        for (auto j = preload_jobs_.begin(); j != preload_jobs_.end(); ++j)
+            if (static_cast<int>(j->kind) == kind && j->sound == id) {
+                MIX_Audio* clip = j->started ? j->result.get().clip : decode_sound(id, kind == PreloadJob::Kind::Stream);
+                ++preload_counts_[j->group].done;
+                preload_jobs_.erase(j);
+                return clip;
+            }
+        return nullptr;
+    }
+    // Waits for the workers and frees what they made; the groups count as
+    // finished, so the welcome flow never waits on a dropped preload (what
+    // it needs then loads on the spot).
+    void drop_preload() {
+        for (PreloadJob& j : preload_jobs_) {
+            if (!j.started) continue;
+            Decoded d = j.result.get();
+            if (d.surface) SDL_DestroySurface(d.surface);
+            if (d.hires) SDL_DestroySurface(d.hires);
+            if (d.clip) AudioOut::free_clip(d.clip);
+        }
+        preload_jobs_.clear();
+        for (auto& [g, c] : preload_counts_) c.done = c.total;
     }
 
     std::string dir_;
@@ -965,6 +1127,19 @@ private:
     std::map<SoundId, MIX_Audio*> music_;
     std::map<SoundId, MIX_Audio*> chunks_;
     SoundId current_stream_ = SoundId::Button;
+    struct PreloadJob {
+        enum Kind { Image, Sound, Stream, Font };
+        Kind kind = Image;
+        int group = 0;
+        SheetSpec spec;                   // Image
+        SoundId sound = SoundId::Button;  // Sound, Stream
+        std::string font;                 // Font: loads on the main thread
+        std::future<Decoded> result;
+        bool started = false;
+    };
+    std::deque<PreloadJob> preload_jobs_;
+    std::map<int, tt2ui::PreloadCount> preload_counts_;
+    std::uint64_t preload_started_ns_ = 0;
 };
 
 // Alpha of the pixel under (px, py) for the button's current frame.
@@ -2202,12 +2377,12 @@ int main(int argc, char** argv) {
     WelcomeFlow::Services services;
     services.play_sound = [&](SoundId id) { assets.play_sound(id); };
     services.play_stream = [&](SoundId id) { assets.play_stream(id); };
-    // The original's loader fills the bar while sections default +
-    // sceneselection load. Our assets are loaded lazily and are tiny,
-    // so report "done" immediately; the 3500 ms floor still applies.
-    services.loader_done = [] { return true; };
-    services.loader_progress = [] { return 1.0f; };
-    services.preloading_done = [] { return true; };
+    // As in the original (welcome-flow.md §0): the splash waits for the
+    // loading screen's files, and the loading screen's bar follows the
+    // menu's (tt2ui/boot_preload.hpp; the 3500 ms floor still applies).
+    services.preloading_done = [&assets] { return assets.preload_count(tt2ui::PRELOAD_LOADING).finished(); };
+    services.loader_done = [&assets] { return assets.preload_count(tt2ui::PRELOAD_MENU).finished(); };
+    services.loader_progress = [&assets] { return assets.preload_count(tt2ui::PRELOAD_MENU).progress(); };
     // Game scene and the fade-to-black around entering / leaving it
     // (TRANSITION_DEFAULT: 500 ms to black, then 500 ms back; each half
     // uses FadeBlackTransition's full `time`, 0x46c362 / 0x46c78f).
@@ -2543,6 +2718,9 @@ int main(int argc, char** argv) {
     // Frame timing (frame_clock.hpp, deviation UX-7): whole-ms steps that add
     // up to the real time at any refresh rate, and the optional frame limit.
     FrameClock frame_clock;
+    bool boot_preload_started = false;
+    std::uint64_t last_frame_ns = 0;
+    long load_longest_ms = 0;
     frame_clock.advance(SDL_GetTicksNS());
     FramePacer frame_pacer;
     int dump_accum_ms = 0;
@@ -2892,7 +3070,14 @@ int main(int argc, char** argv) {
             cursor_hot = hot;
             SDL_SetCursor(busy ? cursor_wait : (hot ? cursor_hand : cursor_arrow));
         }
-        const int real_dt = frame_clock.advance(SDL_GetTicksNS(), speed);
+        const std::uint64_t frame_ns = SDL_GetTicksNS();
+        // The loading screen's longest frame, wall clock: the step is clamped
+        // to 100 ms, so a stall there leaves the logo animation behind the
+        // music that started with the scene (logged when the menu opens).
+        if (flow.current() == SceneId::Load && last_frame_ns)
+            load_longest_ms = std::max(load_longest_ms, static_cast<long>((frame_ns - last_frame_ns) / NS_PER_MS));
+        last_frame_ns = frame_ns;
+        const int real_dt = frame_clock.advance(frame_ns, speed);
         const int dt = fixed_dt > 0 ? std::min(fixed_dt * speed, FRAME_DT_MAX_MS) : real_dt;
         if (game_fade_out > 0) {
             game_fade_out -= dt;
@@ -3050,6 +3235,12 @@ int main(int argc, char** argv) {
                 });
             }
         } else if (!boot_prompt_open()) {
+            // Once the boot prompt is gone (an import there changes the art).
+            if (!boot_preload_started) {
+                boot_preload_started = true;
+                assets.preload(tt2ui::PRELOAD_LOADING, tt2ui::preload_loading_screen());
+                assets.preload(tt2ui::PRELOAD_MENU, tt2ui::preload_menu());
+            }
             flow.update(dt);
         }
         profile.update(dt);
@@ -3077,7 +3268,10 @@ int main(int argc, char** argv) {
         if (flow.current() != last_scene) {
             last_scene = flow.current();
             std::printf("t=%ld ms: scene %d\n", simulated_ms, static_cast<int>(last_scene));
-            if (last_scene == SceneId::Selection) menu_entered();
+            if (last_scene == SceneId::Selection) {
+                std::printf("load scene: longest frame %ld ms\n", load_longest_ms);
+                menu_entered();
+            }
         }
         // Only the name dialog takes text: anything else would bring up the
         // on-screen keyboard (Android, Steam Deck). Rounds read key presses.
@@ -3088,6 +3282,7 @@ int main(int argc, char** argv) {
         }
         if (exit_after_ms >= 0 && simulated_ms >= exit_after_ms) running = false;
 
+        assets.poll_preload();    // the boot's files, decoded on workers
         assets.poll_upscales();   // UX-9: swap finished 2x textures in
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
