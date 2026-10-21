@@ -509,6 +509,15 @@ public:
         else open_pause_menu();
     }
     bool menu_pending() const { return menu_pending_; }
+    // Android (T2.2 of docs/plans/android-support.md): the app went to the
+    // background, where Android may kill it without warning, so there is
+    // no later quit to save on. Pause as on focus loss, and save the round
+    // now, as closing the window would; the round goes on when resumed.
+    // Resuming (resume_game) or a game over discards the save as usual.
+    void enter_background() {
+        focus_lost();
+        leave();
+    }
 
     bool pointer_over_clickable() const {
         if (settings_) return settings_->pointer_hot();

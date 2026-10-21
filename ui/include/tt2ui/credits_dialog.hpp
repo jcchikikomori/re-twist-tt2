@@ -16,12 +16,15 @@
 //   Page 3 (P2_): the software licences of what the game and its packages
 //                 carry; the full texts ship in the licenses/ folder
 //                 (docs/design/asset-credits.md, "What the Packages Carry").
+//                 The APK carries a different set, its texts inside it,
+//                 so Android gets its own list and message.
 #pragma once
 
 #include <string>
 
 #include "tt2ui/game_dialogs.hpp"
 #include "tt2ui/help_dialog.hpp"
+#include "tt2ui/platform.hpp"
 
 #ifndef TT2_VERSION
 #define TT2_VERSION "dev"
@@ -78,7 +81,20 @@ inline constexpr Section LICENSES[] = {
      "Linux: AppImage runtime (MIT)"},
 };
 inline constexpr const char* LICENSES_MESSAGE =
-    "re-twist-tt2 is MIT licensed. Full texts are in\nthe licenses folder next to the game.";
+    "re-twist-tt2 is MIT licensed. Full texts are in\nthe licenses folder of the zip or AppImage.";
+// Page 3 on Android: no folder picker and no MinGW or AppImage runtime in
+// the APK, but the Kotlin standard library. The texts can't sit next to an
+// installed app; they ship inside the APK (the bundleLicenses Gradle task).
+inline constexpr Section ANDROID_LICENSES[] = {
+    {"Software licenses",
+     "Super-xBR upscaler by Hyllian (MIT)\n"
+     "SDL3, SDL3_image and SDL3_mixer (zlib)\n"
+     "stb_image and stb_vorbis (public domain)\n"
+     "Luckiest Guy (Apache 2.0), Arimo (SIL OFL 1.1)\n"
+     "Kotlin standard library (Apache 2.0)"},
+};
+inline constexpr const char* ANDROID_LICENSES_MESSAGE =
+    "re-twist-tt2 is MIT licensed. Full texts are in\nthe APK, in its assets/licenses folder.";
 inline constexpr const char* VERSION_PREFIX = "VERSION ";
 }  // namespace credits_strings
 
@@ -98,7 +114,7 @@ inline constexpr float CREDITS_TURN_X = 580.0f;      // PREV / NEXT, left of OK
 
 inline std::string credits_page_name(int i) { return "P" + std::to_string(i) + "_"; }
 
-inline Dialog build_credits() {
+inline Dialog build_credits(Platform platform = THIS_PLATFORM) {
     namespace cs = credits_strings;
     Dialog d;
     d.w = CREDITS_W;
@@ -163,7 +179,8 @@ inline Dialog build_credits() {
         message(prefix + "MESSAGE", text, 0.0f);
     };
     sections(1, cs::RECREATION, cs::RECREATION_MESSAGE);
-    sections(2, cs::LICENSES, cs::LICENSES_MESSAGE);
+    if (platform == Platform::Android) sections(2, cs::ANDROID_LICENSES, cs::ANDROID_LICENSES_MESSAGE);
+    else sections(2, cs::LICENSES, cs::LICENSES_MESSAGE);
 
     // VERSION: anchorpoint "right", right-aligned at (771, 87).
     d.labels.push_back(TextLabel{"VERSION", "FONT_FONT_HIGHSCORE_TEXT", std::string(cs::VERSION_PREFIX) + TT2_VERSION,
@@ -178,6 +195,8 @@ inline Dialog build_credits() {
 // An open DIALOG_CREDITS: the dialog and its page turner.
 class CreditsDialog {
 public:
+    explicit CreditsDialog(Platform platform = THIS_PLATFORM) : dialog_(build_credits(platform)) {}
+
     const Dialog& dialog() const { return dialog_; }
     Dialog& dialog() { return dialog_; }
     int page() const { return pager_.page; }
@@ -196,7 +215,7 @@ public:
     }
 
 private:
-    Dialog dialog_ = build_credits();
+    Dialog dialog_;
     HelpPager pager_{0, -1, 0, CREDITS_PAGE_COUNT, credits_page_name};
 };
 

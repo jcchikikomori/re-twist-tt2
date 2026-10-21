@@ -22,6 +22,7 @@
 
 #include "tt2/profile.hpp"
 #include "tt2ui/bitmap_font.hpp"
+#include "tt2ui/display.hpp"   // ViewRect
 #include "tt2ui/sprite.hpp"
 #include "tt2ui/welcome_flow.hpp"
 
@@ -335,7 +336,28 @@ public:
     void mouse_down(float x, float y) {
         if (!open()) return;
         for (auto& b : dialog_.buttons) b.pressed = hit(b, x, y);
+        if (wants_text_input() && on_name_box(x, y)) keyboard_request_ = true;
         refresh_frames();
+    }
+    // The name box was tapped or clicked: the host shows the on-screen
+    // keyboard again (Android, Steam Deck), which Back or the keyboard's own
+    // close key may have put away. True once per tap.
+    bool take_keyboard_request() {
+        const bool r = keyboard_request_;
+        keyboard_request_ = false;
+        return r;
+    }
+    // Where the name box is, in canvas units; empty while no dialog takes a
+    // name. The host passes it to SDL_SetTextInputArea, so the on-screen
+    // keyboard leaves it visible (Android pans the window up; T2.3) and a
+    // desktop input method puts its candidate list beside it.
+    ViewRect name_box() const {
+        if (!wants_text_input()) return {};
+        for (const auto& s : dialog_.sprites)
+            if (s.name == "INPUT_NAME" && s.visible)
+                return ViewRect{dialog_.left() + s.left(), dialog_.top() + s.top(), static_cast<float>(s.sheet.frame_w),
+                                static_cast<float>(s.sheet.frame_h)};
+        return {};
     }
     void mouse_up(float x, float y) {
         if (!open()) return;
@@ -561,6 +583,10 @@ private:
                              int h = 200) {
         return make_dialog_button(name, image, x, y, a, w, h);
     }
+    bool on_name_box(float x, float y) const {
+        const ViewRect r = name_box();
+        return !r.empty() && x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h;
+    }
     bool hit(const MenuButton& b, float x, float y) const {
         return b.sprite.visible && b.contains(x - dialog_.left(), y - dialog_.top());
     }
@@ -591,6 +617,7 @@ private:
     int cursor_ms_ = 0;
     int selected_ = -1;
     bool return_to_select_ = false;
+    bool keyboard_request_ = false;   // take_keyboard_request()
 };
 
 }  // namespace tt2ui

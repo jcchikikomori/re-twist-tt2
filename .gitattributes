@@ -1,3 +1,5 @@
 # The asset manifest keeps LF on every checkout (Windows runners default to
 # core.autocrlf=true), so it stays byte-identical to what tt2-assets prints.
 *.sha256 text eol=lf
+# The import contract's golden stamp is compared byte for byte (T3.4).
+ui/tests/import-contract/* text eol=lf

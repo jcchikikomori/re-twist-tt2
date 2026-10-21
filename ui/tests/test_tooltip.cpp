@@ -104,3 +104,24 @@ TEST(tooltip_text_is_empty_for_widgets_without_one) {
     ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Settings, "BUTTON_OK")), std::string());
     ASSERT_EQ(std::string(tooltip_text(TooltipSurface::PlayerSelect, "NAM")), std::string());
 }
+
+// Android (T2.1, decision D7): no tooltips, however long the pointer stays.
+TEST(tooltip_never_shows_on_android) {
+    TooltipTracker t(Platform::Android);
+    for (int i = 0; i < 100; ++i) {                                         // 20 s on one button
+        t.update("Game/BUTTON_Twist", "Scramble the letters", 100, 100, 200);
+        ASSERT_TRUE(!t.visible());
+    }
+    t.update("Game/BUTTON_Enter", "Submit the current word", 300, 100, 2000);   // another one
+    ASSERT_TRUE(!t.visible());
+}
+
+TEST(tooltip_desktop_is_the_default_and_still_shows) {
+    TooltipTracker def;
+    TooltipTracker desk(Platform::Desktop);
+    for (TooltipTracker* t : {&def, &desk}) {
+        t->update("Game/BUTTON_Twist", "Scramble the letters", 100, 100, 16);
+        t->update("Game/BUTTON_Twist", "Scramble the letters", 100, 100, TOOLTIP_DELAY_MS);
+        ASSERT_TRUE(t->visible());
+    }
+}

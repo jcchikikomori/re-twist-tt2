@@ -557,3 +557,45 @@ TEST(forget_player_is_optional) {
     flow.press("BUTTON_YES");                            // no service set: no crash
     ASSERT_EQ(pm.count(), 0);
 }
+
+// Tapping the name box brings the on-screen keyboard back (Android, Steam
+// Deck): the dialog asks the host, once per tap.
+TEST(tapping_the_name_box_asks_for_the_keyboard_once) {
+    Fixture f;
+    f.flow.on_menu_entered();
+    ASSERT_TRUE(!f.flow.take_keyboard_request());           // opening alone asks nothing extra
+    // The box is 237x41, centred at (198, 101) in the dialog at (199, 188).
+    f.flow.mouse_down(199 + 198, 188 + 101);
+    ASSERT_TRUE(f.flow.take_keyboard_request());
+    ASSERT_TRUE(!f.flow.take_keyboard_request());           // taken
+    f.flow.mouse_up(199 + 198, 188 + 101);
+    ASSERT_TRUE(f.flow.active() == DialogKind::NewPlayer);  // the box is no button
+    f.flow.mouse_down(199 + 198 + 118, 188 + 101);          // its right edge
+    ASSERT_TRUE(f.flow.take_keyboard_request());
+}
+
+TEST(tapping_outside_the_name_box_asks_for_no_keyboard) {
+    Fixture f;
+    f.flow.on_menu_entered();
+    f.flow.mouse_down(199 + 198 + 119, 188 + 101);          // just past the right edge
+    ASSERT_TRUE(!f.flow.take_keyboard_request());
+    f.flow.mouse_down(199 + 198, 188 + 101 + 21);           // just below
+    ASSERT_TRUE(!f.flow.take_keyboard_request());
+    f.flow.mouse_down(10, 10);                              // off the dialog
+    ASSERT_TRUE(!f.flow.take_keyboard_request());
+}
+
+// The name box as the text input area (T2.3): canvas units, only while a
+// name is asked for.
+TEST(name_box_is_the_input_area_while_a_name_is_asked_for) {
+    Fixture f;
+    ASSERT_TRUE(f.flow.name_box().empty());                 // no dialog yet
+    f.flow.on_menu_entered();
+    const ViewRect r = f.flow.name_box();
+    // 237x41, centred at (198, 101) in the 402x223 dialog at (199, 188).
+    ASSERT_EQ(r.x, 199.0f + 198.0f - 118.5f);
+    ASSERT_EQ(r.y, 188.0f + 101.0f - 20.5f);
+    ASSERT_EQ(r.w, 237.0f);
+    ASSERT_EQ(r.h, 41.0f);
+    ASSERT_TRUE(r.y + r.h <= static_cast<float>(SCREEN_H));
+}

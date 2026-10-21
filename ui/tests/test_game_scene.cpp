@@ -2335,3 +2335,52 @@ TEST(trophy_popup_waits_while_a_dialog_is_open) {
     f.scene->update(0);
     ASSERT_EQ(f.scene->trophy_popup_id(), static_cast<int>(tt2::TROPHY_WITH_A_TWIST));
 }
+
+// Android: going to the background pauses the round and saves it at once,
+// since the app may be killed there (T2.2, docs/plans/android-support.md).
+TEST(background_pauses_a_timed_round_and_saves_it_now) {
+    Fixture f(true);
+    auto& s = *f.scene;
+    s.update(5000);
+    s.enter_background();
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::PauseMenu);
+    ASSERT_EQ(f.saved.size(), std::size_t{1});
+    ASSERT_EQ(f.saved[0].time_ms, ROUND_MS - 5000);
+    ASSERT_EQ(f.saved[0].word, s.rack());
+    s.update(60000);                                       // minutes in the background
+    ASSERT_EQ(s.time_left_ms(), ROUND_MS - 5000);          // the clock never moved
+    s.dialog_press("BUTTON_RESUME");                       // back, and a tap goes on
+    s.update(1000);
+    ASSERT_EQ(s.time_left_ms(), ROUND_MS - 6000);
+}
+
+TEST(background_after_the_round_is_over_saves_nothing) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type(s.rack());
+    s.key_return();
+    s.press("BUTTON_NextRound");                           // round over, revealing
+    s.enter_background();
+    ASSERT_TRUE(f.saved.empty());
+}
+
+// Rounds read letters from key presses, never SDL text input, so no
+// on-screen keyboard comes up (Android, Steam Deck).
+TEST(letter_for_key_takes_letter_keys_only) {
+    ASSERT_EQ(letter_for_key('a', false), 'a');                // SDLK_A
+    ASSERT_EQ(letter_for_key('z', false), 'z');                // SDLK_Z
+    ASSERT_EQ(letter_for_key('a', true), '\0');                // Ctrl+A and friends type nothing
+    ASSERT_EQ(letter_for_key('0', false), '\0');
+    ASSERT_EQ(letter_for_key(' ', false), '\0');               // Space is TWIST, handled apart
+    ASSERT_EQ(letter_for_key(0x1Bu, false), '\0');             // SDLK_ESCAPE
+    ASSERT_EQ(letter_for_key(0x4000011Au, false), '\0');       // SDLK_AC_BACK (Android Back)
+    ASSERT_EQ(letter_for_key('A', false), '\0');               // SDL never sends upper case keycodes
+}
+
+TEST(key_letters_place_balls_like_typed_text) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    const char first = s.rack()[0];
+    s.type_letter(letter_for_key(static_cast<std::uint32_t>(first), false));
+    ASSERT_EQ(s.typed(), std::string(1, first));
+}

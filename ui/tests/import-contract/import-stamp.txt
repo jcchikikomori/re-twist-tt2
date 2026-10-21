@@ -1,0 +1,4 @@
+format=re-twist-tt2 asset import
+version=1
+manifest=8f57fbd6c19d97ad6fa51d5396e0f512786f3d6d496460add4ea9c79332bc248
+files=3

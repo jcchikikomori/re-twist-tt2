@@ -23,6 +23,8 @@
 #include <string>
 #include <string_view>
 
+#include "tt2ui/platform.hpp"
+
 namespace tt2ui {
 
 inline constexpr int TOOLTIP_DELAY_MS = 1000;    // +0x38
@@ -158,8 +160,13 @@ inline TooltipPlace tooltip_place(float mx, float my, float w, float h, float sc
 // and its text.
 class TooltipTracker {
 public:
+    // Android (T2.1, user decision D7): no tooltips. A finger never rests on
+    // a button, and SDL leaves the mouse where the last tap was, so the
+    // tooltip of whatever was just tapped would pop up a second later.
+    explicit TooltipTracker(Platform platform = THIS_PLATFORM) : enabled_(platform == Platform::Desktop) {}
+
     void update(const std::string& key, const std::string& text, float mx, float my, int dt_ms) {
-        if (key.empty() || text.empty()) {
+        if (!enabled_ || key.empty() || text.empty()) {
             key_.clear();
             visible_ = false;
             return;
@@ -193,6 +200,7 @@ private:
     int show_ms_ = 0;
     float anchor_x_ = 0, anchor_y_ = 0;
     bool visible_ = false;
+    bool enabled_ = true;
 };
 
 }  // namespace tt2ui

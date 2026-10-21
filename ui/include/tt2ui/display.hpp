@@ -12,9 +12,23 @@
 #include <vector>
 
 #include "tt2/improvements.hpp"
+#include "tt2ui/platform.hpp"
 #include "tt2ui/welcome_flow.hpp"   // SCREEN_W, SCREEN_H
 
 namespace tt2ui {
+
+// Android (T1.4 of docs/plans/android-support.md): the game is always full
+// screen. SDL3's fullscreen with no display mode (Borderless) shows it edge
+// to edge there, system bars hidden; Windowed has no meaning on a tablet,
+// and Native would switch the panel's mode. So DISPLAY MODE and RESOLUTION
+// aren't offered and the saved values are ignored. They stay in
+// improvements.txt, so a desktop file copied over still loads.
+inline bool window_modes_offered(Platform p) { return p == Platform::Desktop; }
+
+inline tt2::Improvements display_for_platform(tt2::Improvements imp, Platform p) {
+    if (!window_modes_offered(p)) imp.set_window(tt2::WindowMode::Borderless);
+    return imp;
+}
 
 struct ViewRect {
     float x = 0, y = 0, w = 0, h = 0;

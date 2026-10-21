@@ -12,7 +12,7 @@ RendererPick create_renderer(SDL_Window* window, tt2::RendererPref pref) {
         if (const char* name = SDL_GetRenderDriver(i)) drivers.emplace_back(name);
     RendererPick pick;
     std::string failures;
-    for (Backend b : backend_chain(pref, drivers)) {
+    for (Backend b : backend_chain(pref, drivers, THIS_PLATFORM)) {
         SDL_Renderer* r = SDL_CreateRenderer(window, sdl_driver_name(b));
         if (!r) {
             failures += std::string(failures.empty() ? "" : ", ") + sdl_driver_name(b) + " failed: " + SDL_GetError();

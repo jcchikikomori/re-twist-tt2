@@ -25,6 +25,13 @@
 //                      frame dumps show hover frames and tooltips (smoke tests)
 
 #include <SDL3/SDL.h>
+#ifdef __ANDROID__
+// Renames main() to SDL_main(), the symbol SDLActivity looks up in
+// libmain.so. Desktop builds keep a plain main() without it.
+#include <SDL3/SDL_main.h>
+#include <android/log.h>
+#include <unistd.h>
+#endif
 #include <SDL3_image/SDL_image.h>
 #include <SDL3_mixer/SDL_mixer.h>
 
@@ -54,6 +61,7 @@
 #include "tt2/word_tree.hpp"
 #include "tt2ui/bitmap_font.hpp"
 #include "tt2ui/blitz_scene.hpp"
+#include "tt2ui/boot_preload.hpp"
 #include "tt2ui/asset_import.hpp"
 #include "tt2ui/data_paths.hpp"
 #include "tt2ui/dialog_fade.hpp"
@@ -72,6 +80,11 @@
 #include "tt2ui/profile_dialogs.hpp"
 #include "audio.hpp"
 #include "folder_picker.hpp"
+#ifdef __ANDROID__
+#include "android_import.hpp"
+#include "android_splash.hpp"
+#include "tt2ui/bundled_data.hpp"
+#endif
 #include "display_sdl.hpp"
 #include "render_backend_sdl.hpp"
 #include "tt2ui/welcome_flow.hpp"
@@ -608,6 +621,12 @@ public:
         chunks_.clear();
     }
 
+    // SDL_EVENT_RENDER_DEVICE_RESET (T2.4): the renderer lost every texture
+    // (Android can drop the GL context while the app is in the background).
+    // Let go of them; each image and font loads again when next drawn.
+    // Sounds are untouched.
+    void device_lost() { release_art(); }
+
     // Deviation UX-9 (upscale.hpp): upscale the art 2x with Super-xBR as it
     // loads. The work runs on worker threads; the 1x texture shows until
     // poll_upscales() swaps the 2x one in, so a big image never stalls a
@@ -659,35 +678,118 @@ public:
     Image& image(const SheetSpec& spec) {
         auto it = images_.find(spec.image_id);
         if (it != images_.end()) return it->second;
-        Image img;
-        auto f = kImageFiles.find(spec.image_id);
-        SDL_Surface* hires = nullptr;
-        if (f != kImageFiles.end()) {
-            const std::string path = find_art(f->second);
-            const std::string path_2x = placeholder_2x(f->second);
-            if (!path_2x.empty()) hires = IMG_Load(path_2x.c_str());
-            if (file_exists(path)) {
-                img.surface = IMG_Load(path.c_str());
-                if (img.surface) {
-                    img.placeholder = false;
-                    if (img.surface->w != spec.sheet_w() || img.surface->h != spec.sheet_h())
-                        std::fprintf(stderr, "warning: %s is %dx%d, sheet spec says %dx%d\n", path.c_str(),
-                                     img.surface->w, img.surface->h, spec.sheet_w(), spec.sheet_h());
+        // Queued by preload() but not stored yet: take it now (waiting for
+        // its worker if one has started) rather than read the file twice.
+        for (auto j = preload_jobs_.begin(); j != preload_jobs_.end(); ++j)
+            if (j->kind == PreloadJob::Kind::Image && j->spec.image_id == spec.image_id) {
+                Decoded d = j->started ? j->result.get() : decode_image(spec.image_id);
+                ++preload_counts_[j->group].done;
+                preload_jobs_.erase(j);
+                return store_decoded(spec, d);
+            }
+        return store_decoded(spec, decode_image(spec.image_id));
+    }
+
+    // Boot preloading (tt2ui/boot_preload.hpp): the group's images and sounds
+    // are decoded on worker threads; poll_preload() makes their textures and
+    // clips between frames. Anything drawn or played before its turn loads on
+    // the spot, as without a preload.
+    void preload(int group, const tt2ui::PreloadSet& set) {
+        tt2ui::PreloadCount& c = preload_counts_[group];
+        auto queue = [&](PreloadJob j) {
+            j.group = group;
+            preload_jobs_.push_back(std::move(j));
+            ++c.total;
+        };
+        for (const SheetSpec& spec : set.images)
+            if (!images_.count(spec.image_id)) {
+                PreloadJob j;
+                j.kind = PreloadJob::Kind::Image;
+                j.spec = spec;
+                queue(std::move(j));
+            }
+        for (SoundId id : set.sounds)
+            if (audio_ && !chunks_.count(id)) {
+                PreloadJob j;
+                j.kind = PreloadJob::Kind::Sound;
+                j.sound = id;
+                queue(std::move(j));
+            }
+        for (SoundId id : set.streams)
+            if (audio_ && !music_.count(id)) {
+                PreloadJob j;
+                j.kind = PreloadJob::Kind::Stream;
+                j.sound = id;
+                queue(std::move(j));
+            }
+        for (const std::string& id : set.fonts)
+            if (!fonts_.count(id)) {
+                PreloadJob j;
+                j.kind = PreloadJob::Kind::Font;
+                j.font = id;
+                queue(std::move(j));
+            }
+        if (preload_started_ns_ == 0) preload_started_ns_ = SDL_GetTicksNS();
+    }
+    tt2ui::PreloadCount preload_count(int group) const {
+        auto it = preload_counts_.find(group);
+        return it != preload_counts_.end() ? it->second : tt2ui::PreloadCount{};
+    }
+
+    // Once a frame, between frames. Two workers decode, in queue order; then
+    // at most one image becomes a texture per call (the upload of a 5700x864
+    // sheet is the slow part left on this thread) and at most one font loads
+    // (fonts load here, their sheets are small). Clips just change hands.
+    void poll_preload() {
+        constexpr int WORKERS = 2;
+        int running = 0;
+        for (PreloadJob& j : preload_jobs_) {
+            if (j.kind == PreloadJob::Kind::Font) continue;
+            if (j.started) {
+                ++running;
+                continue;
+            }
+            if (running >= WORKERS) break;
+            if (j.kind == PreloadJob::Kind::Image)
+                j.result = std::async(std::launch::async, [this, id = j.spec.image_id] { return decode_image(id); });
+            else
+                j.result = std::async(std::launch::async, [this, id = j.sound, stream = j.kind == PreloadJob::Kind::Stream] {
+                    Decoded d;
+                    d.clip = decode_sound(id, stream);
+                    return d;
+                });
+            j.started = true;
+            ++running;
+        }
+        bool uploaded = false, font_loaded = false;
+        for (auto it = preload_jobs_.begin(); it != preload_jobs_.end();) {
+            PreloadJob& j = *it;
+            if (j.kind == PreloadJob::Kind::Font) {
+                if (font_loaded) { ++it; continue; }
+                font(j.font);
+                font_loaded = true;
+            } else {
+                if (!j.started || j.result.wait_for(std::chrono::seconds(0)) != std::future_status::ready ||
+                    (j.kind == PreloadJob::Kind::Image && uploaded)) {
+                    ++it;
+                    continue;
+                }
+                Decoded d = j.result.get();
+                if (j.kind == PreloadJob::Kind::Image) {
+                    store_decoded(j.spec, d);
+                    uploaded = true;
                 } else {
-                    std::fprintf(stderr, "IMG_Load(%s): %s\n", path.c_str(), SDL_GetError());
+                    auto& clips = j.kind == PreloadJob::Kind::Stream ? music_ : chunks_;
+                    if (!clips.emplace(j.sound, d.clip).second) AudioOut::free_clip(d.clip);   // played meanwhile
                 }
             }
+            tt2ui::PreloadCount& c = preload_counts_[j.group];
+            ++c.done;
+            if (c.finished())
+                std::printf("preload: group %d, %zu files in %llu ms\n", j.group, c.total,
+                            static_cast<unsigned long long>((SDL_GetTicksNS() - preload_started_ns_) / 1000000));
+            it = preload_jobs_.erase(it);
         }
-        if (!img.surface) {
-            img.surface = make_placeholder(spec);
-            img.placeholder = true;
-        }
-        if (hires && img.surface && (hires->w != 2 * img.surface->w || hires->h != 2 * img.surface->h)) {
-            std::fprintf(stderr, "warning: 2x %s is not twice the 1x size; using 1x\n", f->second.c_str());
-            SDL_DestroySurface(hires);
-            hires = nullptr;
-        }
-        return store(spec.image_id, img, hires);
     }
 
     // Font by resources.xml id; falls back to the procedural 5x5 font.
@@ -753,12 +855,8 @@ public:
         if (!audio_) return;
         auto it = chunks_.find(id);
         if (it == chunks_.end()) {
-            MIX_Audio* c = nullptr;
-            auto f = kSoundFiles.find(id);
-            if (f != kSoundFiles.end()) {
-                const std::string path = in_dir(f->second);
-                if (file_exists(path)) c = audio_->load_sound(path);
-            }
+            MIX_Audio* c = take_preloaded_clip(id, PreloadJob::Kind::Sound);
+            if (!c) c = decode_sound(id, false);
             it = chunks_.emplace(id, c).first;
         }
         auto v = kSoundVolumes.find(id);
@@ -780,7 +878,8 @@ private:
     // 1x file for the alpha hit tests (pixel_alpha).
     Image& store(const std::string& key, Image img, SDL_Surface* hires = nullptr) {
         if (img.surface) {
-            SDL_Surface* conv = SDL_ConvertSurface(img.surface, SDL_PIXELFORMAT_RGBA32);
+            SDL_Surface* conv =
+                img.surface->format == SDL_PIXELFORMAT_RGBA32 ? nullptr : SDL_ConvertSurface(img.surface, SDL_PIXELFORMAT_RGBA32);
             if (conv) {
                 SDL_DestroySurface(img.surface);
                 img.surface = conv;
@@ -824,6 +923,7 @@ private:
     // The textures and hit masks, but not the sounds. Upscales in flight are
     // waited for (std::future) and dropped.
     void release_art() {
+        drop_preload();
         upscale_jobs_.clear();
         for (auto& [k, layers] : font_pending_)
             for (SDL_Texture* t : layers) if (t) SDL_DestroyTexture(t);
@@ -903,12 +1003,8 @@ private:
     MIX_Audio* music(SoundId id) {
         auto it = music_.find(id);
         if (it != music_.end()) return it->second;
-        MIX_Audio* m = nullptr;
-        auto f = kSoundFiles.find(id);
-        if (f != kSoundFiles.end()) {
-            const std::string path = in_dir(f->second);
-            if (file_exists(path)) m = audio_->load_music(path);
-        }
+        MIX_Audio* m = take_preloaded_clip(id, PreloadJob::Kind::Stream);
+        if (!m) m = decode_sound(id, true);
         return music_.emplace(id, m).first->second;
     }
 
@@ -922,6 +1018,90 @@ private:
         if (!own.empty() && file_exists(own)) return own;
         if (!placeholder_dir_.empty() && file_exists(placeholder_dir_ + "/" + rel)) return placeholder_dir_ + "/" + rel;
         return own;
+    }
+
+    // A decoded file, before it becomes a texture or a clip.
+    struct Decoded {
+        SDL_Surface* surface = nullptr;   // the 1x file, RGBA32
+        SDL_Surface* hires = nullptr;     // data/placeholder/2x/, if it applies
+        MIX_Audio* clip = nullptr;
+    };
+    // Reads files and decodes them, nothing else: safe on a worker thread
+    // (SDL_image surfaces need no renderer; MIX_LoadAudio is thread-safe).
+    Decoded decode_image(const std::string& id) const {
+        Decoded d;
+        auto f = kImageFiles.find(id);
+        if (f == kImageFiles.end()) return d;
+        const std::string path = find_art(f->second);
+        const std::string path_2x = placeholder_2x(f->second);
+        if (!path_2x.empty()) d.hires = IMG_Load(path_2x.c_str());
+        if (file_exists(path)) {
+            d.surface = IMG_Load(path.c_str());
+            if (!d.surface) std::fprintf(stderr, "IMG_Load(%s): %s\n", path.c_str(), SDL_GetError());
+        }
+        if (d.surface && d.surface->format != SDL_PIXELFORMAT_RGBA32) {
+            SDL_Surface* conv = SDL_ConvertSurface(d.surface, SDL_PIXELFORMAT_RGBA32);
+            if (conv) {
+                SDL_DestroySurface(d.surface);
+                d.surface = conv;
+            }
+        }
+        return d;
+    }
+    MIX_Audio* decode_sound(SoundId id, bool stream) const {
+        if (!audio_) return nullptr;
+        auto f = kSoundFiles.find(id);
+        if (f == kSoundFiles.end()) return nullptr;
+        const std::string path = in_dir(f->second);
+        if (!file_exists(path)) return nullptr;
+        return stream ? audio_->load_music(path) : audio_->load_sound(path);
+    }
+    // The texture for a decoded image; a missing file draws as a placeholder.
+    Image& store_decoded(const SheetSpec& spec, Decoded d) {
+        Image img;
+        img.surface = d.surface;
+        SDL_Surface* hires = d.hires;
+        auto f = kImageFiles.find(spec.image_id);
+        if (img.surface) {
+            img.placeholder = false;
+            if (img.surface->w != spec.sheet_w() || img.surface->h != spec.sheet_h())
+                std::fprintf(stderr, "warning: %s is %dx%d, sheet spec says %dx%d\n", f->second.c_str(),
+                             img.surface->w, img.surface->h, spec.sheet_w(), spec.sheet_h());
+        } else {
+            img.surface = make_placeholder(spec);
+            img.placeholder = true;
+        }
+        if (hires && img.surface && (hires->w != 2 * img.surface->w || hires->h != 2 * img.surface->h)) {
+            std::fprintf(stderr, "warning: 2x %s is not twice the 1x size; using 1x\n", f->second.c_str());
+            SDL_DestroySurface(hires);
+            hires = nullptr;
+        }
+        return store(spec.image_id, img, hires);
+    }
+    // A clip preload() queued but poll_preload() hasn't handed over yet.
+    MIX_Audio* take_preloaded_clip(SoundId id, int kind) {
+        for (auto j = preload_jobs_.begin(); j != preload_jobs_.end(); ++j)
+            if (static_cast<int>(j->kind) == kind && j->sound == id) {
+                MIX_Audio* clip = j->started ? j->result.get().clip : decode_sound(id, kind == PreloadJob::Kind::Stream);
+                ++preload_counts_[j->group].done;
+                preload_jobs_.erase(j);
+                return clip;
+            }
+        return nullptr;
+    }
+    // Waits for the workers and frees what they made; the groups count as
+    // finished, so the welcome flow never waits on a dropped preload (what
+    // it needs then loads on the spot).
+    void drop_preload() {
+        for (PreloadJob& j : preload_jobs_) {
+            if (!j.started) continue;
+            Decoded d = j.result.get();
+            if (d.surface) SDL_DestroySurface(d.surface);
+            if (d.hires) SDL_DestroySurface(d.hires);
+            if (d.clip) AudioOut::free_clip(d.clip);
+        }
+        preload_jobs_.clear();
+        for (auto& [g, c] : preload_counts_) c.done = c.total;
     }
 
     std::string dir_;
@@ -947,6 +1127,19 @@ private:
     std::map<SoundId, MIX_Audio*> music_;
     std::map<SoundId, MIX_Audio*> chunks_;
     SoundId current_stream_ = SoundId::Button;
+    struct PreloadJob {
+        enum Kind { Image, Sound, Stream, Font };
+        Kind kind = Image;
+        int group = 0;
+        SheetSpec spec;                   // Image
+        SoundId sound = SoundId::Button;  // Sound, Stream
+        std::string font;                 // Font: loads on the main thread
+        std::future<Decoded> result;
+        bool started = false;
+    };
+    std::deque<PreloadJob> preload_jobs_;
+    std::map<int, tt2ui::PreloadCount> preload_counts_;
+    std::uint64_t preload_started_ns_ = 0;
 };
 
 // Alpha of the pixel under (px, py) for the button's current frame.
@@ -1609,6 +1802,11 @@ struct SideFillTextures {
         if (right) SDL_DestroyTexture(right);
         left = right = nullptr;
     }
+    // After a render device reset: built again on the next draw.
+    void reset() {
+        release();
+        out_w = out_h = 0;
+    }
     static SDL_Texture* make(SDL_Renderer* ren, int w, int h, Side side) {
         std::vector<std::uint8_t> px = side_fill_rgba(w, h, side);
         if (px.empty()) return nullptr;
@@ -1742,7 +1940,39 @@ void draw_dialog_layer(SDL_Renderer* ren, LayerSize px, DialogLayer& layer, int 
     if (above) draw_closing();
 }
 
+#ifdef __ANDROID__
+// Android discards stdout and stderr, so the game's printf diagnostics
+// (dictionary, renderer, import status) would vanish. Route both through a
+// pipe into logcat, one line per entry: `adb logcat -s tt2`.
+void redirect_stdio_to_logcat() {
+    static int fds[2];
+    if (pipe(fds) != 0) return;
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+    dup2(fds[1], STDOUT_FILENO);
+    dup2(fds[1], STDERR_FILENO);
+    std::thread([] {
+        std::string line;
+        char buf[512];
+        ssize_t n;
+        while ((n = read(fds[0], buf, sizeof buf)) > 0) {
+            for (ssize_t i = 0; i < n; ++i) {
+                if (buf[i] != '\n') {
+                    line += buf[i];
+                    continue;
+                }
+                __android_log_write(ANDROID_LOG_INFO, "tt2", line.c_str());
+                line.clear();
+            }
+        }
+    }).detach();
+}
+#endif
+
 int main(int argc, char** argv) {
+#ifdef __ANDROID__
+    redirect_stdio_to_logcat();
+#endif
     std::string assets_flag;      // --assets DIR: read the art from DIR, never ask
     std::string assets_env;       // TT2_ASSETS, same as --assets
     if (const char* env = std::getenv("TT2_ASSETS")) assets_env = env;
@@ -1751,6 +1981,7 @@ int main(int argc, char** argv) {
     std::string manifest_path;    // --asset-manifest FILE: replaces data/original-assets.sha256
     std::string import_pick;      // --import-pick DIR: answers the in-game folder picker (smoke tests)
     std::string save_dir = tt2::default_save_dir().string();
+    [[maybe_unused]] bool save_dir_given = false;   // read on Android only
     int speed = 1;
     long exit_after_ms = -1;
     std::string dump_dir;      // --dump-frames DIR: write BMP frames (for the README GIF)
@@ -1785,7 +2016,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--import") && i + 1 < argc) import_from = argv[++i];
         else if (!std::strcmp(argv[i], "--asset-manifest") && i + 1 < argc) manifest_path = argv[++i];
         else if (!std::strcmp(argv[i], "--import-pick") && i + 1 < argc) import_pick = argv[++i];
-        else if (!std::strcmp(argv[i], "--save-dir") && i + 1 < argc) save_dir = argv[++i];
+        else if (!std::strcmp(argv[i], "--save-dir") && i + 1 < argc) { save_dir = argv[++i]; save_dir_given = true; }
         else if (!std::strcmp(argv[i], "--speed") && i + 1 < argc) speed = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--exit-after") && i + 1 < argc) exit_after_ms = std::atol(argv[++i]);
         else if (!std::strcmp(argv[i], "--dump-frames") && i + 1 < argc) dump_dir = argv[++i];
@@ -1842,6 +2073,42 @@ int main(int argc, char** argv) {
     // The data folder (dictionaries, asset manifest). Packaged builds
     // (AppImage, Windows zip) carry it next to the executable; a source
     // build falls back to TT2_DATA_DIR.
+#ifdef __ANDROID__
+    // The APK's assets/data/ is invisible to std::filesystem, so it is
+    // copied into the files folder first (bundled_data.hpp), on the first
+    // launch and after each update. SDL_LoadFile reads APK assets.
+    // Saves and the import live beside it (tt2ui::android_dirs).
+    const char* android_files = SDL_GetAndroidInternalStoragePath();
+    if (!android_files) {
+        std::fprintf(stderr, "android: no internal storage path: %s\n", SDL_GetError());
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Text Twist 2", "The game could not start.", nullptr);
+        return 1;
+    }
+    const tt2ui::AndroidDirs android = tt2ui::android_dirs(android_files);
+    if (!save_dir_given) save_dir = android.saves;
+    if (!data_dir_given) {
+        const auto read_asset = [](const std::string& rel, std::string& bytes) {
+            size_t size = 0;
+            void* p = SDL_LoadFile(("data/" + rel).c_str(), &size);
+            if (!p) return false;
+            bytes.assign(static_cast<const char*>(p), size);
+            SDL_free(p);
+            return true;
+        };
+        std::string manifest;
+        read_asset(tt2ui::BUNDLE_MANIFEST, manifest);
+        data_dir = android.data;
+        const auto r = tt2ui::ensure_bundled_data(manifest, tt2::utf8_path(data_dir), read_asset);
+        if (!r.ok) {
+            std::fprintf(stderr, "bundled data: %s\n", r.error.c_str());
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Text Twist 2",
+                                     "The game's files could not be set up. Reinstalling it may help.", nullptr);
+            return 1;
+        }
+        std::printf("bundled data: %s (%s, %zu files copied)\n", data_dir.c_str(),
+                    r.action == tt2ui::BundleAction::Keep ? "up to date" : "copied", r.files);
+    }
+#else
     if (!data_dir_given) {
         std::string exe_dir;
         if (const char* base = SDL_GetBasePath()) exe_dir = base;
@@ -1851,6 +2118,7 @@ int main(int argc, char** argv) {
                    std::filesystem::exists(std::filesystem::path(d) / "common.tree", ec);
         });
     }
+#endif
 
     // The original art: the player's own install, imported into a per-user
     // folder and checked against data/original-assets.sha256
@@ -1862,12 +2130,19 @@ int main(int argc, char** argv) {
     if (!manifest_ok) std::fprintf(stderr, "warning: no valid asset manifest at %s; importing is off\n", manifest_path.c_str());
     // SDL_GetPrefPath creates its folder, so it only runs when the per-user
     // folder is actually needed and --asset-dir didn't name one.
-    const auto pref_path = [] {
+    const auto pref_path = [&] {
         std::string out;
+#ifdef __ANDROID__
+        // SDL_GetPrefPath would return the bare files folder (android_dirs).
+        std::error_code ec;
+        std::filesystem::create_directories(tt2::utf8_path(android.imported_assets), ec);
+        if (!ec) out = android.imported_assets;
+#else
         if (char* p = SDL_GetPrefPath(tt2ui::PREF_ORG, tt2ui::PREF_APP)) {
             out = p;
             SDL_free(p);
         }
+#endif
         return out;
     };
     const bool needs_user_dir = !import_from.empty() || (assets_flag.empty() && assets_env.empty());
@@ -1951,12 +2226,18 @@ int main(int argc, char** argv) {
     if (!save_dir.empty() && store.has_improvements() && !store.load(improvements))
         std::fprintf(stderr, "warning: %s is unreadable; using the display options from settings.txt\n",
                      store.improvements_path().string().c_str());
+    improvements = tt2ui::display_for_platform(improvements, tt2ui::THIS_PLATFORM);   // Android: full screen
     settings.fullscreen = improvements.legacy_fullscreen();
     // The renderer this run starts with: the file's, or --renderer for this run only.
     const tt2::RendererPref launch_renderer = renderer_flag.empty() ? improvements.renderer : renderer_override;
     std::printf("improvements: window %s%s\n", tt2::to_string(improvements.window),
                 !save_dir.empty() && !store.has_improvements() ? " (from settings.txt)" : "");
 
+#ifdef __ANDROID__
+    // Back (button or gesture) arrives as SDLK_AC_BACK instead of finishing
+    // the activity; the loop treats it as Escape (T2.2).
+    SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
@@ -2009,6 +2290,14 @@ int main(int argc, char** argv) {
         menu_highscores_layer, menu_credits_layer, menu_improvements_layer, menu_notice_layer, profile_layer, import_layer;
     // The player dialogs under the top one (deepest: select, name input, message).
     std::array<DialogLayer, 2> profile_under_layers;
+    // At shutdown, and after a render device reset (T2.4).
+    const auto release_layers = [&] {
+        for (DialogLayer* l : {&game_under_layer, &game_layer, &game_credits_layer, &menu_layer, &menu_help_layer,
+                               &menu_settings_layer, &menu_highscores_layer, &menu_credits_layer,
+                               &menu_improvements_layer, &menu_notice_layer, &profile_layer, &import_layer})
+            l->release();
+        for (DialogLayer& l : profile_under_layers) l.release();
+    };
 
     // Hand pointer over clickable items, hourglass on the load
     // screen, arrow everywhere else. The original's cursor handling
@@ -2088,12 +2377,12 @@ int main(int argc, char** argv) {
     WelcomeFlow::Services services;
     services.play_sound = [&](SoundId id) { assets.play_sound(id); };
     services.play_stream = [&](SoundId id) { assets.play_stream(id); };
-    // The original's loader fills the bar while sections default +
-    // sceneselection load. Our assets are loaded lazily and are tiny,
-    // so report "done" immediately; the 3500 ms floor still applies.
-    services.loader_done = [] { return true; };
-    services.loader_progress = [] { return 1.0f; };
-    services.preloading_done = [] { return true; };
+    // As in the original (welcome-flow.md §0): the splash waits for the
+    // loading screen's files, and the loading screen's bar follows the
+    // menu's (tt2ui/boot_preload.hpp; the 3500 ms floor still applies).
+    services.preloading_done = [&assets] { return assets.preload_count(tt2ui::PRELOAD_LOADING).finished(); };
+    services.loader_done = [&assets] { return assets.preload_count(tt2ui::PRELOAD_MENU).finished(); };
+    services.loader_progress = [&assets] { return assets.preload_count(tt2ui::PRELOAD_MENU).progress(); };
     // Game scene and the fade-to-black around entering / leaving it
     // (TRANSITION_DEFAULT: 500 ms to black, then 500 ms back; each half
     // uses FadeBlackTransition's full `time`, 0x46c362 / 0x46c78f).
@@ -2200,6 +2489,7 @@ int main(int argc, char** argv) {
     // Alt+Enter (deviation, see is_fullscreen_shortcut): flip between a
     // window and borderless, save both files, and keep open dialogs in step.
     auto toggle_fullscreen = [&] {
+        if (!tt2ui::window_modes_offered(tt2ui::THIS_PLATFORM)) return;   // always full screen
         tt2::Improvements imp = improvements;
         imp.set_window(imp.toggled_window());   // back to the last fullscreen mode picked (UX-5)
         commit_improvements(imp);
@@ -2293,11 +2583,31 @@ int main(int argc, char** argv) {
     };
     import_services.play_sound = [&](SoundId id) { assets.play_sound(id); };
     import_services.wrap = wrap_message;
+#ifdef __ANDROID__
+    // Phase 3: on Android the whole import, its dialog included, is Kotlin
+    // (importer/ZipImporter.kt). It gets the manifest and the finished stamp
+    // text, so the folder it writes passes import_status() unchanged; its
+    // "closed" event comes back through the event loop.
+    const Uint32 android_import_event = tt2android::register_import_event();
+    bool android_import_open = false;
+    auto open_android_import = [&](bool ask_first) {
+        const std::string stamp = tt2ui::serialize_stamp({tt2ui::manifest_digest(manifest), manifest.entries.size()});
+        android_import_open = android_import_event != 0 &&
+                              tt2android::open_import(manifest.serialize(), stamp, import_dir, ask_first);
+        if (!android_import_open) std::fprintf(stderr, "assets: the import dialog did not open\n");
+    };
+    start_import_from_settings = [&] {
+        import_from_settings = true;
+        open_android_import(false);
+        std::printf("assets: re-import from settings\n");
+    };
+#else
     start_import_from_settings = [&] {
         import_from_settings = true;
         import_prompt.emplace(import_services, false);   // straight to the picker
         std::printf("assets: re-import from settings\n");
     };
+#endif
 
     auto menu_dialog_press = [&](const std::string& name) {
         if (name.empty() || !menu_dialog_open) return;
@@ -2340,11 +2650,19 @@ int main(int argc, char** argv) {
     };
     WelcomeFlow flow(services, seed_ticks() + 1);
     if (asset_choice.prompt) {
+#ifdef __ANDROID__
+        open_android_import(true);
+#else
         import_prompt.emplace(import_services);
+#endif
         std::printf("t=0 ms: assets: prompt shown\n");
     }
     // The boot prompt holds the welcome flow: no splash timer behind it.
+#ifdef __ANDROID__
+    auto boot_prompt_open = [&] { return (import_prompt || android_import_open) && !import_from_settings; };
+#else
     auto boot_prompt_open = [&] { return import_prompt && !import_from_settings; };
+#endif
     auto start_game = [&] {
         GameScene::Services gs;
         gs.play_sound = [&](SoundId id) { assets.play_sound(id); };
@@ -2400,11 +2718,29 @@ int main(int argc, char** argv) {
     // Frame timing (frame_clock.hpp, deviation UX-7): whole-ms steps that add
     // up to the real time at any refresh rate, and the optional frame limit.
     FrameClock frame_clock;
+    bool boot_preload_started = false;
+    std::uint64_t last_frame_ns = 0;
+    long load_longest_ms = 0;
     frame_clock.advance(SDL_GetTicksNS());
     FramePacer frame_pacer;
     int dump_accum_ms = 0;
     int dump_index = 0;
     bool text_input_on = false;
+    // Text input on, with the name box as its area (T2.3): on Android SDL
+    // puts its hidden text field there and the window pans so the keyboard
+    // leaves the box in view; a desktop input method opens beside it.
+    auto start_text_input = [&] {
+        const ViewRect box = profile.name_box();
+        if (!box.empty()) {
+            float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+            SDL_RenderCoordinatesToWindow(ren, box.x, box.y, &x0, &y0);
+            SDL_RenderCoordinatesToWindow(ren, box.x + box.w, box.y + box.h, &x1, &y1);
+            const SDL_Rect area{static_cast<int>(x0), static_cast<int>(y0), static_cast<int>(x1 - x0),
+                                static_cast<int>(y1 - y0)};
+            SDL_SetTextInputArea(win, &area, 0);
+        }
+        SDL_StartTextInput(win);
+    };
     int auto_type_ms = 0;
     SceneId last_scene = flow.current();
     // Tooltips: the cursor in canvas units, and the one tooltip on screen.
@@ -2465,6 +2801,25 @@ int main(int argc, char** argv) {
         if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             pick(flow.selection()->buttons(), TooltipSurface::Selection, "menu");
     };
+#ifdef __ANDROID__
+    // Going to the background (T2.2): SDL sends WILL_ENTER_BACKGROUND from
+    // inside the event pump and then blocks there until the app returns, so
+    // the loop below would only see it afterwards, and Android may kill the
+    // app in between. An event watch runs as the event is sent, still on
+    // this thread: pause the round and save it there. SDL pauses audio.
+    std::function<void()> on_background = [&] {
+        with_play([](auto& g) { g.enter_background(); });
+        std::printf("android: entering the background\n");
+    };
+    const SDL_EventFilter background_watch = [](void* user, SDL_Event* ev) {
+        if (ev->type == SDL_EVENT_WILL_ENTER_BACKGROUND) (*static_cast<std::function<void()>*>(user))();
+        return true;
+    };
+    SDL_AddEventWatch(background_watch, &on_background);
+#endif
+#ifdef __ANDROID__
+    bool first_frame_shown = false;
+#endif
     while (running) {
         // --hover: a motion event at that canvas point every frame, handed
         // straight to the loop below (the dummy driver drops pushed motion).
@@ -2483,6 +2838,12 @@ int main(int argc, char** argv) {
                 // (SDL2's logical size did this on its own).
                 SDL_ConvertEventToRenderCoordinates(ren, &e);
             }
+#ifdef __ANDROID__
+            if ((e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) && e.key.key == SDLK_AC_BACK)
+                e.key.key = SDLK_ESCAPE;   // Back closes a dialog or pauses, as Escape does
+            if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND)
+                std::printf("android: back in the foreground\n");   // the round stays paused until a tap
+#endif
             if (e.type == SDL_EVENT_MOUSE_MOTION) {
                 mouse_x = e.motion.x;
                 mouse_y = e.motion.y;
@@ -2492,6 +2853,29 @@ int main(int argc, char** argv) {
                 with_play([](auto& g) { g.leave(); });   // 0x427b20 / 0x4169d0: closing the window saves a running round
             }
             if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) with_play([](auto& g) { g.focus_lost(); });
+            // T2.4: a lost device takes every texture with it; each comes back
+            // lazily. Lost render targets need nothing: the dialog layers are
+            // drawn again every frame (a closing fade may blank for 200 ms).
+            if (e.type == SDL_EVENT_RENDER_DEVICE_RESET) {
+                assets.device_lost();
+                side_fill.reset();
+                release_layers();
+                std::printf("render: device reset, textures reload\n");
+            }
+            if (e.type == SDL_EVENT_RENDER_TARGETS_RESET) std::printf("render: targets reset\n");
+#ifdef __ANDROID__
+            // The Kotlin import dialog closed. Its word is checked against the
+            // folder, as a launch would (after_external_import).
+            if (android_import_event != 0 && e.type == android_import_event) {
+                android_import_open = false;
+                const tt2ui::ImportStatus now = tt2ui::import_status(tt2::utf8_path(import_dir), manifest);
+                const tt2ui::ExternalImportOutcome o = tt2ui::after_external_import(e.user.code != 0, now);
+                if (o.disagree) std::fprintf(stderr, "import: reported done, but the folder is %s\n", tt2ui::to_string(now));
+                if (o.reload) import_services.on_imported();
+                std::printf("t=%ld ms: assets: prompt closed\n", simulated_ms);
+                import_from_settings = false;   // on boot, the flow now runs on to the menu
+            }
+#endif
             if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
                 std::printf("display: %s\n", check_presentation(ren).c_str());
             // Before any routing, so Alt+Enter (and its auto-repeat) never
@@ -2530,16 +2914,19 @@ int main(int argc, char** argv) {
                 if (e.type == SDL_EVENT_MOUSE_MOTION) profile.mouse_move(e.motion.x, e.motion.y);
                 if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
                     profile.mouse_down(e.button.x, e.button.y);
+                // A tap on the name box brings the on-screen keyboard back
+                // after Back put it away; SDL shows it again when hidden.
+                if (profile.take_keyboard_request() && text_input_on) start_text_input();
                 if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
                     profile.mouse_up(e.button.x, e.button.y);
                 continue;
             }
             if (game || blitz) {
                 with_play([&](auto& g) {
-                    if (e.type == SDL_EVENT_TEXT_INPUT) {
-                        for (const char* c = e.text.text; *c; ++c) g.type_letter(*c);
-                    }
                     if (e.type == SDL_EVENT_KEY_DOWN) {
+                        if (const char c = letter_for_key(e.key.key, (e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT |
+                                                                                     SDL_KMOD_GUI)) != 0))
+                            g.type_letter(c);
                         switch (e.key.key) {
                             case SDLK_BACKSPACE: g.backspace(); break;
                             case SDLK_RETURN:
@@ -2643,7 +3030,15 @@ int main(int argc, char** argv) {
                     menu_help_press(dialog_mouse_up(menu_help->dialog(), e.button.x, e.button.y));
                 continue;
             }
-            if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) running = false;
+            if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) {
+#ifdef __ANDROID__
+                // Back on the menu: put the app in the background (SDL calls
+                // moveTaskToBack) instead of quitting, as Android apps do.
+                SDL_MinimizeWindow(win);
+#else
+                running = false;
+#endif
+            }
             if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0) {
                 auto* menu = flow.selection();
                 if (e.type == SDL_EVENT_MOUSE_MOTION) menu->mouse_move(e.motion.x, e.motion.y, hit);
@@ -2675,7 +3070,14 @@ int main(int argc, char** argv) {
             cursor_hot = hot;
             SDL_SetCursor(busy ? cursor_wait : (hot ? cursor_hand : cursor_arrow));
         }
-        const int real_dt = frame_clock.advance(SDL_GetTicksNS(), speed);
+        const std::uint64_t frame_ns = SDL_GetTicksNS();
+        // The loading screen's longest frame, wall clock: the step is clamped
+        // to 100 ms, so a stall there leaves the logo animation behind the
+        // music that started with the scene (logged when the menu opens).
+        if (flow.current() == SceneId::Load && last_frame_ns)
+            load_longest_ms = std::max(load_longest_ms, static_cast<long>((frame_ns - last_frame_ns) / NS_PER_MS));
+        last_frame_ns = frame_ns;
+        const int real_dt = frame_clock.advance(frame_ns, speed);
         const int dt = fixed_dt > 0 ? std::min(fixed_dt * speed, FRAME_DT_MAX_MS) : real_dt;
         if (game_fade_out > 0) {
             game_fade_out -= dt;
@@ -2833,6 +3235,12 @@ int main(int argc, char** argv) {
                 });
             }
         } else if (!boot_prompt_open()) {
+            // Once the boot prompt is gone (an import there changes the art).
+            if (!boot_preload_started) {
+                boot_preload_started = true;
+                assets.preload(tt2ui::PRELOAD_LOADING, tt2ui::preload_loading_screen());
+                assets.preload(tt2ui::PRELOAD_MENU, tt2ui::preload_menu());
+            }
             flow.update(dt);
         }
         profile.update(dt);
@@ -2860,15 +3268,21 @@ int main(int argc, char** argv) {
         if (flow.current() != last_scene) {
             last_scene = flow.current();
             std::printf("t=%ld ms: scene %d\n", simulated_ms, static_cast<int>(last_scene));
-            if (last_scene == SceneId::Selection) menu_entered();
+            if (last_scene == SceneId::Selection) {
+                std::printf("load scene: longest frame %ld ms\n", load_longest_ms);
+                menu_entered();
+            }
         }
-        const bool want_text = profile.wants_text_input() || ((game || blitz) && !profile.open());
+        // Only the name dialog takes text: anything else would bring up the
+        // on-screen keyboard (Android, Steam Deck). Rounds read key presses.
+        const bool want_text = profile.wants_text_input();
         if (want_text != text_input_on) {
             text_input_on = want_text;
-            if (text_input_on) SDL_StartTextInput(win); else SDL_StopTextInput(win);
+            if (text_input_on) start_text_input(); else SDL_StopTextInput(win);
         }
         if (exit_after_ms >= 0 && simulated_ms >= exit_after_ms) running = false;
 
+        assets.poll_preload();    // the boot's files, decoded on workers
         assets.poll_upscales();   // UX-9: swap finished 2x textures in
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
@@ -3010,6 +3424,13 @@ int main(int argc, char** argv) {
             }
         }
         SDL_RenderPresent(ren);
+#ifdef __ANDROID__
+        // T4.2: the system splash has been held over the loading; it can go now.
+        if (!first_frame_shown) {
+            first_frame_shown = true;
+            tt2android::first_frame_shown();
+        }
+#endif
         if (const std::uint64_t wait = frame_pacer.wait_ns(SDL_GetTicksNS(), frame_budget_ns(improvements.frame_limit)))
             SDL_DelayPrecise(wait);
     }
@@ -3018,13 +3439,12 @@ int main(int argc, char** argv) {
     if (cursor_wait) SDL_DestroyCursor(cursor_wait);
     if (cursor_hand) SDL_DestroyCursor(cursor_hand);
     if (cursor_arrow) SDL_DestroyCursor(cursor_arrow);
+#ifdef __ANDROID__
+    SDL_RemoveEventWatch(background_watch, &on_background);
+#endif
     assets.release();   // before the mixer and the renderer it came from
     audio_out.close();
-    for (DialogLayer* l : {&game_under_layer, &game_layer, &game_credits_layer, &menu_layer, &menu_help_layer, &menu_settings_layer,
-                           &menu_highscores_layer, &menu_credits_layer, &menu_improvements_layer, &menu_notice_layer, &profile_layer,
-                           &import_layer})
-        l->release();
-    for (DialogLayer& l : profile_under_layers) l.release();
+    release_layers();
     side_fill.release();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
