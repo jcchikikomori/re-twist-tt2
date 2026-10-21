@@ -66,3 +66,8 @@ other way round. They are a separate app instead: application ID `com.jcchikikom
 ```bash
 adb shell am start -n com.jcchikikomori.retwisttt2.debug/com.jcchikikomori.retwisttt2.MainActivity
 ```
+
+A device may still have a debug install from before the suffix existed (`com.jcchikikomori.retwisttt2`, signed
+with the same machine's debug key). `./gradlew assembleDebug -PTT2_DEBUG_SAME_APP=true` builds without the suffix,
+so `adb install -r` updates that install and keeps its saves and imported assets. A release APK still can't update
+it: the first release needs that install removed.

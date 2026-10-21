@@ -210,7 +210,12 @@ android {
             // The suffix makes debug builds (each machine's own debug key) a
             // separate app, so they install next to a release APK instead of
             // over it. Separate saves and imported assets, too.
-            applicationIdSuffix = ".debug"
+            // -PTT2_DEBUG_SAME_APP=true leaves the suffix off, so this build
+            // updates a debug install made before the suffix existed (same
+            // debug key), keeping its data.
+            if (!providers.gradleProperty("TT2_DEBUG_SAME_APP").map(String::toBoolean).getOrElse(false)) {
+                applicationIdSuffix = ".debug"
+            }
         }
     }
 
