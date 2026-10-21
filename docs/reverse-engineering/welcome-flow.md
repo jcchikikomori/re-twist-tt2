@@ -182,6 +182,17 @@ The progress value is the background load of the `default` +
 `sceneselection` sections, so on a modern machine the bar fills almost
 immediately and the scene is held by the 3.5 s floor.
 
+**In the port** (`ui/include/tt2ui/boot_preload.hpp`): the same split.
+The loading screen's files (what `LoadScene` draws, `MUSIC_game_load`,
+`MUSIC_LOGO`) are decoded on worker threads during the splash, which
+waits for them; the menu's (what `SelectionScene` draws and plays, and
+the fonts drawn over it) load during the loading screen, and the bar
+shows their progress. Both lists are taken from the scenes themselves.
+An earlier port loaded each file at its first draw: the loading
+screen's first frame then decoded `ANI_CIRCLES` and `IMAGE_LOGO_ANIM`
+(~150 ms on a desktop, 1–2 s on a low-end tablet), and with the step
+clamped to 100 ms the logo animation fell that far behind `MUSIC_LOGO`.
+
 ## 3. SelectionScene (`SCENE_SELECTION`, section `sceneselection`)
 
 ### Layout (`dialogs.xml`) — XML

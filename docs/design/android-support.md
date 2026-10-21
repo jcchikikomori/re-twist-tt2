@@ -39,6 +39,23 @@
 
 - Include this port as part of the CI/release, as `.apk` file
 
+## As built (2026-10-20)
+
+What the first Android version does, against the points above.
+
+| Point | As built |
+| --- | --- |
+| Target SDK | `minSdk` 31 (Android 12), `targetSdk` 35. 64-bit ARM (`arm64-v8a`) only, since testing is on real devices |
+| Native build | The repository's `CMakeLists.txt` through Gradle and NDK 27.2; SDL3's `SDLActivity` loads `libmain.so` |
+| Renderer | **OpenGL ES first**, then Vulkan, then software, on Android only; the desktop order (Vulkan, OpenGL, software) is unchanged |
+| Application ID | `com.jcchikikomori.retwisttt2` for releases; debug builds add `.debug`, so they install next to a release ([android-signing.md](../android-signing.md)) |
+| Icon | Adaptive, with a monochrome layer for themed icons (Material You); generated from `packaging/linux/tt2.svg` by `tools/gen_android_icon.py` |
+| Splash | Android 12's system splash, held until the game draws its first frame (no separate splash activity) |
+| Target devices | Tablets and phones in landscape (`sensorLandscape`); not Android TV (no `LEANBACK_LAUNCHER`) |
+| Import | A ZIP picked with the system's document picker, verified and copied into the app's private storage ([import-assets.md](import-assets.md#android-as-built-2026-10-17)) |
+| Improvements | DISPLAY MODE and RESOLUTION are hidden on Android |
+| CI / Release | CI builds a debug APK; Packages builds a release APK signed with the release key, attached to every `v*` release |
+
 ## References / Inspiration
 
 - https://github.com/hrydgard/ppsspp

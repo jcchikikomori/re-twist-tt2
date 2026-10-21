@@ -86,3 +86,56 @@ TEST(pick_resolution_with_nothing_offered_is_800x600) {
     // Nothing smaller offered: the first one.
     ASSERT_TRUE(pick_resolution({Resolution{1280, 720}}, Resolution{1024, 768}) == (Resolution{1280, 720}));
 }
+
+// Android is always full screen (T1.4): the saved mode is ignored, the file keeps it.
+TEST(display_for_android_is_always_borderless) {
+    for (tt2::WindowMode m : {tt2::WindowMode::Windowed, tt2::WindowMode::Borderless, tt2::WindowMode::Native}) {
+        tt2::Improvements imp;
+        imp.window = m;
+        imp.resolution = {1024, 768};
+        const tt2::Improvements out = display_for_platform(imp, Platform::Android);
+        ASSERT_TRUE(out.window == tt2::WindowMode::Borderless);
+        ASSERT_TRUE(out.resolution == imp.resolution);   // untouched; Borderless never reads it
+        ASSERT_TRUE(out.renderer == imp.renderer && out.vsync == imp.vsync);
+    }
+    ASSERT_TRUE(!window_modes_offered(Platform::Android));
+}
+
+TEST(display_for_desktop_keeps_the_saved_mode) {
+    for (tt2::WindowMode m : {tt2::WindowMode::Windowed, tt2::WindowMode::Borderless, tt2::WindowMode::Native}) {
+        tt2::Improvements imp;
+        imp.window = m;
+        ASSERT_TRUE(display_for_platform(imp, Platform::Desktop).window == m);
+    }
+    ASSERT_TRUE(window_modes_offered(Platform::Desktop));
+}
+
+// Phones and tablets (T2.3): the worked examples from the Android plan. In
+// landscape a phone's camera cutout sits on a short edge, inside a pillar
+// bar: any phone wider than 4:3 has bars of at least 1/8 of its width, far
+// deeper than a punch-hole (SDL draws into the cutout, CUTOUT_MODE_ALWAYS).
+TEST(fit_4x3_on_a_20_by_9_phone_leaves_480_pixel_bars) {
+    const Fit4x3 f = fit_4x3(2400, 1080);
+    ASSERT_EQ(f.scale, 1.8f);
+    ASSERT_EQ(f.game.x, 480.0f);
+    ASSERT_EQ(f.game.w, 1440.0f);
+    ASSERT_EQ(f.game.h, 1080.0f);
+    const PillarBars b = pillar_bars(2400, 1080);
+    ASSERT_EQ(b.left.w, 480.0f);
+    ASSERT_EQ(b.right.x, 1920.0f);
+    ASSERT_EQ(b.right.w, 480.0f);
+}
+
+TEST(fit_4x3_on_a_16_by_10_tablet_keeps_the_half_pixel) {
+    const Fit4x3 f = fit_4x3(2560, 1600);
+    ASSERT_EQ(f.game.w, 2133.0f);                          // 2133.33 floored
+    ASSERT_EQ(f.game.x, 213.5f);
+    ASSERT_EQ(pillar_bars(2560, 1600).right.w, 213.5f);
+}
+
+TEST(fit_4x3_on_the_test_tablet_matches_the_device_log) {
+    // Galaxy Tab A7 Lite, full screen: "game 137,0 1066x800".
+    const Fit4x3 f = fit_4x3(1340, 800);
+    ASSERT_EQ(f.game.x, 137.0f);
+    ASSERT_EQ(f.game.w, 1066.0f);
+}

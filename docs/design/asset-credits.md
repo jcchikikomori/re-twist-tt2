@@ -11,6 +11,7 @@ page: [dictionary-sources.md](../dictionary-sources.md).
 | [SDL3, SDL3_image, SDL3_mixer](https://www.libsdl.org/) | 3.4.18, 3.4.8, 3.2.4 | zlib | system or MSYS2 package, or built from the release tarball (`TT2_FETCH_SDL3`); not vendored | Window, input, rendering, images, audio |
 | [Super-xBR](https://github.com/libretro/slang-shaders/tree/master/crt/shaders/crt-super-xbr) by Hyllian | libretro slang-shaders, 2015 | MIT | ported to C++ in `ui/include/tt2ui/upscale.hpp`; notice in `third_party/super-xbr/` | The optional 2x texture upscaler (UPSCALER in IMPROVEMENTS) |
 | [stb_image, stb_vorbis](https://github.com/nothings/stb) by Sean Barrett | as bundled in SDL3_image / SDL3_mixer | public domain or MIT | inside SDL3_image and SDL3_mixer | Decoding PNG / JPEG and Ogg Vorbis |
+| [Kotlin standard library](https://kotlinlang.org/) by JetBrains, with `org.jetbrains:annotations` | 2.0.21, 13.0 | Apache 2.0 | Gradle dependency (`android/gradle/libs.versions.toml`); notice in `third_party/kotlin/` | The Android app's Kotlin code (APK only) |
 
 - tinyfiledialogs is vendored **unaltered**. `third_party/tinyfiledialogs/VERSION` records the upstream commit and
   the SHA-256 of each file; `LICENSE` holds its notice.
@@ -21,19 +22,23 @@ page: [dictionary-sources.md](../dictionary-sources.md).
 
 ## What the Packages Carry
 
-Each package installs these notices into `licenses/` (the Windows zip) or `share/licenses/tt2/` (the AppImage):
+Each package installs these notices into `licenses/` (the Windows zip), `share/licenses/tt2/` (the AppImage) or
+`assets/licenses/` (the APK, written by the `bundleLicenses` Gradle task):
 
 | File | Covers | License |
 | --- | --- | --- |
 | `re-twist-tt2.txt` | This project's code | MIT |
 | `super-xbr.txt` | The upscaler port | MIT |
-| `tinyfiledialogs.txt`, `SDL3.txt`, `SDL3_image.txt`, `SDL3_mixer.txt` | Code linked in statically | zlib |
+| `tinyfiledialogs.txt` (not the APK), `SDL3.txt`, `SDL3_image.txt`, `SDL3_mixer.txt` | Code linked in statically | zlib |
+| `kotlin-stdlib.txt` (APK only) | The Kotlin standard library and JetBrains annotations in the app's code | Apache 2.0 |
 | `libwinpthread.txt`, `gcc-runtime-exception.txt` (zip only) | The MinGW runtime DLLs next to `tt2.exe` | MIT and BSD; GPL 3 with the GCC Runtime Library Exception |
 | `appimage-runtime.txt` (AppImage only) | The AppImage runtime stub | MIT, with the libraries it links listed inside |
 
 - stb_image and stb_vorbis are taken under their public-domain option, so they need no file.
 - The fonts' licences sit next to the fonts in `data/placeholder/`, and the dictionaries' in `data/LICENSE.md`.
-- `packages.yml` fails a build that is missing any of these files.
+- `packages.yml` fails a build that is missing any of these files; for the APK, `scripts/ci-apk-check.sh` does
+  the check, in CI too.
+- The APK takes the SDL texts from the same pinned tarballs CMake builds from, so they can't drift from the code.
 
 ## Art, Fonts and Sounds
 
@@ -49,6 +54,9 @@ Each package installs these notices into `licenses/` (the Windows zip) or `share
 | [Arimo](https://fonts.google.com/specimen/Arimo) by Steve Matteson | SIL OFL 1.1, no Reserved Font Name | `third_party/fonts/arimo/` | Text bitmap fonts and the button labels |
 
 - Both are unaltered copies from the google/fonts repository; `third_party/fonts/README.md` records the commits.
+- **Icons:** `packaging/linux/tt2.svg` (the desktop icon) and the Android launcher icon are this project's own
+  drawing, a pearl letter ball with a "T" on a blue tile. `tools/gen_android_icon.py` turns the SVG's geometry
+  into the Android vector drawables; no outside source.
 - The bitmap sheets are renderings of these fonts, so their licence files ship next to them in `data/placeholder/`.
 - **Imported by the player:** the original art, fonts and sounds come from the player's own install, copied on
   their machine by `tt2 --import` or the in-game importer (`docs/design/import-assets.md`). They are never

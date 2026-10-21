@@ -434,6 +434,15 @@ struct SlotView {
     }
 };
 
+// A key press as a round letter, or 0. SDL3's letter keycodes are the
+// lower-case ASCII letters ('a' == SDLK_A), already following the keyboard
+// layout, so the original's WM_CHAR letters come through the same. Ctrl,
+// Alt and GUI chords (shortcuts) type nothing.
+inline char letter_for_key(std::uint32_t keycode, bool command_modifier) {
+    if (command_modifier || keycode < 'a' || keycode > 'z') return 0;
+    return static_cast<char>(keycode);
+}
+
 class GameScene {
 public:
     struct Services {
@@ -591,6 +600,10 @@ public:
     }
 
     // ---- input ------------------------------------------------------
+    // Rounds read letters from key presses (letter_for_key), not SDL text
+    // input: turning text input on brings up the on-screen keyboard on
+    // Android and on Steam Deck, and on Android its hidden text field also
+    // swallowed the first Back. Only the name dialog turns text input on.
     void type_letter(char c) {
         if (phase_ != GamePhase::Playing || dialog_open()) return;
         if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
@@ -643,6 +656,15 @@ public:
     }
     // 0x428b60, event 0x206 (INFERRED: the window lost focus): show the menu.
     void focus_lost() { if (!dialog_open()) open_pause_menu(); }
+    // Android (T2.2 of docs/plans/android-support.md): the app went to the
+    // background, where Android may kill it without warning, so there is
+    // no later quit to save on. Pause as on focus loss, and save the round
+    // now, as closing the window would; the round goes on when resumed.
+    // Resuming (resume_game) or a game over discards the save as usual.
+    void enter_background() {
+        focus_lost();
+        leave();
+    }
 
     // True while the pointer sits on a clickable button — the SDL
     // front end switches to the hand cursor for this.

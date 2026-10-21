@@ -4,6 +4,7 @@
 #include <set>
 #include <string>
 
+#include "tt2/profile_store.hpp"
 #include "tt2ui/data_paths.hpp"
 
 using namespace tt2ui;
@@ -34,6 +35,27 @@ TEST(pick_data_dir_falls_back_to_the_last_candidate) {
     const auto none = [](const std::string&) { return false; };
     ASSERT_EQ(pick_data_dir(c, none), std::string("/src/data"));   // so the error names it
     ASSERT_EQ(pick_data_dir({}, none), std::string());
+}
+
+TEST(android_dirs_rebuild_the_desktop_layout_under_the_files_folder) {
+    const auto d = android_dirs("/data/user/0/com.jcchikikomori.retwisttt2/files");
+    ASSERT_EQ(d.data, std::string("/data/user/0/com.jcchikikomori.retwisttt2/files/data"));
+    ASSERT_EQ(d.saves, std::string("/data/user/0/com.jcchikikomori.retwisttt2/files/re-twist-tt2"));
+    ASSERT_EQ(d.imported_assets,
+              std::string("/data/user/0/com.jcchikikomori.retwisttt2/files/re-twist-tt2/imported-assets/"));
+    // Same folder names as desktop: <root>/re-twist-tt2 holds the saves.
+    ASSERT_EQ(std::string(PREF_ORG), std::string(tt2::SAVE_DIR_NAME));
+}
+
+TEST(android_dirs_never_put_the_import_at_the_files_folder_itself) {
+    // SDL_GetPrefPath's Android answer, with its trailing slash.
+    const std::string files = "/data/data/com.jcchikikomori.retwisttt2/files/";
+    const auto d = android_dirs(files);
+    ASSERT_EQ(d.data, std::string("/data/data/com.jcchikikomori.retwisttt2/files/data"));
+    ASSERT_NE(d.imported_assets, files);
+    ASSERT_TRUE(d.imported_assets.rfind(d.saves + "/", 0) == 0);   // inside the saves, like desktop
+    ASSERT_TRUE(d.data.rfind(d.saves, 0) != 0);                     // and apart from data/
+    ASSERT_EQ(android_dirs("/").data, std::string("//data"));      // degenerate, but no crash
 }
 
 // The per-user asset folder and which folder the art loads from (OP-8).

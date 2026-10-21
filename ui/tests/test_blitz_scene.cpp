@@ -478,3 +478,25 @@ TEST(blitz_focus_loss_under_a_dialog_opens_the_menu_later) {
     ASSERT_TRUE(!f.b().menu_pending());
     ASSERT_TRUE(f.b().dialog_kind() == GameDialog::HowToPlay);
 }
+
+// Android: going to the background pauses Lightning and saves it at once
+// (T2.2, docs/plans/android-support.md).
+TEST(blitz_background_pauses_and_saves_with_the_same_time) {
+    Fixture f({{"crate", false}, {"trace", false}}, 41000, 250);
+    f.b().enter_background();
+    ASSERT_TRUE(f.b().dialog_kind() == GameDialog::PauseMenu);
+    ASSERT_EQ(f.saved.size(), std::size_t{1});
+    ASSERT_EQ(f.saved[0].time_ms, f.b().time_left_ms());
+    const int frozen = f.b().time_left_ms();
+    f.run(20000);
+    ASSERT_EQ(f.b().time_left_ms(), frozen);               // the timer stopped
+}
+
+TEST(blitz_background_under_a_dialog_still_saves) {
+    Fixture f(two());
+    f.b().press("BUTTON_GiveUp");                          // "give up?" is up
+    f.b().enter_background();
+    ASSERT_TRUE(f.b().dialog_kind() == GameDialog::ConfirmGiveUp);
+    ASSERT_TRUE(f.b().menu_pending());                     // the menu follows when it closes
+    ASSERT_EQ(f.saved.size(), std::size_t{1});
+}

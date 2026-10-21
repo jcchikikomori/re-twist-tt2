@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "tt2ui/asset_import.hpp"
@@ -46,7 +47,52 @@ inline constexpr const char* FAILED_HEADER = "Import failed";
 inline constexpr const char* NO_PICKER_HEADER = "No folder picker";
 inline constexpr const char* NO_PICKER_BODY =
     "This system has no folder picker. Import from a terminal instead:\ntt2 --import \"<your Text Twist 2 folder>\"";
+
+// Android only: the Kotlin import dialog (T3.2) reads these by name
+// through import_text(), so every import message stays in this file.
+inline constexpr const char* ZIP_PICK_HEADER = "Choose your ZIP";
+inline constexpr const char* ZIP_BODY =
+    "On a computer, zip your Text Twist 2 folder and copy the ZIP to this device. Only import a copy of the "
+    "game you own.";
+inline constexpr const char* ZIP_READING = "Reading the ZIP...";
+inline constexpr const char* NO_ZIP_PICKER_HEADER = "No file manager";
+inline constexpr const char* NO_ZIP_PICKER_BODY =
+    "No app on this device can open ZIP files. Install a file manager, then try again.";
+inline constexpr const char* BUTTON_CHOOSE_ZIP = "Choose ZIP";
+inline constexpr const char* BUTTON_NOT_NOW = "Not now";
+inline constexpr const char* BUTTON_CANCEL = "Cancel";
+inline constexpr const char* BUTTON_OK = "OK";
 }  // namespace import_strings
+
+// An import_strings constant by its name ("PROMPT_HEADER"); "" when there
+// is none. The Android dialog asks for its text this way (JNI, T3.6).
+inline const char* import_text(std::string_view name) {
+    namespace s = import_strings;
+    static constexpr std::pair<const char*, const char*> table[] = {
+        {"PROMPT_HEADER", s::PROMPT_HEADER},
+        {"PROMPT_BODY", s::PROMPT_BODY},
+        {"PICK_HEADER", s::PICK_HEADER},
+        {"PICK_BODY", s::PICK_BODY},
+        {"PROGRESS_HEADER", s::PROGRESS_HEADER},
+        {"DONE_HEADER", s::DONE_HEADER},
+        {"DONE_BODY", s::DONE_BODY},
+        {"FAILED_HEADER", s::FAILED_HEADER},
+        {"NO_PICKER_HEADER", s::NO_PICKER_HEADER},
+        {"NO_PICKER_BODY", s::NO_PICKER_BODY},
+        {"ZIP_PICK_HEADER", s::ZIP_PICK_HEADER},
+        {"ZIP_BODY", s::ZIP_BODY},
+        {"ZIP_READING", s::ZIP_READING},
+        {"NO_ZIP_PICKER_HEADER", s::NO_ZIP_PICKER_HEADER},
+        {"NO_ZIP_PICKER_BODY", s::NO_ZIP_PICKER_BODY},
+        {"BUTTON_CHOOSE_ZIP", s::BUTTON_CHOOSE_ZIP},
+        {"BUTTON_NOT_NOW", s::BUTTON_NOT_NOW},
+        {"BUTTON_CANCEL", s::BUTTON_CANCEL},
+        {"BUTTON_OK", s::BUTTON_OK},
+    };
+    for (const auto& [key, text] : table)
+        if (name == key) return text;
+    return "";
+}
 
 inline constexpr std::size_t IMPORT_STEP_BYTES = 4u << 20;   // per frame, at most
 // Wider than the original 400 px yes/no: the header and the paths are
@@ -77,10 +123,45 @@ inline std::string import_failure_text(const ImportError& e) {
     case ImportError::Kind::WriteFailed:
     case ImportError::Kind::CommitFailed:
         return "The files could not be copied.\nYour previous assets are unchanged.";
+    case ImportError::Kind::BadArchive: return "That file is not a usable ZIP archive.\nNothing was copied.";
     case ImportError::Kind::None: return "";
     }
     for (std::size_t i = 0; i < e.paths.size() && i < IMPORT_LISTED_PATHS; ++i) text += "\n" + e.paths[i];
     return text;
+}
+
+// ImportError::Kind by its enumerator name, the form the Kotlin importer
+// reports a failure in (ImportErrorKind.name). False for an unknown name.
+inline bool import_error_kind_from_name(std::string_view name, ImportError::Kind& out) {
+    using K = ImportError::Kind;
+    static constexpr std::pair<const char*, K> table[] = {
+        {"None", K::None},
+        {"NotAnInstall", K::NotAnInstall},
+        {"EmptyManifest", K::EmptyManifest},
+        {"Missing", K::Missing},
+        {"Mismatch", K::Mismatch},
+        {"WriteFailed", K::WriteFailed},
+        {"CommitFailed", K::CommitFailed},
+        {"BadArchive", K::BadArchive},
+    };
+    for (const auto& [key, kind] : table)
+        if (name == key) {
+            out = kind;
+            return true;
+        }
+    return false;
+}
+
+// After the Android importer reports back (T3.3): a new import is used
+// only when C++'s own import_status() agrees, as on a desktop launch. A
+// closed dialog ("Not now", or a failure) keeps whatever is loaded.
+struct ExternalImportOutcome {
+    bool reload = false;   // switch the art to the import folder
+    bool disagree = false; // Kotlin said imported, the folder says no: log it
+};
+inline ExternalImportOutcome after_external_import(bool reported_imported, ImportStatus status_now) {
+    const bool imported = status_now == ImportStatus::Imported;
+    return {reported_imported && imported, reported_imported && !imported};
 }
 
 // What the flow needs to know about the running import.

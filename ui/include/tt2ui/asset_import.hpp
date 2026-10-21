@@ -170,6 +170,7 @@ struct ImportError {
         Mismatch,        // a file differs (another version of the game)
         WriteFailed,     // copying, or the copy didn't verify
         CommitFailed,    // the folder swap failed; the old import is kept
+        BadArchive,      // Android only: not a ZIP, a damaged one, or an unsafe entry name
     };
     Kind kind = Kind::None;
     std::vector<std::string> paths;   // the first IMPORT_ERROR_PATHS problem files
@@ -185,6 +186,7 @@ inline const char* to_string(ImportError::Kind k) {
     case ImportError::Kind::Mismatch: return "files differ from the expected version";
     case ImportError::Kind::WriteFailed: return "could not copy the files";
     case ImportError::Kind::CommitFailed: return "could not replace the asset folder";
+    case ImportError::Kind::BadArchive: return "not a usable ZIP archive";
     }
     return "?";
 }
