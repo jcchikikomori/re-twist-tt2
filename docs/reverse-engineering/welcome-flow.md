@@ -334,8 +334,10 @@ within 3–36 s of entering the menu and then every 7–40 s.
   with the text above and the port's usual 200 ms fade and backdrop. A second QUIT while it is up changes nothing.
   YES clicks `SOUND_BUTTON` and quits at once; NO clicks it and closes the dialog. Closing the window and Alt+F4
   (`SDL_EVENT_QUIT`) still quit without asking. **Port deviation:** Return answers YES and Esc answers NO, as
-  in the port's other yes/no dialogs; the original binds no keys here. Esc on the menu itself still quits the
-  desktop build at once (Android: to the background), an older port shortcut the original does not have.
+  in the port's other yes/no dialogs; the original binds no keys here.
+- **Port, Esc on the menu.** With no dialog open, Esc never quits and never opens the confirm. On the desktop it
+  leaves fullscreen (Borderless or Native) for a window and saves that, as the original does, and does nothing in a
+  window (`help-and-settings.md` §3.4). On Android, Back arrives as Esc and puts the app in the background.
 
 Local-listing evidence (no REA id): the QUIT binding, `0x40ec84`-`0x40ee6c`, `0x40b310`, `0x40b470`, `0x43fcd0`,
 `0x483f13`-`0x483f68`, `0x493f00`, the jump table at `0x484500` / `0x4844e4`, the `DefWindowProcA` import row, and

@@ -2598,17 +2598,30 @@ int main(int argc, char** argv) {
         if (r == ImprovementsDialog::Result::Ok) commit_improvements(menu_improvements->values());
         menu_improvements.reset();
     };
-    // Alt+Enter (deviation, see is_fullscreen_shortcut): flip between a
-    // window and borderless, save both files, and keep open dialogs in step.
-    auto toggle_fullscreen = [&] {
-        if (!tt2ui::window_modes_offered(tt2ui::THIS_PLATFORM)) return;   // always full screen
+    // A window mode from a key: save both files and keep open dialogs and
+    // the round in step, as IMPROVEMENTS' OK would.
+    auto switch_window = [&](tt2::WindowMode m) {
         tt2::Improvements imp = improvements;
-        imp.set_window(imp.toggled_window());   // back to the last fullscreen mode picked (UX-5)
+        imp.set_window(m);   // Windowed keeps the last fullscreen mode for Alt+Enter (UX-5)
         commit_improvements(imp);
         const bool fullscreen = improvements.legacy_fullscreen();
         if (menu_settings) menu_settings->sync_fullscreen(fullscreen);
         if (menu_improvements) menu_improvements->sync_window(improvements.window);
         with_play([&](auto& g) { g.window_mode_changed(fullscreen); });
+    };
+    // Alt+Enter (deviation, see is_fullscreen_shortcut): flip between a
+    // window and the last fullscreen mode picked.
+    auto toggle_fullscreen = [&] {
+        if (!tt2ui::window_modes_offered(tt2ui::THIS_PLATFORM)) return;   // always full screen
+        switch_window(improvements.toggled_window());
+    };
+    // Esc on the menu with no dialog open (tt2ui::menu_escape): never a quit.
+    auto menu_escape_key = [&] {
+        switch (tt2ui::menu_escape(tt2ui::THIS_PLATFORM, improvements.window)) {
+            case tt2ui::MenuEscape::LeaveFullscreen: switch_window(tt2::WindowMode::Windowed); break;
+            case tt2ui::MenuEscape::Background: SDL_MinimizeWindow(win); break;   // SDL calls moveTaskToBack
+            case tt2ui::MenuEscape::Nothing: break;
+        }
     };
     // "Continue the game?" (CTEXT_START_SAVEGAME, 0x42dc80) on the menu. Port
     // improvement: the original never shows it in play (a save just resumes,
@@ -3266,15 +3279,9 @@ int main(int argc, char** argv) {
                     menu_help_press(dialog_mouse_up(menu_help->dialog(), e.button.x, e.button.y));
                 continue;
             }
-            if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) {
-#ifdef __ANDROID__
-                // Back on the menu: put the app in the background (SDL calls
-                // moveTaskToBack) instead of quitting, as Android apps do.
-                SDL_MinimizeWindow(win);
-#else
-                running = false;
-#endif
-            }
+            // Desktop: leave fullscreen, like the exe (help-and-settings.md §3.4).
+            // Android: Back puts the app in the background.
+            if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) menu_escape_key();
             if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0) {
                 auto* menu = flow.selection();
                 if (e.type == SDL_EVENT_MOUSE_MOTION) menu->mouse_move(e.motion.x, e.motion.y, hit);
@@ -3403,7 +3410,8 @@ int main(int argc, char** argv) {
                 else if (c == '~') profile.key_escape();
             }
         }
-        // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL;
+        // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL
+        // (Esc with no dialog open);
         // '"' CHANGE NAME (player select);
         // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter;
         // '=' IMPROVEMENTS, then '<' / '>' its display mode, '(' / ')' its resolution, '[' / ']' its filter,
@@ -3454,7 +3462,8 @@ int main(int argc, char** argv) {
                 else if (menu_settings && c == '>') menu_settings->press("BUTTON_NEXT");
                 else if (c == '<') menu_help_press("BUTTON_PREV");
                 else if (c == '>') menu_help_press("BUTTON_NEXT");
-                else if (c == '~') menu_help_press("BUTTON_OK");
+                else if (c == '~' && menu_help) menu_help_press("BUTTON_OK");
+                else if (c == '~') menu_escape_key();
             }
         }
         if (trophy_room) trophy_room->update(dt);

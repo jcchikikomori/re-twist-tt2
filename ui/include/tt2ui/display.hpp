@@ -30,6 +30,26 @@ inline tt2::Improvements display_for_platform(tt2::Improvements imp, Platform p)
     return imp;
 }
 
+// What Esc does on the menu with no dialog open. It never quits: QUIT (with
+// its confirm) and the window's close button are the ways out
+// (welcome-flow.md §3, "QUIT confirm").
+//
+// CONFIRMED (help-and-settings.md §3.4): the exe's key translator 0x484770
+// calls the window's fullscreen setter 0x483c30 with 0, which does nothing
+// when the window is already windowed. The setter tells SettingsManager
+// (message 0x202), which saves the new value, so the host switches through
+// the same path as Alt+Enter and IMPROVEMENTS' OK. Any fullscreen mode
+// (Borderless or Native) counts as the original's fullscreen.
+//
+// Android has no window to leave: Back arrives as Esc and puts the app in
+// the background, as Android apps do.
+enum class MenuEscape { Nothing, LeaveFullscreen, Background };
+
+inline MenuEscape menu_escape(Platform p, tt2::WindowMode current) {
+    if (p == Platform::Android) return MenuEscape::Background;
+    return current == tt2::WindowMode::Windowed ? MenuEscape::Nothing : MenuEscape::LeaveFullscreen;
+}
+
 struct ViewRect {
     float x = 0, y = 0, w = 0, h = 0;
     bool empty() const { return w <= 0 || h <= 0; }
