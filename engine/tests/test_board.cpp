@@ -243,6 +243,67 @@ TEST(guess_not_a_word) {
               static_cast<int>(GuessStatus::NotAWord));
 }
 
+// 0x432330 rebuilds the AnagramTable list at +0x180 (count +0x184, the
+// slot count) from the board's words; Board::on_board reads the same list.
+TEST(board_on_board_reads_the_slot_list) {
+    auto t = tiny_dict();
+    Board b = Board::build("abcde", t, 1);   // WOTD-style cap: 1 per length
+    ASSERT_EQ(b.slots(3).size(), std::size_t(1));
+    const std::string kept = b.slots(3)[0];
+    ASSERT_TRUE(b.on_board(kept));
+    ASSERT_TRUE(b.on_board("abcd"));
+    ASSERT_TRUE(b.on_board("abcde"));
+    int cut = 0;
+    for (const char* w : {"abc", "ace", "bad"}) {
+        if (kept == w) continue;
+        ASSERT_TRUE(!b.on_board(w));          // common, but left off the board
+        ++cut;
+    }
+    ASSERT_EQ(cut, 2);
+    ASSERT_TRUE(!b.on_board("ab"));           // 2 letters: no slot list
+    ASSERT_TRUE(!b.on_board(""));
+    ASSERT_TRUE(!b.on_board("abcdefghi"));    // longer than any slot
+}
+
+// 0x432850: the out-flag "uncommon" is set when the guess is not in the
+// board's list, so a common word the cap left off the board is uncommon
+// and still fills the first free slot of its length.
+TEST(guess_common_word_cut_from_the_board_is_uncommon) {
+    auto t = tiny_dict();
+    auto full = full_with({});
+    Board b = Board::build("abcde", t, 1);
+    const std::string kept = b.slots(3)[0];
+    std::string cut;
+    for (const char* w : {"abc", "ace", "bad"}) {
+        if (kept != w) { cut = w; break; }
+    }
+    ASSERT_TRUE(t.contains(cut));
+    FilledBoard fb(std::move(b));
+    GuessProcessor p(fb, t, full);
+    const auto o = p.apply(cut);
+    ASSERT_EQ(static_cast<int>(o.status),
+              static_cast<int>(GuessStatus::Uncommon));
+    ASSERT_TRUE(o.newly_uncommon);
+    ASSERT_EQ(o.slot_index, std::size_t(0));
+    ASSERT_EQ(o.placed_word, cut);
+    ASSERT_EQ(o.points, 90);
+}
+
+// Negative: under the same cap, the board's own word is accepted, not
+// uncommon.
+TEST(guess_board_word_under_a_cap_is_accepted) {
+    auto t = tiny_dict();
+    auto full = full_with({});
+    Board b = Board::build("abcde", t, 1);
+    const std::string kept = b.slots(3)[0];
+    FilledBoard fb(std::move(b));
+    GuessProcessor p(fb, t, full);
+    const auto o = p.apply(kept);
+    ASSERT_EQ(static_cast<int>(o.status),
+              static_cast<int>(GuessStatus::Accepted));
+    ASSERT_TRUE(!o.newly_uncommon);
+}
+
 TEST(bingo_uses_every_letter) {
     auto t = tiny_dict();
     Board b = Board::build("abcde", t);

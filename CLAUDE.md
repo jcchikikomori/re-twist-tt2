@@ -185,8 +185,9 @@ the address-level walkthrough of the gameplay code is in
   than 48, each length gets the quota `max(1, trunc(count*48/total))`.
 - Guess: must be in the **full** list and spellable from the rack,
   then fills the first empty slot of the same length; the slot shows
-  the guessed word. A guess that isn't in the common list counts as
-  "uncommon".
+  the guessed word. A guess that isn't one of the round's board words
+  counts as "uncommon" (`0x432850`), so a common word cut by the board
+  limits counts too.
 - Scoring: **10 × len²** per word; the **first bingo** (a word using
   every letter) in a round adds **+1000** and qualifies you; **finding
   every word** adds **+100 × slot count** and ends the round. There is

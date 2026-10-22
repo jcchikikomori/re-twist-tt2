@@ -933,17 +933,20 @@ TEST(all_words_ends_round_and_next_round_starts) {
     // wait behind it (one at a time).
     ASSERT_TRUE(f.shown() == PopupKind::Definitions);
     ASSERT_EQ(s.popups_waiting(), std::size_t{2});
-    ASSERT_EQ(f.profile.rounds_completed[static_cast<std::size_t>(tt2::GameMode::Untimed)], 1);
+    // Counted as DIALOG_NEXTROUND opens (the original: on its OK, 0x425190).
+    ASSERT_EQ(f.profile.rounds_completed[static_cast<std::size_t>(tt2::GameMode::Untimed)], 0);
     const std::int32_t score = s.score();
     ASSERT_TRUE(score >= 1000 + 100 * static_cast<std::int32_t>(words.size()));
     s.type_letter('c');                                    // input ignored now
     ASSERT_TRUE(s.typed().empty());
-    s.update(16);
-    ASSERT_TRUE(s.phase() == GamePhase::Reveal);           // 0x428840: always 3 s
-    s.update(REVEAL_MS);
+    s.update(ALL_WORDS_REVEAL_MS - 10);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);           // 0x424730 -> 0x428840(1000)
+    ASSERT_TRUE(!s.dialog_open());
+    s.update(20);
     ASSERT_TRUE(s.phase() == GamePhase::AwaitNext);
     ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
     ASSERT_TRUE(f.played(SoundId::NextRoundAchieved));
+    ASSERT_EQ(f.profile.rounds_completed[static_cast<std::size_t>(tt2::GameMode::Untimed)], 1);
     s.dialog_press("BUTTON_OK");
     ASSERT_EQ(s.round_number(), 2);
     ASSERT_TRUE(s.phase() == GamePhase::Playing);
@@ -1214,6 +1217,11 @@ TEST(timed_round_with_bingo_advances_on_time_up) {
     s.update(ROUND_MS + 10);
     ASSERT_TRUE(s.last_round_end() == RoundEnd::TimeUpQualified);
     ASSERT_EQ(s.misses(), 0);
+    // Counted as DIALOG_NEXTROUND opens, after the 3000 ms reveal (the
+    // original counts it on that dialog's OK, 0x425190).
+    ASSERT_EQ(f.profile.rounds_completed[static_cast<std::size_t>(tt2::GameMode::Timed)], 0);
+    s.update(REVEAL_MS + 20);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
     ASSERT_EQ(f.profile.rounds_completed[static_cast<std::size_t>(tt2::GameMode::Timed)], 1);
 }
 
@@ -1278,7 +1286,10 @@ TEST(pass_asks_then_costs_a_miss_and_moves_on) {
     ASSERT_TRUE(f.played(SoundId::LoseLife));
     ASSERT_TRUE(f.played(SoundId::WordPassReveal));
     ASSERT_TRUE(s.phase() == GamePhase::Reveal);
-    ASSERT_EQ(f.skip_button(), std::string(""));           // hidden during the reveal
+    // 0x425710 while +0x2f9 is set: setEnabled(0) only, so PASS x2 stays
+    // on screen, greyed, through the reveal.
+    ASSERT_EQ(f.skip_button(), std::string("BUTTON_Pass_2"));
+    ASSERT_TRUE(!s.button("BUTTON_Pass_2")->enabled);
     ASSERT_EQ(f.discards, 0);                              // the game goes on
     s.update(REVEAL_MS + 20);                              // 0x425190: next round by itself
     ASSERT_TRUE(s.phase() == GamePhase::Playing);
@@ -2457,7 +2468,7 @@ std::vector<std::string> board_of(const GameScene& s) {
 TEST(wotd_timing_constants_match_the_exe) {
     ASSERT_EQ(ROUND_MS, 120000);                  // 0x425c50: +0x2fc
     ASSERT_EQ(REVEAL_MS, 3000);                   // 0x428840(3000), 0x428c80(.., 1)
-    ASSERT_EQ(WOTD_ALL_WORDS_REVEAL_MS, 1000);    // 0x424730 -> 0x428840(1000)
+    ASSERT_EQ(ALL_WORDS_REVEAL_MS, 1000);         // 0x424730 -> 0x428840(1000), every mode
     ASSERT_EQ(WOTD_GAME_OVER_DELAY_MS, 3000);     // state 3 -> 0x428c80(.., 0)
     ASSERT_EQ(WOTD_BOARD_PER_LENGTH, std::size_t{5});   // 0x4262b0
 }
@@ -2564,7 +2575,10 @@ TEST(wotd_spot_shows_give_up_then_done) {
     s.mouse_up(327, 483);
     ASSERT_TRUE(s.last_round_end() == RoundEnd::NextRound);
     ASSERT_TRUE(s.phase() == GamePhase::Reveal);
-    ASSERT_TRUE(!shown("BUTTON_WOTD_DONE"));
+    // 0x428840 disables +0x224 and 0x425710 (+0x2f9 set) only disables:
+    // DONE stays on screen, greyed (wotd-gaps.md #1).
+    ASSERT_TRUE(shown("BUTTON_WOTD_DONE") && !s.button("BUTTON_WOTD_DONE")->enabled);
+    ASSERT_TRUE(!shown("BUTTON_GiveUp"));
 }
 
 // Negative: Classic never shows DONE; a qualified round shows NEXT ROUND.
@@ -2963,7 +2977,7 @@ TEST(wotd_first_bingo_queues_popup_11) {
         s.update(3000);
     }
     ASSERT_TRUE(!popup_is_banner(PopupKind::WordOfTheDay));
-    ASSERT_EQ(popup_duration_ms(PopupKind::WordOfTheDay), 1650);   // INFERRED message timing
+    ASSERT_EQ(popup_duration_ms(PopupKind::WordOfTheDay), 1650);   // message timing (0x428ec0 @0x42934c)
 
     Fixture t(true);
     bingo(t);
@@ -2992,6 +3006,7 @@ TEST(wotd_round_end_counts_the_round_and_pushes_its_trophy) {
     f.profile.rounds_completed = {1, 1, 1, 1, 0};
     bingo(f);
     f.scene->press("BUTTON_WOTD_DONE");
+    f.scene->update(0);                                    // Speed Speller shows during the reveal
     f.scene->update(3010);
     ASSERT_EQ(f.profile.rounds_completed[4], 1);
     ASSERT_TRUE(f.profile.has_trophy(tt2::TROPHY_WELL_ROUNDED));
@@ -3128,4 +3143,266 @@ TEST(menu_never_discards_classic_or_lightning_saves) {
     ASSERT_TRUE(!menu_discards_saved_game(tt2::GameMode::Untimed, saved("UNTIMED", -1), MANILA_1023_0010));
     ASSERT_TRUE(!menu_discards_saved_game(tt2::GameMode::Blitz, saved("BLITZ", -1), BERLIN_0715_0030,
                                           tt2::WotdDayRule::Local));
+}
+
+// ---- W5 audit against the exe (docs/plans/wotd-gaps.md) --------------------
+
+// Gap 1, 0x425710: while +0x260 or +0x2f9 is set the refresh only calls
+// setEnabled(0) (vtable +0xb8) on +0x210..+0x230, never setVisible. NEXT
+// ROUND stays on screen with its disabled frame through the reveal and
+// behind DIALOG_NEXTROUND.
+TEST(next_round_stays_on_screen_greyed_through_the_reveal_and_the_dialog) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    bingo(f);
+    const MenuButton& next = *s.button("BUTTON_NextRound");
+    ASSERT_TRUE(next.sprite.visible && next.enabled);
+    s.press("BUTTON_NextRound");
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(16);
+    ASSERT_TRUE(next.sprite.visible && !next.enabled);
+    ASSERT_EQ(next.sprite.frame, 3);                       // MenuButton: disabled frame
+    ASSERT_EQ(f.skip_button(), std::string(""));           // PASS does not come back
+    s.press("BUTTON_NextRound");                           // greyed: nothing happens
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(REVEAL_MS);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+    ASSERT_TRUE(next.sprite.visible && !next.enabled);     // behind the dialog
+    s.dialog_press("BUTTON_OK");
+    // Negative: the new round's refresh (both flags clear) sets visibility
+    // again: not qualified, so PASS x2 and no NEXT ROUND.
+    ASSERT_EQ(s.round_number(), 2);
+    ASSERT_TRUE(!next.sprite.visible);
+    ASSERT_EQ(f.skip_button(), std::string("BUTTON_Pass_2"));
+    ASSERT_TRUE(s.button("BUTTON_Pass_2")->enabled);
+}
+
+// Gap 1 in WOTD: DONE stays on screen, greyed, through the reveal, state 3
+// and behind the end card (frames: the exe never hides +0x224 there).
+TEST(wotd_done_stays_greyed_behind_the_end_card) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    bingo(f);
+    s.press("BUTTON_WOTD_DONE");
+    s.update(REVEAL_MS + 10);
+    s.update(WOTD_GAME_OVER_DELAY_MS + 10);
+    ASSERT_TRUE(s.phase() == GamePhase::GameOver);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+    const MenuButton& done = *s.button("BUTTON_WOTD_DONE");
+    ASSERT_TRUE(done.sprite.visible && !done.enabled);
+    ASSERT_TRUE(!s.button("BUTTON_GiveUp")->sprite.visible);
+}
+
+// Gap 1, GIVE UP -> YES: GIVE UP stays, greyed; DONE never appears.
+TEST(wotd_give_up_stays_greyed_after_yes) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    s.press("BUTTON_GiveUp");
+    s.dialog_press("BUTTON_YES");
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    const MenuButton& give_up = *s.button("BUTTON_GiveUp");
+    ASSERT_TRUE(give_up.sprite.visible && !give_up.enabled);
+    ASSERT_TRUE(!s.button("BUTTON_WOTD_DONE")->sprite.visible);
+    s.update(REVEAL_MS + 10);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);
+    ASSERT_TRUE(give_up.sprite.visible && !give_up.enabled);
+}
+
+// Gap 2, 0x424730 @0x42493c: finding every word passes 1000 to 0x428840
+// with no mode test, so a Classic all-words reveal is 1 s too.
+TEST(classic_timed_all_words_reveal_for_one_second) {
+    Fixture f(true);
+    auto& s = *f.scene;
+    find_all(f);
+    ASSERT_TRUE(s.last_round_end() == RoundEnd::AllWords);
+    s.update(ALL_WORDS_REVEAL_MS - 10);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_TRUE(!s.dialog_open());
+    s.update(20);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+}
+
+// Gap 2 negative: NEXT ROUND passes 3000 (0x425b60 -> 0x428840(3000)).
+TEST(classic_next_round_reveal_holds_three_seconds) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    bingo(f);
+    s.press("BUTTON_NextRound");
+    s.update(ALL_WORDS_REVEAL_MS + 10);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(REVEAL_MS - ALL_WORDS_REVEAL_MS - 30);        // 2980 ms in
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(30);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+}
+
+// Gap 3, 0x428840 @0x42888b: every caller runs the Speed Speller check,
+// NEXT ROUND too.
+TEST(next_round_within_five_seconds_wins_speed_speller) {
+    Fixture f(false);
+    bingo(f);
+    f.scene->update(4900);
+    f.scene->press("BUTTON_NextRound");
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_SPEED_SPELLER], tt2::TROPHY_NEW);
+}
+
+TEST(next_round_after_five_seconds_wins_no_speed_speller) {
+    Fixture f(false);
+    bingo(f);
+    f.scene->update(5100);
+    f.scene->press("BUTTON_NextRound");
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_SPEED_SPELLER], tt2::TROPHY_NOT_WON);
+}
+
+TEST(wotd_done_within_five_seconds_wins_speed_speller) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    bingo(f);
+    f.scene->update(4900);
+    f.scene->press("BUTTON_WOTD_DONE");
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_SPEED_SPELLER], tt2::TROPHY_NEW);
+}
+
+TEST(wotd_done_after_five_seconds_wins_no_speed_speller) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    bingo(f);
+    f.scene->update(5100);
+    f.scene->press("BUTTON_WOTD_DONE");
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_SPEED_SPELLER], tt2::TROPHY_NOT_WON);
+}
+
+// Gap 4, 0x426860 @0x426cd9: trophies dequeue whenever +0x260 is 0, and
+// 0x428840 sets only +0x2f9 / +0x264. A trophy won as the round ends
+// (here Speed Speller, won by NEXT ROUND itself) shows during the reveal.
+TEST(trophy_shows_during_the_next_round_reveal) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    bingo(f);
+    s.press("BUTTON_NextRound");
+    s.update(0);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_EQ(s.trophy_popup_id(), static_cast<int>(tt2::TROPHY_SPEED_SPELLER));
+    ASSERT_TRUE(f.played(SoundId::TrophyWon));
+}
+
+// Gap 4: the time-up check runs only with +0x260 clear (0x426d24) and
+// 0x425420 keeps it clear while lives are left, so a trophy waiting at a
+// time-up miss shows during that reveal too.
+TEST(trophy_shows_during_a_time_up_miss_reveal) {
+    Fixture f(true);
+    auto& s = *f.scene;
+    f.profile.twists = 999;
+    f.profile.solved = 999;
+    s.update(ROUND_MS - 2000);
+    s.key_space();                                         // With a Twist
+    s.update(BALL_MOVE_MS);                                // its popup starts (3500 ms)
+    enter_word(f, short_words(f)[0]);                      // Word Nerd waits behind it
+    ASSERT_EQ(s.trophies_waiting(), std::size_t{1});
+    s.update(1400);                                        // time up, not qualified
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_TRUE(s.last_round_end() == RoundEnd::TimeUpMissed);
+    s.update(1600);                                        // With a Twist is done
+    s.update(0);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_EQ(s.trophy_popup_id(), static_cast<int>(tt2::TROPHY_WORD_NERD));
+}
+
+// Gap 4 negative: a pass comes from its YES (0x4253a0 leaves +0x260 at 1),
+// so a waiting trophy holds through the reveal and shows in the next round.
+TEST(trophy_waits_through_a_pass_reveal) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.profile.solved = 999;
+    f.type(short_words(f)[0]);
+    s.key_return();                                        // Word Nerd, not shown yet
+    s.press("BUTTON_Pass_2");
+    s.dialog_press("BUTTON_YES");
+    s.update(0);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_EQ(s.trophy_popup_id(), -1);
+    ASSERT_EQ(s.trophies_waiting(), std::size_t{1});
+    s.update(REVEAL_MS + 20);                              // 0x425190: the next round
+    s.update(0);
+    ASSERT_EQ(s.round_number(), 2);
+    ASSERT_EQ(s.trophy_popup_id(), static_cast<int>(tt2::TROPHY_WORD_NERD));
+}
+
+// Gap 4 negative in WOTD: GIVE UP's reveal holds it too, and the end card
+// follows, so it never shows (the award stays).
+TEST(wotd_give_up_reveal_holds_trophies) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    f.profile.solved = 999;
+    f.type("car");
+    s.key_return();                                        // Word Nerd, not shown yet
+    s.press("BUTTON_GiveUp");
+    s.dialog_press("BUTTON_YES");
+    s.update(0);
+    ASSERT_EQ(s.trophy_popup_id(), -1);
+    s.update(REVEAL_MS + 10);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);
+    s.update(5000);
+    ASSERT_EQ(s.trophy_popup_id(), -1);
+    ASSERT_EQ(s.trophies_waiting(), std::size_t{1});
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_WORD_NERD], tt2::TROPHY_NEW);
+}
+
+// Answer (a): a trophy won before state 3 shows during the reveal; state 3
+// sets +0x260 (0x426b5c) and nothing clears it before the scene goes
+// (0x427d10, the end card, its OK -> 0x427b20 -> 0x427b40 all leave it),
+// so the round's own trophy, here Well Rounded, is won but never shown.
+// The trophy room shows it as new (slot 1).
+TEST(wotd_round_trophy_is_won_but_never_shown) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    f.profile.rounds_completed = {1, 1, 1, 1, 0};
+    bingo(f);
+    s.press("BUTTON_WOTD_DONE");
+    s.update(0);
+    ASSERT_EQ(s.trophy_popup_id(), static_cast<int>(tt2::TROPHY_SPEED_SPELLER));   // during the reveal
+    s.update(REVEAL_MS + 10);                              // state 3
+    ASSERT_TRUE(f.profile.has_trophy(tt2::TROPHY_WELL_ROUNDED));
+    ASSERT_EQ(s.trophies_waiting(), std::size_t{1});
+    s.update(1000);                                        // Speed Speller's 3500 ms are over
+    s.update(0);
+    ASSERT_EQ(s.trophy_popup_id(), -1);                    // +0x260 holds Well Rounded
+    s.update(WOTD_GAME_OVER_DELAY_MS);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+    s.update(5000);
+    ASSERT_EQ(s.trophy_popup_id(), -1);
+    ASSERT_EQ(s.trophies_waiting(), std::size_t{1});
+    s.dialog_press("BUTTON_OK");
+    ASSERT_EQ(f.exits, 1);
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_WELL_ROUNDED], tt2::TROPHY_NEW);
+}
+
+// Gap 5, 0x432850: "uncommon" is a miss in the table's list at +0x180,
+// which 0x432330 fills with the board's words only. "rat" is common, but
+// the WOTD cap of 5 per length leaves it off the carte board, so it takes
+// the first free 3-letter slot as an uncommon word (Human Dictionary).
+TEST(wotd_common_word_off_the_board_counts_as_uncommon) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    ASSERT_TRUE(f.com.contains("rat"));
+    ASSERT_TRUE(f.slot("rat") == nullptr);
+    f.type("rat");
+    s.key_return();
+    ASSERT_TRUE(f.slot("rat") != nullptr && f.slot("rat")->found);
+    ASSERT_EQ(f.profile.hard_solved, 1);
+    f.type("cat");                                         // a board word is not uncommon
+    s.key_return();
+    ASSERT_EQ(f.profile.hard_solved, 1);
+}
+
+// Gap 5 negative: Classic keeps every common word of this rack (27 < 48),
+// so "rat" is a board word there; a full-only word is still uncommon.
+TEST(classic_board_word_is_not_uncommon) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    ASSERT_TRUE(f.slot("rat") != nullptr);
+    f.type("rat");
+    s.key_return();
+    ASSERT_EQ(f.profile.hard_solved, 0);
+    f.type("cart");
+    s.key_return();
+    ASSERT_EQ(f.profile.hard_solved, 1);
 }

@@ -51,7 +51,7 @@ For Text Twist 2:
 | File | Words | Length range | Role |
 |---|---:|---|---|
 | `data/TextTwist2Words.tree` | 25,004 | 3–15 | **common** — supplies the rack/root word and the on-screen word slots. Rack candidates are 5–8 letters; the board shows 3–8 letter sub-anagrams of the rack. |
-| `data/DamBeaversWords.tree` | 116,757 | 2–16 | **full** — used **only to validate guesses**. A word that is in the full list but not in the common list is accepted as an "uncommon" word (Human Dictionary trophy). |
+| `data/DamBeaversWords.tree` | 116,757 | 2–16 | **full** — used **only to validate guesses**. A word that is in the full list but not on the board (not common, or common but cut by the slot quota or the WOTD cap) is accepted as an "uncommon" word (Human Dictionary trophy; game-scene.md §8.3). |
 
 The two files are linked: `TextTwist2Words` is a strict subset of
 `DamBeaversWords`. Round-tripping either file through the canonical encoder
@@ -158,8 +158,10 @@ If the count exceeds 48, each length bucket gets the quota
 alphabetical for a canonical trie.
 
 The full DamBeavers list is the **guess validator**; a guess that is in
-DamBeavers but not in TextTwist2Words is accepted as an "uncommon" word
-(Human Dictionary trophy). Two-letter DamBeavers words validate but have
+DamBeavers but not one of the board's words is accepted as an "uncommon"
+word (Human Dictionary trophy). That covers a common word the 48-slot
+quota or the WOTD cap left off the board (0x432850 / 0x432330,
+game-scene.md §8.3). Two-letter DamBeavers words validate but have
 no slot to land in, so they score nothing.
 
 ### 5.3 Scoring (CONFIRMED at 0x4247fe)

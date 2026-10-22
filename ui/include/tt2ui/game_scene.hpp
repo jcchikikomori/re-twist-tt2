@@ -393,9 +393,12 @@ constexpr std::size_t ENTER_MIN_LETTERS = 3;
 constexpr int WARNING_MS = 10000;         // 0x425c50: +0x304 (countdown starts at 10 s)
 constexpr int LIVES = 3;                  // 0x425420: game over when the miss counter reaches 3
 constexpr int REVEAL_MS = 3000;           // 0x428840 / 0x425420 / 0x428c80: ModifierDelay(3000) after the reveal
+// Finding every word passes 1000 to 0x428840 instead (0x424730 @0x42493c:
+// push 0x3e8, no mode test), so Classic and Word of the Day hold the
+// all-words reveal 1 s (0x428840 @0x428a02: [EAX+0x44] = the argument).
+constexpr int ALL_WORDS_REVEAL_MS = 1000;
 // Word of the Day (game-scene.md §8).
 constexpr std::size_t WOTD_BOARD_PER_LENGTH = 5;   // 0x4262b0: counters [0, 0, 0, 5, 5, 5, 5, 5, 5]
-constexpr int WOTD_ALL_WORDS_REVEAL_MS = 1000;     // 0x424730 -> 0x428840(1000)
 constexpr int WOTD_GAME_OVER_DELAY_MS = 3000;      // state 3 -> 0x428c80(.., 0): no second reveal, 3000 ms
 
 enum class GamePhase {
@@ -909,9 +912,11 @@ public:
         const int round_before = round_number_;
         queue_.update(dt_ms);
         popups_.update(dt_ms);
-        // 0x426860 @0x426ce6: the next trophy shows when no dialog or
-        // round-end step is pending and none is up. It does not stop the clock.
-        if (trophies_.update(dt_ms, !dialog_open() && queue_.empty())) play(SoundId::TrophyWon);
+        // 0x426860 @0x426cd9 / @0x426ce6: the next trophy shows when the
+        // block flag +0x260 is clear and none is up. The port reads that as
+        // no dialog and no round-end step pending, except a reveal that
+        // leaves +0x260 at 0 (0x428840, a time-up miss). It does not stop the clock.
+        if (trophies_.update(dt_ms, !dialog_open() && (queue_.empty() || reveal_unblocked_))) play(SoundId::TrophyWon);
         if (phase_ == GamePhase::Playing && round_number_ == round_before) round_elapsed_ms_ += dt_ms;
         for (auto& v : slots_)
             if (v.flipping()) v.flip_ms += dt_ms;
@@ -1046,6 +1051,7 @@ private:
         // 0x425c50: +0x370 (twisted this round) clears every round; the
         // streaks (+0x36c, +0x374) only on round 1 of a new game.
         twisted_this_round_ = false;
+        reveal_unblocked_ = false;
         round_elapsed_ms_ = 0;
         if (number == 1) {
             no_twist_streak_ = 0;
@@ -1184,7 +1190,8 @@ private:
     }
 
     // Round over. Every path reveals the missing words
-    // (SOUND_word_pass_reveal) and waits 3000 ms, then:
+    // (SOUND_word_pass_reveal) and waits 3000 ms (1000 ms after finding
+    // every word, 0x424730 -> 0x428840(1000)), then:
     //   qualified (0x428840)      -> DIALOG_NEXTROUND, OK starts the next round
     //   passed, lives left (0x425420(0) -> 0x425190) -> the next round starts by itself
     //   time up unqualified, lives left (0x425420(1) -> 0x428a80, state 6)
@@ -1203,11 +1210,14 @@ private:
             case RoundEnd::AllWords:
             case RoundEnd::TimeUpQualified:
             case RoundEnd::NextRound:
-                // 0x428840: a round finished within 5 s wins Speed Speller.
-                if (why != RoundEnd::NextRound) queue_trophy(tt2::award_speed_speller(profile_, round_elapsed_ms_));
-                // 0x40f2b0 (the original counts it on NEXT ROUND, 0x425190;
-                // the popup waits for the dialog either way).
-                queue_trophy(tt2::count_round(profile_, mode()));
+                // 0x428840 @0x42888b: a round finished within 5 s wins Speed
+                // Speller. Every caller runs the check, NEXT ROUND too
+                // (0x425b60 -> 0x428840(3000)), wotd-gaps.md #3.
+                queue_trophy(tt2::award_speed_speller(profile_, round_elapsed_ms_));
+                // 0x428840 sets only +0x2f9 / +0x264, never the block flag
+                // +0x260, so trophies already won show during this reveal
+                // (0x426860 @0x426cd9, wotd-gaps.md #4).
+                reveal_unblocked_ = true;
                 break;
             case RoundEnd::TimeUpMissed:
             case RoundEnd::Passed:
@@ -1215,16 +1225,30 @@ private:
                 play(SoundId::LoseLife);
                 if (misses_ >= LIVES) after = After::GameOver;
                 else after = why == RoundEnd::TimeUpMissed ? After::PassDialog : After::AutoNext;
+                // The time-up check runs only while +0x260 is 0 (0x426d24)
+                // and 0x425420 sets it only on the third miss (@0x4256ab), so
+                // a time-up miss reveal lets trophies through too. A pass
+                // comes from its YES (0x4253a0), with +0x260 still 1.
+                reveal_unblocked_ = after == After::PassDialog;
                 break;
             case RoundEnd::None: break;
         }
         if (services_.on_profile_change) services_.on_profile_change();
         if (after == After::GameOver && services_.discard_save) services_.discard_save();   // 0x461840
         reveal_missing_words();
-        queue_.push_delay(REVEAL_MS);
+        queue_.push_delay(why == RoundEnd::AllWords ? ALL_WORDS_REVEAL_MS : REVEAL_MS);
         queue_.push_method([this, after] {
+            // The dispatch sets +0x260 for the dialog that follows (@0x4268c5).
+            reveal_unblocked_ = false;
             switch (after) {
                 case After::NextDialog:
+                    // 0x40f2b0: the original counts the round on NEXT ROUND
+                    // OK (0x425190); the port counts it as the dialog opens.
+                    // The popup waits for the dialog either way, so it
+                    // shows when the next round starts, after the trophies
+                    // of the reveal.
+                    queue_trophy(tt2::count_round(profile_, mode()));
+                    if (services_.on_profile_change) services_.on_profile_change();
                     phase_ = GamePhase::AwaitNext;
                     play(SoundId::NextRoundAchieved);   // 0x426860 case 3
                     open_dialog(GameDialog::NextRound);
@@ -1281,16 +1305,24 @@ private:
         return_all_letters();
         const bool round_won =
             why == RoundEnd::AllWords || why == RoundEnd::TimeUpQualified || why == RoundEnd::NextRound;
-        // 0x428840: as in Classic, a round finished within 5 s wins Speed Speller.
-        if (why == RoundEnd::AllWords || why == RoundEnd::TimeUpQualified)
-            queue_trophy(tt2::award_speed_speller(profile_, round_elapsed_ms_));
+        // 0x428840 @0x42888b: as in Classic, a round finished within 5 s
+        // wins Speed Speller, DONE included (wotd-gaps.md #3).
+        if (round_won) queue_trophy(tt2::award_speed_speller(profile_, round_elapsed_ms_));
+        // A won round's reveal is 0x428840's: no block flag, so the trophies
+        // already won show during it (0x426860 @0x426cd9, wotd-gaps.md #4).
+        // GIVE UP's comes from a dialog (+0x260 still 1) and the time-up
+        // miss sets +0x260 @0x427005, so theirs wait.
+        reveal_unblocked_ = round_won;
         if (!round_won) close_wotd_day();
         reveal_missing_words();
         if (round_won) {
-            queue_.push_delay(why == RoundEnd::AllWords ? WOTD_ALL_WORDS_REVEAL_MS : REVEAL_MS);
+            queue_.push_delay(why == RoundEnd::AllWords ? ALL_WORDS_REVEAL_MS : REVEAL_MS);
             queue_.push_method([this] {
-                // State 3 sets the block flag +0x260 first, so the trophy
-                // waits like every popup behind a pending step (trophies.md §1).
+                // State 3 sets the block flag +0x260 first (0x426b5c), so this
+                // trophy and any still waiting never show: the end card
+                // follows and no write clears +0x260 before the scene goes
+                // (wotd-gaps.md, answer (a)). The award is kept.
+                reveal_unblocked_ = false;
                 queue_trophy(tt2::count_round(profile_, mode_));   // mov eax, 4 @0x426b74; call 0x40f2b0
                 close_wotd_day();
             });
@@ -1657,14 +1689,20 @@ private:
         const std::size_t available = balls_.size() - played;
         for (auto& b : buttons_) {
             const std::string& n = b.sprite.name;
-            // 0x425710: NEXT ROUND only for a qualified round, so not behind
-            // DIALOG_PASSROUND (AwaitNext after a time-up miss).
-            const bool next_shown = (playing || phase_ == GamePhase::AwaitNext) && q;
-            if (n == "BUTTON_NextRound") { b.sprite.visible = !wotd() && next_shown; b.enabled = b.sprite.visible; }
-            else if (n == "BUTTON_WOTD_DONE") { b.sprite.visible = wotd() && next_shown; b.enabled = b.sprite.visible; }
-            else if (n == "BUTTON_Pass_2") { b.sprite.visible = !wotd() && playing && !q && misses_ == 0; b.enabled = b.sprite.visible; }
-            else if (n == "BUTTON_Pass") { b.sprite.visible = !wotd() && playing && !q && misses_ == 1; b.enabled = b.sprite.visible; }
-            else if (n == "BUTTON_GiveUp") { b.sprite.visible = playing && !q && (wotd() || misses_ >= 2); b.enabled = b.sprite.visible; }
+            const bool spot = n == "BUTTON_NextRound" || n == "BUTTON_WOTD_DONE" || n == "BUTTON_Pass_2" ||
+                              n == "BUTTON_Pass" || n == "BUTTON_GiveUp";
+            // 0x425710: while the scene is blocked (+0x260 dialog or pending
+            // step, +0x2f9 reveal) it only calls setEnabled(0) (vtable +0xb8)
+            // on +0x210..+0x230, never setVisible (+0x5c). The spot button
+            // shown when the round ended (NEXT ROUND / DONE / PASS / GIVE UP)
+            // stays on screen, greyed, through the reveal and behind the
+            // round-end dialog or end card (wotd-gaps.md #1).
+            if (spot && !playing) { b.enabled = false; continue; }
+            if (n == "BUTTON_NextRound") { b.sprite.visible = !wotd() && q; b.enabled = b.sprite.visible; }
+            else if (n == "BUTTON_WOTD_DONE") { b.sprite.visible = wotd() && q; b.enabled = b.sprite.visible; }
+            else if (n == "BUTTON_Pass_2") { b.sprite.visible = !wotd() && !q && misses_ == 0; b.enabled = b.sprite.visible; }
+            else if (n == "BUTTON_Pass") { b.sprite.visible = !wotd() && !q && misses_ == 1; b.enabled = b.sprite.visible; }
+            else if (n == "BUTTON_GiveUp") { b.sprite.visible = !q && (wotd() || misses_ >= 2); b.enabled = b.sprite.visible; }
             else if (n == "BUTTON_Menu") { b.enabled = true; }
             else if (n == "BUTTON_Twist") { b.enabled = playing && available > 1; }
             else if (n == "BUTTON_Clear") { b.enabled = playing && played > 0; }
@@ -1716,6 +1754,7 @@ private:
     std::int32_t no_twist_streak_ = 0;       // +0x36c
     std::int32_t bingo_streak_ = 0;          // +0x374
     bool twisted_this_round_ = false;        // +0x370
+    bool reveal_unblocked_ = false;          // a reveal with +0x2f9 set and +0x260 still 0
     int round_elapsed_ms_ = 0;               // 120000 - (+0x2fc), counted in every mode
     // Word of the Day, both taken at round start (game-scene.md §8.1).
     std::int64_t word_day_ = 0;              // picks the rack (0x43d690)

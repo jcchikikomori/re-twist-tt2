@@ -63,7 +63,8 @@ inline SheetSpec popup_sheet(PopupKind k) {
         case PopupKind::ExtraTime: return sheet("IMAGE_IMAGE_POPUP_6", 324, 107);
         case PopupKind::NoneOfLength: return sheet("IMAGE_IMAGE_POPUP_8", 301, 102);
         case PopupKind::Definitions: return sheet("IMAGE_IMAGE_POPUP_10", 326, 121);
-        // INFERRED (§8.8): a message, not a banner; only kinds 1 and 2 run frames.
+        // A message, not a banner: 0x428ec0 @0x42934c runs the banner chain
+        // only for kinds 2 and 1 (game-scene.md §8.5, W5 audit).
         case PopupKind::WordOfTheDay: return sheet("IMAGE_IMAGE_POPUP_11", 324, 107);
     }
     return SheetSpec{};

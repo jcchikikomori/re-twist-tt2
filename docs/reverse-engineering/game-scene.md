@@ -301,11 +301,15 @@ sprites in `dialogs.xml` stay at `alpha="0"`: the exe has no `COMMENTS`, `COMMEN
 defined strings). They are leftovers from the first game (`docs/design/original-look-brief.md`
 §7), and the port draws neither.
 
-- End of round: `0x428840` (all words) / `0x425420` (time up without a bingo): the missing
-  words are revealed (`SOUND_word_pass_reveal`, `ModifierDelay(3000)`); a miss increments
+- End of round: `0x428840` (all words, NEXT ROUND, time up with a bingo) / `0x425420` (time up without a bingo,
+  Pass): the missing words are revealed (`SOUND_word_pass_reveal`, then a `ModifierDelay`); a miss increments
   `+0x1e8` and plays `SOUND_game_lose_life`; the **third** miss marks the game over
-  (`+0x260 = 1`, then `0x428c80(…, 1)`, which still reveals the words with
-  `SOUND_word_pass_reveal` before game over `0x427d10`). Every reveal holds **3000 ms**.
+  (`+0x260 = 1` @`0x4256ab`, then `0x428c80(…, 1)`, which still reveals the words with
+  `SOUND_word_pass_reveal` before game over `0x427d10`). `0x428840` holds the length its caller passes
+  (`[EAX+0x44] = [EBP+8]` @`0x428a02`): **1000 ms** after finding every word (`0x424730` @`0x42493c`:
+  `push 0x3e8`, no mode test, so Timed and Untimed too), **3000 ms** for NEXT ROUND and a qualified time-up.
+  `0x425420` and `0x428c80` always hold **3000 ms**. (W5 audit, §8.11; an earlier "every reveal holds 3000 ms"
+  here was wrong for the all-words reveal.)
 - Pass / Give Up (CONFIRMED, REA batch B). The scene has one button spot at (317, 473)
   shared by NEXT ROUND, `BUTTON_Pass_2`, `BUTTON_Pass` and GIVE UP. The refresh `0x425710`
   shows exactly one of them outside Word of the Day:
@@ -316,6 +320,11 @@ defined strings). They are leftovers from the first game (`docs/design/original-
   | misses `+0x1e8` = 0 | `BUTTON_Pass_2` |
   | misses = 1 | `BUTTON_Pass` |
   | misses = 2 | GIVE UP |
+
+  While the block flag `+0x260` or the reveal flag `+0x2f9` is set, `0x425710` takes another branch: it calls
+  only setEnabled(0) (vtable `+0xb8`) on `+0x210`..`+0x230` and never setVisible (`+0x5c`). So the button on the
+  spot when the round ended stays **on screen, greyed** (its disabled frame), through the reveal and behind the
+  dialog or end card that follows, until the next round's refresh (W5 audit, §8.11).
 
   The dispatcher `0x425b60` sends Pass and Give Up to state 4. State 4 asks "PASS?"
   (`TEXT_DIALOG_PASS_HEADER` / `TEXT_DIALOG_PASS`) when `misses + 1 < 3`, otherwise "GIVE
@@ -563,9 +572,9 @@ All are `autocenter` and `dodarkenbackground="true"`.
 
 Same binary, Ghidra 12.1.4 through REA, one session. Word of the Day (WOTD) is `TextTwist2Scene` with the mode
 string `scene+0x30c == "WORD_OF_THE_DAY"` (`0x5906c8`; the menu global `0x5fdea8 == 4`, `0x4242a0`). Every check
-below is a string compare on that field through `0x4972a0`. Evidence ids W1-W54 are listed in §8.9 (W44-W54
-belong to the UI bar addendum, §8.10). Tags as at the top of this file; **UNCONFIRMED** = searched for and not
-found, with the search trail.
+below is a string compare on that field through `0x4972a0`. Evidence ids W1-W78 are listed in §8.9 (W44-W54
+belong to the UI bar addendum, §8.10; W55-W78 to the W5 audit, §8.11). Tags as at the top of this file;
+**UNCONFIRMED** = searched for and not found, with the search trail.
 
 ### 8.1 Three clocks, three day numbers (CONFIRMED)
 
@@ -602,9 +611,19 @@ found, with the search trail.
   15 common sub-anagrams (5,775 of 22,048; same count with the open list: 3,964 of 19,256 = 21 %), so on about
   one day in four the exe hands out a word the Classic bag would refuse. INFERRED (estimate, assumes the day
   indices hit the pool evenly).
-- INFERRED: reseeding the global LCG also fixes every later draw from it in that game (the twist shuffles),
-  the way the Classic bag reseed does. The generator body (`0x43da00` / `0x43dad0`) was not read.
+- CONFIRMED (W5 audit): the reseed changes **no gameplay draw**. The global LCG `0x5fde90` has four readers in
+  scene code (W66): the Classic target-length loop `0x426002` (skipped in WOTD), the Classic bag `0x43d5b6`, the
+  WOTD reseed itself `0x43d6bd`, and the shuffle callback `0x43dad0` used only inside `0x43d690` (W68, W70).
+  `0x436090`, the other reader, belongs to Crossword (its only caller is `0x41ba40`, W67, W69). The deal and the
+  twist shuffle with the CRT `_rand()`: `0x43c370` calls `0x439370(begin, end)`, which draws `_rand()` and
+  reshuffles while the letters still spell the rack word (W71, W72). INFERRED: the other `0x5fde90` readers are
+  cosmetic (`DIALOG_CONGRATS` / `DIALOG_NEXTROUND` particles at `0x401xxx` / `0x409xxx`, GF2 effects), so after
+  a WOTD round their positions follow the reseeded state. The port draws those from its own generator; no change.
 - A resumed game does not call `0x43d690`: `0x42a460` passes the saved `WORD` to `0x425c50` (W36).
+- Port deviation **D1** (`Bag::word_of_the_day_for_day`, `docs/design/wotd-crossword.md`): the pool is built from
+  whichever common list the game loaded. With the shipped `open-common.tree` (19,256 words of 5-8 letters) the word
+  for a date differs from the 2008 game's; with the player's own `common.tree` it is the same every day. Worked
+  example, 2026-10-22 (word day 6623): `analogue` with the open list, `airport` with the original (§8.11).
 
 ### 8.3 Board (`0x4262b0`, CONFIRMED)
 
@@ -617,12 +636,18 @@ lengths 0-8, walks the list in order and erases (`0x418840`) every word whose le
 - the board gets the **first 5 words of each length 3-8 in sub-anagram (DFS) order**, at most 30 slots;
 - the cap runs **before** the 48-slot quota of `0x432330`, which therefore never trims a WOTD board (30 < 48);
 - the full-tree list is not capped: any valid word still counts as a guess.
-- INFERRED: the capped list is also the list `AnagramTable` keeps as "common" (`table+0x180`), so a common
-  word cut by the cap would raise the "uncommon" out-flag at `0x432850`. Not traced further.
+- CONFIRMED (W5 audit): a common word cut by the cap counts as **uncommon**. `0x4396e0` passes the capped common
+  list and the full list to `0x432330` (W74), which empties the table list at `+0x180` (count `+0x184`) and
+  refills it with the quota-selected board words only, grouped by length (W75). `0x432850` sets the "uncommon"
+  out-flag when a find over `[+0x180, +0x180 + count·0x1c)` misses (W73), and `+0x184` is also the slot count the
+  all-words check compares with `+0x178` (`0x424730` @`0x4248f7`). So "uncommon" means **not one of the board's
+  words**: a full-only word, or a common word the WOTD cap (or the Classic 48-slot quota) left off. It still
+  fills the first free slot of its length and feeds the Human Dictionary counter. This corrects
+  `gameplay-notes.md` and `architecture.md`, which call `+0x180` the common sub-anagram list.
 
-Port note: `Board::build(rack, common, 5)` applies the 48 quota first and truncates to 5 afterwards
-(`engine/include/tt2/board.hpp:36-45`). For a rack with more than 48 common sub-anagrams a length bucket can drop
-below 5 in the port but not in the exe. Phase 2 (W2) fixes the order.
+Port note: `Board::build(rack, common, 5)` used to apply the 48 quota first and truncate to 5 afterwards; Phase 2
+(T2.1) moved the cap first. The W5 audit made `GuessProcessor::apply` flag a guess uncommon when it is not on the
+board (`Board::on_board`), instead of when it is not in the common list.
 
 ### 8.4 Buttons (CONFIRMED)
 
@@ -650,8 +675,9 @@ below 5 in the port but not in the exe. Phase 2 (W2) fixes the order.
 - First bingo: `+1000` and qualified, as in Classic, but the popup is **kind 11** (`IMAGE_IMAGE_POPUP_11`) instead
   of kind 2 (the BINGO banner): `0x424730` tests the WOTD string @`0x424aa1` and queues `0x428e20(0xb)` (W37). A
   repeat bingo or a plain word queues nothing new (the one-time popup 10 rule is unchanged). The guess that fills
-  every slot queues popup 1 (all words) instead, in every mode. INFERRED: kind 11 uses the message timing
-  (1650 ms, §5.1), since only kinds 1 and 2 are banners.
+  every slot queues popup 1 (all words) instead, in every mode. CONFIRMED (W5 audit): kind 11 uses the message
+  timing (1650 ms, §5.1): `0x428ec0` @`0x42934c` tests `kind == 2`, then `kind == 1`, for the banner chain, and
+  every other kind takes `ModifierDelay(0x384)` = 900 ms (`ev_2a0a784f…`, §5.1).
 - Round end paths in WOTD:
 
   | Trigger | Code | Then |
@@ -715,7 +741,10 @@ below 5 in the port but not in the exe. Phase 2 (W2) fixes the order.
   written by paths that also delete the save (`0x427cc0` and `0x4253a0` both call `0x461840` first).
 - INFERRED edge (not play-tested): after a round-end reveal starts (`+0x264 = 1`) and before state 3 runs, the
   pause menu can still exit the scene (`0x425b60` sets state 1 for `BUTTON_Menu` whatever `+0x264` is). That exit
-  writes no save and no `WOD`, so the same day can be played again.
+  writes no save and no `WOD`, so the same day can be played again. W5 audit, more static support: the dispatch
+  opens state 1 only while `+0x260 == 0` (`0x426860` top, W17), and a `0x428840` reveal sets only `+0x2f9` /
+  `+0x264` (W14), so the menu does open there; `0x427b20` skips the save when `+0x264 != 0` (W34) and
+  `0x427b40` replaces the scene with `SCENE_SELECTION` (W56). Still not play-tested on the original.
 - Day rollover mid-game: the rack word and `+0x1ec` are fixed at round start, so a game that crosses midnight
   keeps its word and writes the **start** day into `WOD`; the button is enabled again the next time the menu
   is drawn. A save that crosses midnight is discarded on load (above).
@@ -734,10 +763,10 @@ below 5 in the port but not in the exe. Phase 2 (W2) fixes the order.
 
 | Item | Search trail |
 | --- | --- |
-| Kind 11 popup timing (message vs. banner) | `0x428ec0` decoded in §5.1 for kinds 1 / 2 only; kind 11 not stepped through |
-| Exit during the round-end reveal (§8.6 edge) | Static only: `0x425b60` state 1 is unconditional; `0x427b20` skips the save when `+0x264 != 0`; not play-tested |
-| Global LCG draws after the WOTD reseed | `0x43d950` calls `0x43da00` with generator `0x43dad0`; neither body read |
-| "Uncommon" flag on cap-trimmed common words | `0x4262b0` erases from the list passed as the common list to `0x4396e0`; `table+0x180` identity from §2, not re-read |
+| Exit during the round-end reveal (§8.6 edge) | Static only: `0x425b60` state 1 is unconditional; the dispatch needs `+0x260 == 0`, which a `0x428840` reveal leaves (W14, W17); `0x427b20` skips the save when `+0x264 != 0` (W34); `0x427b40` leaves (W56); not play-tested on the original |
+
+Resolved by the W5 audit (§8.11): kind 11 popup timing (message, §8.5), the global LCG after the reseed (no
+gameplay draw, §8.2), and the "uncommon" flag on cap-trimmed words (set, §8.3).
 
 ### 8.9 Evidence ids (batch W)
 
@@ -797,6 +826,30 @@ below 5 in the port but not in the exe. Phase 2 (W2) fixes the order.
 | W52 | bytes `0x58fde0` (`CLASSIC_UNTIMED`) | `ev_c09ec63baef2bc25ccabc6ec9f6052f38c82273d23e622c746199b5875e1c4b6` |
 | W53 | xrefs `0x426360` (2 callers) | `ev_2de80fc408d0102b1fc593418b875145ad3c53f9949f6b8b0bf0d2c24cd6d657` |
 | W54 | pseudo `0x425190` (next round) | `ev_c9a84041b977f1cb3e1b5d9769cd007d4b57f6074088f0feaba43b0eeb96e70f` |
+| W55 | asm `0x424730` (all words: `push 0x3e8` @`0x42493c`; `+0x178 == +0x184` @`0x4248f7`) | `ev_dbf47191191768ed5f06295c84cdfb66bc0e49d4f75c410e34117d6872f3b1e1` |
+| W56 | pseudo `0x427b40` (leave: `SCENE_SELECTION`) | `ev_f1de22d5308d13e9283081256d4ef1f72c189a8e8747ffa5375b22bcecf8ad0c` |
+| W57 | xrefs `0x404540` (`DIALOG_ENDGAME` OK) | `ev_8c3744ff594b082c27508cc9a996e0b68a1a59caa867b36191740a7f7bbc7696` |
+| W58 | pseudo `0x428540` (open `DIALOG_HIGHSCORES`) | `ev_24bda08bc6360dcb4dde12d8fb97858c74bd121ec85a3c1b6838f81797e63a84` |
+| W59 | pseudo `0x401b50` (`DIALOG_CONGRATS` OK) | `ev_a8a4a413adbd8325f3725fa4f236e929860f09812e62e80517814903bc2bf78f` |
+| W60 | pseudo `0x40ce80` (dialog hide) | `ev_bcc7575af53b901909a0c731bf9672eaf083f8b2501217b681479ade36194634` |
+| W61 | asm `0x423640` (scene ctor: `+0x260 = 0`, trophy queue emptied) | `ev_cbad70304506d28b0c8dea18caa2868400793ff7775482330efef811c8154153` |
+| W62 | xrefs `0x427b10` | `ev_2d62823e6f66d550bd2057ae1d3e4f4903455979a3fe3ceddd7e510e88ad66ac` |
+| W63 | pseudo `0x428720` (PASS / GIVE UP NO) | `ev_3f11c6307180b276a5e527b2110889d1455524cab3c76d14865ffed338852fd0` |
+| W64 | bytes `0x40e1c0` (tutorial PLAY: owner `+0xe0`) | `ev_019f9de989f7fdd8b3e991f7a329abb226deacba62aae1789174c58d120ae68f` |
+| W65 | bytes `0x40a380` (pause menu handler: owner `+0xe0`) | `ev_1101aee0fbd19576850a14607133918fdc9283a839d38d55212c22fbd6473d14` |
+| W66 | xrefs `0x5fde90` (global Java LCG) | `ev_7f2ec0edc4fa3d24eca653aa62be553279708f370d3f33efb756f639fde3e3a0` |
+| W67 | containing procedure of the `0x4363f9`-`0x436838` readers (`0x436090`) | `ev_a9779afab381ff9f702cab3338afa3daec1517072490ca82a249b71c544c974e`, `ev_9baa9cf964d3a470d42603341d44adfa0c285fb74e1f9ef139a82b9d51b4005b` |
+| W68 | containing procedure of `0x43dad5` (none: a callback body) | `ev_ec2ed54e09572a33b437473f2e5aa6aaf0f2583b330adffabcb3ed63355db5d2` |
+| W69 | callers `0x436090` (only `0x41ba40`, Crossword) | `ev_87a9a746a1266830a86af9779faaaaa9175087a9619cc66433fa5cc18c94b148` |
+| W70 | bytes `0x43dad0` (shuffle generator callback) | `ev_2e9d53f951b0da71e3b14c740ac383d93e1055641172e6bcef9d2da86f07932d` |
+| W71 | pseudo `0x43c370` (deal / twist relayout) | `ev_77522ecfe58a8322486e92312c1a939f6b05d7ff0274e280a2abaea297f85b7d` |
+| W72 | pseudo `0x439370` (rack shuffle, CRT `_rand()`) | `ev_294aa5ef7b8cf98cf6fedcdc7c52be677aac88c1c7160d629f0041a5aa458960` |
+| W73 | pseudo `0x432850` (guess check, "uncommon" out-flag) | `ev_c2e4a806af43ecd60e7258f087917bf20f10e346e7ca2c2289b1387b3d2aacc2` |
+| W74 | asm `0x4396e0` (`AnagramTable` ctor: lists passed to `0x432330`) | `ev_81a2810316ba8e08cbdbedd605c4445faace9458b216040f9d1efe10e96e2ef3` |
+| W75 | pseudo `0x432330` (table list `+0x180` rebuilt from the board words) | `ev_ce1122d744f8c585ae0815707bc0ffcf4d16c1a6d00e585b1145e194056f9a2a` |
+| W76 | pseudo `0x428610` (PASS / GIVE UP YES) | `ev_83f76bc94d0779c51f90d3c7fc92056d82928918b4a984b0aca172f48a6965c9` |
+| W77 | bytes `0x426c90` (dispatch tail: refresh, trophy / popup dequeue, clock gate) | `ev_f53240fd7f75e6a297fe162d99b37f87bd2ced11f3bac5e642188631cf749630` |
+| W78 | local byte scan of `.text` for writes to `+0x260` (`C6 /0 imm8`, `88 /r`) | none (Python over the exe; results in §8.11) |
 
 ### 8.10 UI bar: ROUND and TIME in WOTD (CONFIRMED; REA addendum, 2026-10-22)
 
@@ -827,6 +880,53 @@ Worked example, a fresh WOTD game: `SCORE: 0`, `ROUND: 1`, `TIME: 2:00`. Untimed
 Port check: `ui/src/main.cpp` `draw_game` draws the clock when `timed()`, which `game_scene.hpp` makes true for
 Timed and WOTD, and "ROUND:" with `round_text()` when `round_visible()`.
 The port hides "ROUND:" and its number in WOTD, deviation D6 (user decision 2026-10-22, `wotd-crossword.md`).
+
+### 8.11 W5 audit against the exe (2026-10-22)
+
+Claude ran this audit for T3.1 of `docs/plans/wotd-crossword.md`. Method: frame dumps of the port's WOTD
+(`tt2 --play wotd --fixed-dt 20 --fps 4 --dump-frames`, driven with `--type`: tutorial, play, first bingo with
+popup 11, DONE, both end cards, HIGH SCORES with the date, the greyed menu button), compared with §8 and the
+install's `dialogs.xml` / `text.xml`; then REA reads for every difference. The gap list with decisions is
+`docs/plans/wotd-gaps.md` (local, gitignored). Evidence W55-W78 (§8.9).
+
+- **The spot button while the scene is blocked** (W7, W14, W21, W39, W76). See §5: `0x425710` only disables
+  when `+0x260` or `+0x2f9` is set. `0x428840` also disables `+0x224` itself before its refresh; `0x4253a0`,
+  `0x428610` and `0x425420` never call setVisible (`0x425420` ends with the refresh). So DONE, or GIVE UP after
+  YES, stays on screen, greyed, through the reveal, state 3 and behind the end card; in Classic the same holds
+  for NEXT ROUND and the PASS buttons. Port: it hid them; fixed in `GameScene::refresh_buttons`.
+- **The all-words reveal is 1000 ms in every mode** (W15, W55; §5). Port: Classic held 3000 ms; fixed
+  (`ALL_WORDS_REVEAL_MS`).
+- **Speed Speller is checked on every `0x428840` call** (W14: `114999 < +0x2fc < 120001`, no caller test), so
+  NEXT ROUND and DONE win it too. Port: it skipped NEXT ROUND; fixed.
+- **Trophies during a reveal** (W17, W77). With no state pending, `0x426860` jumps straight to the dequeue
+  (@`0x426cd9`): trophies (@`0x426ce6`) and popups (@`0x426d05`) need only `+0x260 == 0`; the clock needs `+0x260`,
+  `+0x2f9` and `+0x264` all clear (@`0x426d24`-`0x426d44`). `0x428840` and a time-up miss with lives left
+  (`0x425420`, which sets `+0x260` only on the third miss, @`0x4256ab`) leave `+0x260` at 0, so a trophy already
+  won shows **during** their reveal. Pass and GIVE UP come from a dialog whose YES (`0x4253a0`) does not clear
+  it, and the WOTD time-up miss sets it @`0x427005`, so their trophies wait. Port: it held every trophy until the
+  round-end steps were done; fixed (`reveal_unblocked_`). The Classic round count moved to the moment
+  `DIALOG_NEXTROUND` opens, so its popup still shows after that dialog, as when the original counts on its OK.
+- **The WOTD round's own trophy never shows** (W17, W18, W24, W34, W40, W56-W65, W78). State 3 sets
+  `+0x260 = 1` @`0x426b5c` before `count_round(4)` pushes its id. The scene code writes 0 to `+0x260` at: the
+  ctor `0x423640` @`0x4236e4` (which also empties the trophy queue, W61), scene start `0x4242f6` / `0x42430f`,
+  round start `0x425c96`, the dispatch default `0x426cc4`, `0x427b10` @`0x427b11` (reached only through vtable
+  `+0xe0`: the pause menu `0x40a3a3` and the tutorial `0x40e1d1` / `0x40e2ce`; W62, W64, W65), PASS / GIVE UP NO
+  `0x428720` @`0x428818` (W63) and the Classic next round `0x428aa0` @`0x428b38`. None runs after state 3 in WOTD:
+  `0x428c80` → `0x427d10` opens the end card (W24, W40); CONGRATS OK `0x401b50` → `0x428540` opens HIGH SCORES
+  (W58, W59), whose hide `0x40ce80` does not touch the owner (W60); NEXTROUND / ENDGAME OK → owner `+0xdc` =
+  `0x427b20` → `0x427b40`, a new `SCENE_SELECTION` (W34, W56, W57). So Well Rounded (or a round tier) is **won and
+  saved**, shown as new in the trophy room, but its popup never plays: not before, over, or after the end card.
+  Port: the same.
+- **"Uncommon" means not on the board** (W73-W75), §8.3. Port: fixed in `GuessProcessor::apply`.
+- **Popup 11 uses the message timing**, §8.5. Port: already so.
+- **The WOTD reseed changes no gameplay draw** (W66-W72), §8.2. Port: no change.
+- **D1 on a frame dump.** With the player's own `common.tree` the port's word for 2026-10-22 (word day 6623) is
+  `airport`, the word the 2008 game picks (§8.2: same pool, same seed, same index); with the shipped
+  `open-common.tree` it is `analogue`. The port keeps D1 (`Bag::word_of_the_day_for_day`).
+- Everything else on the dumps matched §8: `BACKGROUND_WOTD`, TIME from 2:00 with ROUND hidden (D6), GIVE UP then
+  DONE at (317, 473), popup 11 at (400, 150), the GAME OVER card with MAIN MENU centred and no REPLAY, the
+  NEXTROUND "back to the menu" card, the `2026-10-22` date in HIGH SCORES, and the greyed WOTD menu button
+  afterwards ("word of the day already played today").
 
 ## 9. Address index
 
@@ -876,3 +976,8 @@ The port hides "ROUND:" and its number in WOTD, deviation D6 (user decision 2026
 | `0x4099c0` / `0x404540` | WOTD bodies for `DIALOG_NEXTROUND` / `DIALOG_ENDGAME` (§8.5) |
 | `0x409a70` | `DIALOG_NEXTROUND` OK: owner `+0xd8` (next round) or, in WOTD, `+0xdc` = `0x427b20` (leave) |
 | `0x428a60` | Round-end delay callback: `+0x2f9 = 0`, state 3 |
+| `0x428840` | Round finished: `+0x2f9 = +0x264 = 1`, Speed Speller window, reveal, `ModifierDelay(arg)` (1000 / 3000), `+0x224` disabled, refresh |
+| `0x432330` / `0x432850` | Table list `+0x180` = the board words (count `+0x184` = slots) / guess check: "uncommon" = not in that list (§8.3) |
+| `0x427b10` / `0x427b40` | Clear `+0x260` and refresh (vtable `+0xe0`: pause menu, tutorial) / leave for `SCENE_SELECTION` |
+| `0x423640` | `GameScene` ctor: `+0x260 = 0`, trophy queue emptied (§8.11) |
+| `0x43c370` / `0x439370` | Deal and twist relayout / rack shuffle with the CRT `_rand()` (§8.2) |

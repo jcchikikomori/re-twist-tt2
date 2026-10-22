@@ -126,6 +126,11 @@ public:
     // than MIN_SUB_ANAGRAMS sub-anagrams is handed out as it is.
     // Throws `NoRackError` when the pool is empty.
     static std::string word_of_the_day_for_day(const WordTree& common, std::int64_t day) {
+        // DEVIATION (D1): the pool is whatever common list the game loaded.
+        // With the shipped open-common.tree (19,256 words of 5-8 letters)
+        // the word for a date differs from the 2008 game's; with the
+        // player's own common.tree (22,048) it is the same word every day
+        // (game-scene.md §8.2, W5 frame dump: 2026-10-22 -> "airport").
         auto pool = make_pool(common);
         if (pool.empty()) throw NoRackError();
         Random rng(WOTD_SEED);
