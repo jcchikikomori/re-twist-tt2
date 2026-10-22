@@ -71,7 +71,7 @@ Player counters (C): TWISTS `+0xa0`, SOLVED `+0xa4`, uncommon/HARD_SOLVED `+0xa8
 | 3-6 | Brainstorm, Rolling Thunder, Lightning Reflexes, Nick of Time | Blitz ENTER 0x4116e0, the round's last word, slots `+0x4c..+0x58` (lightning.md §5) | per round: no twist (`+0x3bc`), no pass (`+0x3bd`), no hint (`+0x3be`), time left `<= 3000` ms |
 | 7 | Speed Speller | 0x428840 (round finished) @0x42888b, slot `+0x5c` (E18) | `115000 <= scene+0x2fc <= 120000` ms |
 | 8 | Puzzle Pro | Crisscross solved 0x41e930, slot `+0x60` (E24) | `scene+0x370 == 0` (never twisted) |
-| 9 | Perfect Puzzler | 0x41e930, slot `+0x64` (E24) | `scene+0x371 == 0` (no rejected word) |
+| 9 | Perfect Puzzler | 0x41e930, slot `+0x64` (E24) | `scene+0x371 == 0`: no solved word taken back (`0x41eaf0`, [crossword.md](crossword.md) §3.6); rejected guesses don't count |
 | 10 | Look Ma, No Twisting! | 0x424730 @0x424914, slot `+0x68` (E14) | all slots filled (`+0x178 == +0x184`) and `scene+0x370 == 0` |
 | 11/12/13 | Bingo Blaster / Boss / Bonkers | 0x40f260 from 0x424730 @0x4248aa, EDX=`scene+0x374` (E14, E15) | exact `== 5 / 10 / 20` |
 | 14/15/16 | With a Twist / Dizzy / Twisted Twister | 0x40f170, `++player+0xa0` (E20) | exact `== 1000 / 5000 / 10000` |
@@ -108,7 +108,8 @@ Details:
     bingo) (E18). So it counts a round that was passed, at the moment the player continues.
   - 2 = Lightning: 0x413030 `mov eax,2`, called from 0x416910 when DIALOG_NEXTROUND closes (E25, E26;
     lightning.md §4.1).
-  - 3 (I: Crossword): 0x41b000 `mov eax,3` (E25).
+  - 3 = Crossword: 0x41b000 `mov eax,3`, called when DIALOG_NEXTROUND closes (`0x41fcf0`) (E25;
+    [crossword.md](crossword.md) §5.2, confirmed 2026-10-22).
   - 4 = WORD_OF_THE_DAY: 0x426860 pending-action case 3, mode == 0x5906c8 "WORD_OF_THE_DAY",
     `mov eax,4` @0x426b74 (E11).
 - **Speed Speller** (C, E18, E21): round start sets `scene+0x2fc = 120000` in every mode; update

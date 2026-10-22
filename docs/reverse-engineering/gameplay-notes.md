@@ -236,6 +236,10 @@ Note: step 3 sets the uncommon out-flag **before** step 4 runs, so in principle 
 ### Crossword (CrisscrossScene) — CONFIRMED
 
 - Each newly filled word scores `10 × len²` once (`+0x85` flag @0x41a637..0x41a66b). Completing the puzzle adds **+1000** (@0x41a7e0).
+- There is **no timer** (the update `0x41ebc0` never counts; init hides `TIME_LABEL`), no lives, and no NEXT ROUND
+  button: the next-round dialog opens by itself 2.5 s after the puzzle is solved, and GIVE UP is the only way the
+  game ends. A guess goes into the **selected** word slot and may be any full-list word of that length made from the
+  root's letters. Full flow, layout and timings: [crossword.md](crossword.md) (2026-10-22).
 
 ---
 
@@ -245,17 +249,26 @@ Note: step 3 sets the uncommon out-flag **before** step 4 runs, so in principle 
 
 - Classic: when time runs out, if the qualified flag (`table+0x88`, set by any bingo) is set, you advance to the next round. Otherwise 0x425420 runs the pass / end-game path ("Sorry, you didn't qualify…") (@0x426f2b..0x42701b). **CONFIRMED**
   Untimed works the same way: the bingo enables Next Round. Finding all words also ends the round early. **INFERRED for the button wiring**
+- Crossword: the round ends when every slot is filled; `DIALOG_NEXTROUND` opens by itself and closing it starts
+  round + 1 (`0x41fcf0` → `0x41b000`). No timer, no lives; only GIVE UP ends the game ([crossword.md](crossword.md)
+  §5). **CONFIRMED**
 - Lightning: the round ends when all n bingo words are solved (0x411680 is the "every word's `+0x88` flag set" check; the +1000 is at 0x411bc0). If the timer hits 0, the game is lost: the update 0x415300 @0x41597f calls 0x411e10 when `scene+0x2fc <= 0`. There are no lives and no time-up sound (2026-10-16, [lightning.md](lightning.md) §3). **CONFIRMED**
 
 ### Crossword word set (CONFIRMED, 0x41ba40 setup; re-verified 2026-10-13 with Ghidra 12.1.4)
 
 - Root length `L = min(5 + rand%4, playerMaxLen)` from the game's Java-style LCG (`DAT_005fde90`), then the same 0x43d550 pick loop as Classic (free skip of longer words, exact hit accepted, otherwise the closest shorter word over 5 tries).
-- Sub-anagrams come from the **common** tree only (0x43d7b0). The list is shuffled with `std::random_shuffle` driven by **CRT `rand()`** (0x422080 → 0x4228f0: 15-bit chunks of `rand() & 0x7fff`, reduced `% (i+1)`, `swap(a[i], a[j])` for `i = 1..n-1`). Whether the game ever calls `srand()` was not observed; the CRT default seed is 1.
+- Sub-anagrams come from the **common** tree only (0x43d7b0). The list is shuffled with `std::random_shuffle` driven by
+  **CRT `rand()`** (0x422080 → 0x4228f0: 15-bit chunks of `rand() & 0x7fff`, reduced `% (i+1)`, `swap(a[i], a[j])` for
+  `i = 1..n-1`). The CRT is seeded from the clock (`srand(timeGetTime())` in the application constructor @0x46d5bd,
+  `srand(_time64(NULL))` @0x482b04), so the original's grids are not reproducible; the default seed 1 never applies
+  ([crossword.md](crossword.md) §9, corrected 2026-10-22).
 - The root is **rejected unless exactly one entry has the root's length** (`cmp edi,1` @0x41beb7), i.e. the root has no other full-length anagram. Rejection restarts the whole setup (new `L`, new root).
 - Word count: `N = min(10, 4 + rand % floor(4 + (round-1) × BLITZ_WORD_NUMBER_INCREMENT))` (0x41bf23..0x41c030; the LCG again).
 - The **first N entries** of the shuffled list are walked; the root is skipped when it is among them (so the set has N or N−1 non-root words). The root is appended **last** (0x41c1bd).
 - The grid builder runs on that list. If it fails, the entire setup restarts (`cStack_f1 == 0` loops back to the top).
-- Guesses are validated against the full DamBeavers list (`+0x2ac` → `table+0x188`, @0x41c262..0x41c293).
+- Guesses are validated against the **full-list sub-anagrams of the root** (`+0x2ac` → `0x43d7b0` → `table+0x198`,
+  @0x41c262..0x41c2a1); `table+0x188` holds the common list and only sets the "uncommon" flag (corrected 2026-10-22,
+  [crossword.md](crossword.md) §0, §3.5).
 
 ### Grid construction (CONFIRMED, 0x436090 builder / 0x435f90 fit / 0x435d30 commit; re-verified 2026-10-13)
 
