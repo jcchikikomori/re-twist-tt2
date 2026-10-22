@@ -207,8 +207,12 @@ No round-start sound was found in `0x41ba40` (§11).
 
 - Keyboard letters → `0x41aa20(letter)`; clicking a rack letter → `0x41f2b0` (same checks). With room in the row:
   `SOUND_letter_place` and the ball moves to the next free cell; locked cells keep their letter.
+- **Locked cells are skipped** (CONFIRMED by the user's play-test of the original, 2026-10-22): the player never
+  types a locked letter; the next typed letter lands in the next free cell after it. This rules out the reading
+  "the player must type the locked letter itself".
 - **Popup 7**: when the next cell is locked (`0x43c060`) and a string compare (`0x40b230`) fails, nothing is placed
-  and popup 7 shows. INFERRED: the typed letter differs from the locked crossing letter.
+  and popup 7 shows. INFERRED: the typed letter differs from the locked crossing letter. Since typing skips locked
+  cells, what this guard catches in play is still open; check it in T7.1.
 - **Popup 4** ("crossword intersection"): after a letter lands on a crossing whose other word is unsolved,
   `0x41e270` collects that word's fixed letters (the new one plus letters from solved words that cross it) and
   removes each from a copy of the root; when a letter is missing, popup 4 shows and the letter is taken back

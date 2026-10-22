@@ -313,6 +313,18 @@ TEST(bingo_uses_every_letter) {
     ASSERT_TRUE(!b.is_bingo("abcdef"));  // longer than rack
 }
 
+// The rack check is tt2::spellable_from over the rack's letters.
+TEST(board_is_anagram_of_rack_counts_rack_letters) {
+    auto t = tiny_dict();
+    Board b = Board::build("abcde", t);
+    ASSERT_TRUE(b.is_anagram_of_rack("bad"));
+    ASSERT_TRUE(b.is_anagram_of_rack("edcba"));
+    ASSERT_TRUE(!b.is_anagram_of_rack("dad"));      // one d on the rack
+    ASSERT_TRUE(!b.is_anagram_of_rack("abcdea"));   // longer than the rack
+    ASSERT_TRUE(!b.is_anagram_of_rack("BAD"));      // uppercase is not a..z
+    ASSERT_TRUE(!b.is_bingo("EDCBA"));
+}
+
 // 0x4333a0 / 0x433320 / 0x433180: the round-end reveal.
 TEST(reveal_words_skips_words_already_on_show) {
     const std::vector<std::string> board = {"abs", "bad", "bed", "bead"};

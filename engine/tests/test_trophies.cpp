@@ -88,3 +88,43 @@ TEST(trophy_speed_speller_and_look_ma) {
     ASSERT_EQ(tt2::award_look_ma(p, true), -1);
     ASSERT_EQ(tt2::award_look_ma(p, false), static_cast<int>(tt2::TROPHY_LOOK_MA));
 }
+
+TEST(trophy_crossword_puzzle_solved_checks_each_flag) {
+    // 0x41e930: Puzzle Pro (8) needs +0x370 == 0, Perfect Puzzler (9) +0x371 == 0.
+    PlayerProfile p;
+    ASSERT_TRUE(tt2::award_crossword_round(p, tt2::CrosswordRoundFlags{true, true}).empty());
+    const auto pro = tt2::award_crossword_round(p, tt2::CrosswordRoundFlags{false, true});
+    ASSERT_EQ(pro.size(), std::size_t{1});
+    ASSERT_EQ(pro[0], static_cast<int>(tt2::TROPHY_PUZZLE_PRO));
+    ASSERT_EQ(p.trophies[tt2::TROPHY_PERFECT_PUZZLER], tt2::TROPHY_NOT_WON);
+    const auto perfect = tt2::award_crossword_round(p, tt2::CrosswordRoundFlags{true, false});
+    ASSERT_EQ(perfect.size(), std::size_t{1});
+    ASSERT_EQ(perfect[0], static_cast<int>(tt2::TROPHY_PERFECT_PUZZLER));
+    ASSERT_TRUE(tt2::award_crossword_round(p, tt2::CrosswordRoundFlags{}).empty());   // each is won once
+
+    PlayerProfile q;
+    const auto both = tt2::award_crossword_round(q, tt2::CrosswordRoundFlags{});
+    ASSERT_EQ(both.size(), std::size_t{2});
+    ASSERT_EQ(both[0], static_cast<int>(tt2::TROPHY_PUZZLE_PRO));   // id order
+    ASSERT_EQ(both[1], static_cast<int>(tt2::TROPHY_PERFECT_PUZZLER));
+}
+
+TEST(trophy_well_rounded_on_the_fifth_mode_with_crossword_last) {
+    // AC-X2: one finished round in each of the five modes; Crossword is
+    // TRACKER/3 (closing DIALOG_NEXTROUND, 0x41b000).
+    PlayerProfile p;
+    ASSERT_EQ(tt2::count_round(p, GameMode::Timed), -1);
+    ASSERT_EQ(tt2::count_round(p, GameMode::Untimed), -1);
+    ASSERT_EQ(tt2::count_round(p, GameMode::Blitz), -1);
+    ASSERT_EQ(tt2::count_round(p, GameMode::WordOfTheDay), -1);
+    ASSERT_EQ(tt2::count_round(p, GameMode::Crossword), static_cast<int>(tt2::TROPHY_WELL_ROUNDED));
+    ASSERT_EQ(p.rounds_completed[3], 1);
+}
+
+TEST(trophy_well_rounded_waits_for_a_crossword_round) {
+    PlayerProfile p;
+    p.rounds_completed = {5, 5, 5, 0, 4};
+    ASSERT_EQ(tt2::count_round(p, GameMode::WordOfTheDay), -1);
+    ASSERT_EQ(tt2::count_round(p, GameMode::Timed), -1);
+    ASSERT_EQ(p.trophies[tt2::TROPHY_WELL_ROUNDED], tt2::TROPHY_NOT_WON);
+}

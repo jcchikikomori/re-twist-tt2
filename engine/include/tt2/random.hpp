@@ -81,8 +81,10 @@ private:
 // CONFIRMED 2026-10-13 (Ghidra 12.1.4, TextTwist2.exe 0c6e962c…): the
 // Crossword word-list shuffle (0x4228f0) and the crossing-pair shuffle
 // (0x439370) are MSVC `std::random_shuffle` driven by this generator,
-// not by the Java LCG above. Whether the game ever calls `srand()` is
-// not observed; the CRT default seed is 1.
+// not by the Java LCG above. The game seeds it from the clock
+// (`srand(timeGetTime())` at 0x46d5bd, docs/reverse-engineering/crossword.md
+// §9), so the front end seeds one shared instance once; tests pass their
+// own seed. The CRT default seed is 1.
 class CrtRandom {
 public:
     static constexpr std::uint32_t MULTIPLIER = 214013u;

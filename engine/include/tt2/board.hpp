@@ -12,9 +12,9 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "tt2/word_tree.hpp"
@@ -91,14 +91,9 @@ public:
         return std::find(bucket.begin(), bucket.end(), word) != bucket.end();
     }
 
-    bool is_anagram_of_rack(std::string word) const {
-        if (word.size() > rack_.size()) return false;
-        std::array<int, 26> need{};
-        for (char c : rack_) ++need[static_cast<std::uint8_t>(c - 'a')];
-        for (char c : word) {
-            if (--need[static_cast<std::uint8_t>(c - 'a')] < 0) return false;
-        }
-        return true;
+    // True when the rack's letters spell `word` (see tt2::spellable_from).
+    bool is_anagram_of_rack(std::string_view word) const noexcept {
+        return spellable_from(word, rack_);
     }
 
 private:
