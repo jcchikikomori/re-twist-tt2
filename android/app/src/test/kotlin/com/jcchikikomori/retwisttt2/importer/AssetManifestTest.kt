@@ -31,7 +31,37 @@ class AssetManifestTest {
         // Paths and hashes only (data/original-assets.sha256); the test runs in android/app.
         val m = AssetManifest.parse(File("../../data/original-assets.sha256").readText())
         assertNotNull(m)
-        assertEquals(323, m!!.size)
+        assertEquals(329, m!!.size)   // 323 before the Crossword scene, plus its 6 files
+    }
+
+    // ui/tests/import-contract/import-roots.txt, one root per line. The C++
+    // engine's test_asset_manifest.cpp reads the same file, so the two
+    // IMPORT_ROOTS lists can't drift apart.
+    private val sharedRoots = File("../../ui/tests/import-contract/import-roots.txt").readLines()
+
+    @Test
+    fun importRootsMatchTheSharedList() {
+        assertEquals(11, sharedRoots.size)   // the import script's 10 folders, plus images/crosswordscene
+        assertEquals(sharedRoots, AssetManifest.IMPORT_ROOTS)   // same folders, same order
+    }
+
+    @Test
+    fun acceptsAnEntryUnderEverySharedRoot() {
+        assertEquals(11, sharedRoots.size)
+        for (root in sharedRoots) {
+            val parsed = AssetManifest.parse(manifest("$a  $root/a.png"))
+            assertEquals(root, listOf(AssetManifest.Entry("$root/a.png", a)), parsed)
+        }
+    }
+
+    @Test
+    fun rejectsAnEntryUnderAnUnknownRoot() {
+        // Near misses of the Crossword scene's folder: only images/crosswordscene/ itself is a root.
+        assertNotNull(AssetManifest.parse(manifest("$a  images/crosswordscene/background.png")))
+        for (p in listOf("images/crosswordscene", "images/crosswordscenes/background.png",
+                         "images/crossword/background.png", "crosswordscene/background.png",
+                         "images/creditsscene/background.png"))
+            assertNull(p, AssetManifest.parse(manifest("$a  $p")))
     }
 
     @Test

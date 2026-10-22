@@ -29,10 +29,13 @@
 namespace tt2 {
 
 // The folders scripts/import-original.sh copied, in its order (it now
-// wraps `tt2 --import`).
+// wraps `tt2 --import`), plus the Crossword scene's own art. The Kotlin
+// importer keeps the same list (AssetManifest.kt); both test suites compare
+// theirs with ui/tests/import-contract/import-roots.txt.
 inline constexpr const char* IMPORT_ROOTS[] = {
-    "images/splash",     "images/loadscene", "images/selectionscene", "images/gui", "images/gamescene",
-    "images/trophyscene", "images/blitzscene", "fonts",              "music",                 "sound",
+    "images/splash",      "images/loadscene",  "images/selectionscene", "images/gui",
+    "images/gamescene",   "images/trophyscene", "images/blitzscene",    "images/crosswordscene",
+    "fonts",              "music",              "sound",
 };
 // The script's "is this an install?" check.
 inline constexpr const char* INSTALL_PROBE = "properties/resources.xml";

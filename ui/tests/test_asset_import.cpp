@@ -289,6 +289,36 @@ TEST(import_status_spots_stale_and_incomplete_imports) {
     ASSERT_TRUE(import_status(f.assets, f.manifest) == ImportStatus::NotImported);
 }
 
+// An import made before the Crossword scene's art joined the manifest
+// (0.5.x, 323 files) is Stale against the shipped manifest, so the game
+// asks for one re-import. Synthetic bytes in a temp folder.
+TEST(import_made_with_the_manifest_before_crossword_is_stale) {
+    const std::string text = slurp(fs::path(TT2_SOURCE_DATA_DIR) / "original-assets.sha256");
+    tt2::AssetManifest shipped;
+    ASSERT_TRUE(tt2::AssetManifest::parse(text, shipped));
+    const std::string crossword = "images/crosswordscene/";
+    tt2::AssetManifest before;
+    for (const auto& e : shipped.entries)
+        if (e.path.compare(0, crossword.size(), crossword) != 0) before.entries.push_back(e);
+    ASSERT_EQ(before.entries.size(), std::size_t{323});
+    // The digest 0.5.x's data/original-assets.sha256 had, so its stamps carry it.
+    const std::string digest_0_5 = "44fb806c62100fa8be8708aec8bc6579d63183e1137a57356afea02f75aae3b3";
+    ASSERT_EQ(manifest_digest(before), digest_0_5);
+
+    struct Folder {
+        fs::path root = temp_dir("before_crossword");
+        ~Folder() {
+            std::error_code ec;
+            fs::remove_all(root, ec);
+        }
+    } folder;
+    const fs::path assets = folder.root / "imported-assets";
+    for (const auto& e : before.entries) put(assets / e.path, e.path);   // a file's bytes are its path
+    put(assets / IMPORT_STAMP_FILE, serialize_stamp({manifest_digest(before), before.entries.size()}));
+    ASSERT_TRUE(import_status(assets, before) == ImportStatus::Imported);   // a good import back then
+    ASSERT_TRUE(import_status(assets, shipped) == ImportStatus::Stale);
+}
+
 TEST(import_recovers_from_a_crash_between_the_renames) {
     Fixture f("crash");
     AssetImportJob j = f.job();

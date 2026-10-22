@@ -16,7 +16,7 @@
 
 ## References
 
-- https://github.com/hedge-dev/UnleashedRecomp
+- <https://github.com/hedge-dev/UnleashedRecomp>
 
 ## Decisions (as built, 2026-10-15)
 
@@ -136,5 +136,6 @@ thing; `ImportTextTest` fails if import text is copied into the Kotlin sources o
 - Kotlin unit tests (`./gradlew testDebugUnitTest`, CI's `android` job): the manifest rules, the importer pass by
   pass, the size caps, unsafe names, cancelling, and the swap. Every ZIP is made of synthetic bytes.
 - `ui/tests/import-contract/` is shared by the C++ and the Kotlin tests: a synthetic manifest and the stamp
-  `serialize_stamp()` writes for it. A folder Kotlin imports must pass C++'s `import_status()`.
+  `serialize_stamp()` writes for it. A folder Kotlin imports must pass C++'s `import_status()`. Its
+  `import-roots.txt` lists the folders an entry may sit in; both `IMPORT_ROOTS` lists must equal it.
 - Checked by hand on a Galaxy Tab A7 Lite (Android 14) with a ZIP of a legitimately owned install.

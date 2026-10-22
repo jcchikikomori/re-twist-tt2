@@ -253,8 +253,11 @@ if(TT2_BUILD_TESTS)
         engine/tests/test_wotd_day.cpp
     )
     target_link_libraries(tt2_tests PRIVATE tt2_engine tt2_platform)
-    # The committed data/ files the tests check (original-assets.sha256).
-    target_compile_definitions(tt2_tests PRIVATE TT2_SOURCE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+    # The committed data/ files the tests check (original-assets.sha256), and
+    # ui/tests/import-contract/import-roots.txt, the IMPORT_ROOTS list the
+    # Kotlin importer's tests read too.
+    target_compile_definitions(tt2_tests PRIVATE TT2_SOURCE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+                                                 TT2_IMPORT_CONTRACT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/ui/tests/import-contract")
 
     include(CTest)
     add_test(NAME tt2_unit_tests COMMAND tt2_tests)
