@@ -1,7 +1,8 @@
 // The two popups every game scene shares: the message popup (0x428ec0)
-// and the trophy popup (0x429510). Classic (game_scene.hpp) and Lightning
-// (blitz_scene.hpp) both run them from their update; only the message
-// popup's anchor differs (0x423a20: (400, 150); 0x410f00: (400, 55)).
+// and the trophy popup (0x429510). Classic (game_scene.hpp), Lightning
+// (blitz_scene.hpp) and Crossword (crossword_scene.hpp) run them from their
+// update; only the message popup's anchor differs (0x423a20: (400, 150);
+// 0x410f00: (400, 55); 0x419d40: (400, 70), crossword.md §3.1).
 // SDL-free, like the rest of the scene model.
 #pragma once
 

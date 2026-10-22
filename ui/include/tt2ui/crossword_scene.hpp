@@ -80,14 +80,18 @@ constexpr float CROSSWORD_ZOOMED_SCALE = 1.0f;
 constexpr float CROSSWORD_PAN_X = 400.0f;
 constexpr float CROSSWORD_PAN_Y = 189.0f;
 // 0x41d160: ModifierLocationLine with smoothstep (0x4513d0), 500 ms
-// (mov edx,0x1f4 @0x41d304, CW49; INFERRED duration, crossword.md §11).
-// 0x41cab0 pans the same way after a zoom-out (@0x41cc2f, CW53).
+// (mov edx,0x1f4 @0x41d304, CW49). 0x41cab0 pans the same way after a
+// zoom-out (@0x41cc2f, CW53). CONFIRMED: the ctor 0x486560 stores EDX as
+// the duration +0x44 (game-scene.md §9.1, AN1, AN17; crossword.md §3.3).
 constexpr int CROSSWORD_PAN_MS = 500;
-// 0x41d390 -> 0x41c910 when the new word's direction differs (file read):
-// ModifierDelay 300 ms (vtable 0x5943bc, +0x44 = 0x12c @0x41c966; the
+// 0x41d390 -> 0x41c910 when the new word's direction differs (CW50, file
+// read): ModifierDelay 300 ms (vtable 0x5943bc, +0x44 = 0x12c @0x41c966; the
 // 700 ms advance uses the same vtable, @0x41ea56), then a rotation (vtable
-// 0x59714c, +0x50 = 0x320 @0x41c9dc: INFERRED 800 ms, no easing) on the grid
-// view and, the other way, on every letter, so letters stay upright.
+// 0x59714c, +0x50 = 0x320 @0x41c9dc, +0x54 = 0) on the grid view and, the
+// other way, on every letter, so letters stay upright. CONFIRMED: 300 ms,
+// then 800 ms linear. ModifierDelay counts +0x44 down (game-scene.md §9.1,
+// AN1, AN13), and ModifierRotation's update 0x478bf0 divides the elapsed
+// time by +0x50 and eases only when byte +0x54 is 1 (§9.1, file read).
 constexpr int CROSSWORD_TURN_WAIT_MS = 300;
 constexpr int CROSSWORD_TURN_MS = 800;
 // The turn's targets (0x41d390, file read): 0 for a horizontal word (fldz
@@ -95,11 +99,13 @@ constexpr int CROSSWORD_TURN_MS = 800;
 // reads left to right on screen.
 constexpr float CROSSWORD_TURN_VERTICAL = -1.5707963f;
 // The zoom back in after a select: ModifierScale to 1.0 with smoothstep,
-// 1500 ms (mov esi,0x5dc @0x41d7b9, CW50; INFERRED duration).
+// 1500 ms (mov esi,0x5dc @0x41d7b9, CW50). CONFIRMED: ModifierScale is the
+// base ctor 0x47ece0 (duration in ESI, easing in EDX) plus an inline vtable
+// store (game-scene.md §9.1, AN1, AN14; crossword.md §3.3).
 constexpr int CROSSWORD_ZOOM_IN_MS = 1500;
 // ZOOM out and the reveal's zoom-out: ModifierScale to 0.5 with smoothstep,
-// 1000 ms (mov esi,0x3e8 @0x41b27d, CW47, and @0x41ffa5, file read;
-// INFERRED duration).
+// 1000 ms (mov esi,0x3e8 @0x41b27d, CW47, and @0x41ffa5, file read).
+// CONFIRMED as the zoom in (game-scene.md §9.1, AN1, AN14; crossword.md §3.7).
 constexpr int CROSSWORD_ZOOM_OUT_MS = 1000;
 // 0x421e50 (CW42): a click in the grid counts only inside this box.
 constexpr float CROSSWORD_CLICK_LEFT = 85.0f, CROSSWORD_CLICK_RIGHT = 715.0f;

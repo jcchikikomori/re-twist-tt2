@@ -117,23 +117,28 @@ So the rack word has to have **at least 15 sub-anagrams in the common list** (th
   0043d727: lea eax,[edx*8] ; sub eax,edx ; lea eax,[base+eax*4] ; pool[day] (0x1c-byte strings)
   ```
 
-  REA batch W (2026-10-22, `game-scene.md` §8.2, evidence W1-W3) corrects and extends this reading:
+  REA batch W (2026-10-22, [game-scene.md](game-scene.md) §8.2, evidence W1-W3) corrects and extends this
+  reading. The whole mode (board, buttons, round flow, `player.WOD`, high scores) is in
+  [game-scene.md](game-scene.md) §8.
   - **No modulo, no bounds check:** the index goes straight into the shuffled pool. With the original list
     (22,048 words of 5-8 letters) day 22,048 (2069-01-14) reads past the end; a date before 2008-09-03 gives a
     negative index. **CONFIRMED**
   - **No 15-sub-anagram test:** the WOTD word is taken as is; only the Classic bag (0x43d550) skips words with
-    fewer than 15 sub-anagrams. About 26 % of the original pool would fail that test (INFERRED estimate), so the
-    port's walk-forward in `Bag::word_of_the_day` changes the word on roughly one day in four. **CONFIRMED** (the
-    missing test), INFERRED (the share).
+    fewer than 15 sub-anagrams. About 26 % of the original pool would fail that test (INFERRED estimate). The
+    port used to walk forward past such words, which changed the word on roughly one day in four; since the WOTD
+    mode landed, `Bag::word_of_the_day_for_day` takes `pool[day]` as is, like the exe (wrapped into the pool,
+    deviation D4). **CONFIRMED** (the missing test), INFERRED (the share).
   - The seed is written into the **global** Java LCG (`0x5fde90`), not a private one, and WOTD skips the
     MAX WORD LENGTH loop (`player+0x3c`) entirely. **CONFIRMED**
   - Three clocks: the word uses the UTC day (`time()`), the menu gate, the save `DAY` and `player.WOD` use the
     local standard-time day (`_ftime64_s` `timezone`, `dstflag` never read), and the high-score date is the UTC
-    calendar date as `YYYY-MM-DD` (`GetSystemTime`). **CONFIRMED** (`game-scene.md` §8.1, §8.6, §8.7)
+    calendar date as `YYYY-MM-DD` (`GetSystemTime`). **CONFIRMED** ([game-scene.md](game-scene.md) §8.1, §8.6,
+    §8.7)
 
   After that, 0x4262b0 keeps the **first 5 common sub-anagrams of each length 3..8** (list order) and runs
-  **before** the 48-slot quota, so the quota never trims a WOTD board. **CONFIRMED** (`game-scene.md` §8.3)
-- **Lightning/Blitz:** see §3. **Crossword:** see §4.
+  **before** the 48-slot quota, so the quota never trims a WOTD board. **CONFIRMED** ([game-scene.md](game-scene.md)
+  §8.3)
+- **Lightning/Blitz:** see §3. **Crossword:** see §4 and [crossword.md](crossword.md) §3.2.
 
 ### Sub-anagram enumeration (CONFIRMED, 0x43dd80 → 0x43de40)
 
@@ -163,7 +168,7 @@ The rack is enumerated against **both** trees (0x43d7b0 called with `+0x268` and
 3. It isn't one of the board's words (find over the list at `table+0x180`) → sets the out-flag "uncommon".
    0x432330 rebuilds that list from the quota-selected board words only (count `table+0x184` = the slot count),
    so a common word the 48-slot quota or the WOTD cap left off the board is "uncommon" too
-   (W5 audit 2026-10-22, game-scene.md §8.3; this line used to say "the common list").
+   (W5 audit 2026-10-22, [game-scene.md](game-scene.md) §8.3; this line used to say "the common list").
 4. 0x432b20 scans the slot vector at `table+0x1b8` for the first slot with `slot+0x178 == len` and an empty word string, then **writes the guessed word into `slot+0x19c`** (0x431880) and queues the appear animation (0x4310f0). On success it returns **1** and 0x432850 does `found++` (`table+0x178`). When no slot of that length is free it returns **0** (2026-10-14 re-check; the caller's jump table maps the failure to the "no room" message).
 
 This means any valid dictionary word of the right length that the rack can spell can fill a slot, even if it isn't the exact word the board was built from. The slot then **displays the guessed word**: re-guessing it is a duplicate, while the board word it covered stays guessable (it fills the next free slot of its length, or has nowhere to go).
@@ -212,6 +217,7 @@ Note: step 3 sets the uncommon out-flag **before** step 4 runs, so in principle 
 - I found **no remaining-time bonus** in Classic. High-score entries just store score, time and round (0x427e73.., 0x427fa2..). **CONFIRMED (absence within traced paths)**
 - Timer: `scene+0x2fc = 0x1d4c0` = **120,000 ms (2:00)** per round. The countdown warning starts at `0x2710` = 10 s and steps down 1 s at a time (@0x425f47, 0x426d79..0x426d99).
   The timer runs down only in CLASSIC_TIMED and WORD_OF_THE_DAY (mode checks @0x426d59/0x426d67). **CONFIRMED**
+  A WOTD game is that one timed round; its round end and game over are in [game-scene.md](game-scene.md) §8.5.
 - Trophy "Speed Speller": round finished while the timer is still in `[115000,120000]` ms, i.e. under 5 s (@0x42888b). **CONFIRMED**
 
 ### Lightning / Blitz (BlitzScene) — CONFIRMED
@@ -244,6 +250,9 @@ Note: step 3 sets the uncommon out-flag **before** step 4 runs, so in principle 
 ---
 
 ## 4. Round advance and Crossword grid
+
+The Crossword scene around this grid (selecting a word, typing, zoom, round end, save, trophies) is in
+[crossword.md](crossword.md).
 
 ### Round advance
 

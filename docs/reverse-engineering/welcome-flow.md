@@ -27,16 +27,23 @@ repository.
   scene object is a `GF2::Scene` with a modifier queue; the GF2 modifiers
   used here are:
 
-  | Modifier | Ctor | Meaning |
-  | --- | --- | --- |
-  | `ModifierDelay` | `0x450b10` | wait N ms (`EDX` = ms) |
-  | `ModifierAlpha` | `0x451030` | fade alpha from→to over `EDX` ms |
-  | `ModifierFrame` | `0x4793c0` (all frames) / `0x479420` (range) | step sprite frames, `EDX` = ms per frame |
-  | `ModifierMethod<T>` | `0x42c030`, `0x4643c0` | call a member function when reached |
+  | Modifier | Ctor | Meaning | Timing arguments |
+  | --- | --- | --- | --- |
+  | `ModifierDelay` | `0x450b10` | wait N ms | `EDX` = ms |
+  | `ModifierAlpha` | `0x451030` | fade alpha from→to | `EDX` = ms; from / to on the stack |
+  | `ModifierFrame` | `0x4793c0` (all frames) / `0x479420` (range) | step sprite frames | first stack argument = **ms per frame** (`+0x48`; 0 = set the frame at once); `EDX` = **pass count** (`+0x44`; 1 = once, ≤ 0 = loop) |
+  | `ModifierMethod<T>` | `0x42c030`, `0x4643c0` | call a member function when reached | none |
 
   Modifiers are chained on a target with `0x4506b0` (append to the
   target's queue). A queue runs sequentially, so "delay → method" means
   the method fires after the delay. **CONFIRMED**
+- The `ModifierFrame` row follows `game-scene.md` §9.1 (AN1, AN3): its
+  update `0x479710` steps the frame each time the elapsed time reaches
+  `+0x48`, and at the last frame ends, counts `+0x44` down, or loops.
+  An older version of this table called `EDX` the ms per frame. The
+  frame times in the flows below (`LOGO` 100 ms, `LOGO_COIL` 70 ms,
+  `LOGO_BOUNCE` 60 ms per frame) already are the stack argument, as
+  `game-scene.md` §9.1 notes, so none of them changes. **CONFIRMED**
 - `FadeBlackTransition`: `TRANSITION_DEFAULT` = 500 ms, `TRANSITION_SPLASH`
   = 500 ms with `wait="false"` (the next scene starts loading while the
   fade runs). **XML**

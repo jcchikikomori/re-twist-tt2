@@ -2,8 +2,9 @@
 
 Decompiled with Ghidra 12.1.4 through REA on 2026-10-22 by Claude (plan `docs/plans/wotd-crossword.md` T4.1,
 T4.2), binary `TextTwist2.exe` (sha256 `0c6e962c…a9e801`). The port's rules live in
-`engine/include/tt2/round_crossword.hpp` (grid builder and a first `CrosswordRound`); the scene does not exist yet.
-§10 lists what the engine still lacks.
+`engine/include/tt2/round_crossword.hpp` (the grid builder and `CrosswordRound`, which follows the play rules of §3
+to §7) and its scene in `ui/include/tt2ui/crossword_scene.hpp`. §10 says what the port does and where it still
+differs from the original.
 
 Tags: **CONFIRMED** (read in code or shipped XML), **INFERRED** (strong reading, not proven), **UNCONFIRMED**
 (searched, not found; the search trail is in §11). Constants marked "file read" were read from the exe's data
@@ -215,15 +216,18 @@ No round-start sound was found in `0x41ba40` (§11).
   - **Pan** `0x41d160` (CW48, CW49): busy (`+0x2f9 = 1` @`0x41d274`); the grid view's anchor is set to the word's
     centre (vtable `+0x88`, `AnchorPoint` type 9, @`0x41d26b`); then `ModifierLocationLine`, smoothstep
     (`0x4513d0`), to (400 − x, 189 − y) of the word (`0x59b958` = 400.0, `0x59b950` = 189.0, file read); 500 ms
-    (INFERRED: `mov edx,0x1f4` @`0x41d304` next to the modifier call). It has no scale test: it pans the same way at
-    1.0 and at 0.5.
+    (CONFIRMED: `mov edx,0x1f4` @`0x41d304`, and `0x486560` stores `EDX` as the duration, `game-scene.md` §9.1,
+    AN1, AN17). It has no scale test: it pans the same way at 1.0 and at 0.5.
   - **Rotate** `0x41d390`, chained after the pan (`mov eax,0x41d390` @`0x41d369`, CW50): when the new word's
     direction differs from `+0x3c8`, plays **`SOUND_crossword_rotate_word`** (its only xref, `0x41d42e`, CW18) and
     turns the whole grid view by ±π/2, with every letter turned back, so **the selected word always reads left to
-    right** on screen.
+    right** on screen. The turn (`0x41c910`, file read) waits 300 ms (`ModifierDelay`, `+0x44 = 0x12c` @`0x41c966`),
+    then turns for 800 ms, linear (`ModifierRotation`, `+0x50 = 0x320` @`0x41c9dc`, `+0x54 = 0`). CONFIRMED:
+    `game-scene.md` §9.1 (AN1, AN13 for the delay; the rotation's fields from a file read of its update `0x478bf0`).
   - **Zoom back in**, same function: only when `+0x3c9 == 1` **and** the scale is exactly 0.5 (@`0x41d776..0x41d797`):
-    `ModifierScale` to 1.0 (1500 ms INFERRED, `mov esi,0x5dc` @`0x41d7b9`), then `0x41b320(true)` (@`0x41d85d`).
-    With `+0x3c9 == 0` a select at 0.5 only pans, and the view **stays at 0.5** (§3.7).
+    `ModifierScale` to 1.0 over 1500 ms, smoothstep (CONFIRMED: `mov esi,0x5dc` @`0x41d7b9`, and `0x47ece0` stores
+    `ESI` as the duration and `EDX` as the easing, `game-scene.md` §9.1, AN1, AN2, AN14), then `0x41b320(true)`
+    (@`0x41d85d`). With `+0x3c9 == 0` a select at 0.5 only pans, and the view **stays at 0.5** (§3.7).
   - Then `0x41cd00` (@`0x41d874`): the selected row's crossing cells take the letters of the **solved** crossing
     words and are locked (`+0x180 = 1`); the others are unlocked; the highlight is placed.
 - **Highlight** (`0x41de10` / `0x41df10`): the sprite `+0x3a8` (`IMAGE_CROSSWORDHIGHLIGHT`, 12 frames of 572×90) is
@@ -323,11 +327,12 @@ The scene code has four scale writers: three `ModifierScale` vtable stores (`0x5
 ZOOM handler `0x41b1c0` (CW46, CW47), called by the button dispatcher (@`0x41b9e8`) and the keyboard (@`0x41f22f`):
 
 - **Scale 1.0** (`fld1; fcomp [ecx+0x6c]` @`0x41b1c6..0x41b1db`): `+0x3c9 = 0`, busy, button refresh, then one
-  chain: `0x41b320(false)` (the list look on every word); `ModifierScale` to 0.5 (`0x59b858`, CW61; 1000 ms INFERRED
-  from `mov esi,0x3e8` @`0x41b27d`; ease `0x4513d0` @`0x41b278`, INFERRED); then `0x41cab0` (@`0x41b2d4`).
-  `0x41cab0` anchors the grid view on the **root's** row (word 0, @`0x41cb18`) and pans it like a select does
-  (500 ms INFERRED, `mov edx,0x1f4` @`0x41cc2f`), so the overview centres on the root, not on the selected word. It
-  ends in `0x41cce0`: `+0x2f9 = 0` and the button refresh (file read).
+  chain: `0x41b320(false)` (the list look on every word); `ModifierScale` to 0.5 (`0x59b858`, CW61) over 1000 ms
+  (`mov esi,0x3e8` @`0x41b27d`), smoothstep (`0x4513d0` @`0x41b278`); then `0x41cab0` (@`0x41b2d4`). Duration and
+  easing are CONFIRMED: `0x47ece0` takes the duration in `ESI` and the easing in `EDX` (`game-scene.md` §9.1, AN1,
+  AN2, AN14). `0x41cab0` anchors the grid view on the **root's** row (word 0, @`0x41cb18`) and pans it like a select
+  does (500 ms, `mov edx,0x1f4` @`0x41cc2f`; CONFIRMED, AN1, AN17), so the overview centres on the root, not on the
+  selected word. It ends in `0x41cce0`: `+0x2f9 = 0` and the button refresh (file read).
 - **Scale 0.5** (`0x59b858` compare @`0x41b2ef..0x41b2fd`): `+0x3c9 = 1`, then the pan `0x41d160` (@`0x41b308`):
   pan to the selected word, turn if needed, zoom in to 1.0 (§3.3).
 - **Any other scale** (mid-animation): nothing. Not reachable in play: the ZOOM button is disabled and keys are
@@ -525,12 +530,15 @@ Popups use the shared queue (`game-scene.md` §5.1), anchored at (400, 70).
   again mid-game is UNCONFIRMED (§11). It does not matter for the port: no fixed seed reproduces the original's
   grids.
 
-## 10. The port: rule gaps for T5.1 and deviations
+## 10. The port: what it does and where it differs
 
-`round_crossword.hpp` builds the same grid and word set. Its `CrosswordRound::guess` matches the text against any
-unfilled grid word and has a `NoRoom` result; the original has neither. T5.1 must add:
+`round_crossword.hpp` builds the same grid and word set, and `CrosswordRound` plays by the rules of §3 to §7. The
+rules below were the gaps G1-G10 that T5.1 closed; the engine header still cites them by id
+(`round_crossword.hpp:28-29`). ENTER returns `Ignored`, `NotAWord`, `Duplicate` or `Accepted`
+(`CrosswordRound::Guess`), the outcomes of §3.5. The first `CrosswordRound` matched a guess against any unfilled
+grid word and had a `NoRoom` result; neither exists any more. The scene is `ui/include/tt2ui/crossword_scene.hpp`.
 
-| Gap | Original rule | Where |
+| Rule | Original rule, as the port now plays it | Where |
 | --- | --- | --- |
 | G1 selection | a selected slot; NEXT / PREV wrap over all words; after a solve, the next unsolved (wrapping) | §3.3 |
 | G2 slot-bound guess | length ≠ slot → ignored; not in the full-list sub-anagrams of the root → not a word; equal to a word already in the grid → duplicate; else fills the selected slot with the typed word | §3.5 |
@@ -543,21 +551,31 @@ unfilled grid word and has a `NoRoom` result; the original has neither. T5.1 mus
 | G9 restore | root, round, score, placements and per-slot played word and scored flag; the grid is never rebuilt | §5.5 |
 | G10 uncommon | accepted word not in the common sub-anagrams of the root | §3.5 |
 
-Scene zoom for T6b.4 (§3.7), the rule the port needs:
+Scene zoom (§3.7), as `crossword_scene.hpp` plays it (built in T6b.4):
 
 - One zoom-in flag for the scene's lifetime: off at start-up, never saved, not reset by a new round or a new game.
+  The front end carries it from one `CrosswordScene` to the next (`zoom_in_flag()` / `set_zoom_in_flag()`).
 - Every new round and every resumed game: scale 0.5 at once, select the root (pan 500 ms); then, only when the
   flag is on, zoom in to 1.0 (1500 ms) after the pan and the turn.
+- A turn waits 300 ms, then runs for 800 ms, linear. The pan, the zoom-in and the zoom-out are smoothstep.
 - ZOOM at 1.0: flag off, zoom out to 0.5 (1000 ms), then pan so the root is centred (500 ms). ZOOM at 0.5: flag on,
   pan to the selected word, turn if needed, zoom in to 1.0.
 - A select at 0.5 with the flag off only pans; the view stays at 0.5. The reveal zooms out without touching the
   flag.
+- Every duration and easing here is CONFIRMED (§3.3, §3.7; `game-scene.md` §9.1, AN1, AN2, AN13, AN14, AN17; the
+  rotation's fields from a file read).
 
-Decisions and deviations (user, T4.4, 2026-10-22):
+Deviations and choices (the user's decisions in T4.4, 2026-10-22, and two guards in the engine):
 
 - **D2** accepted: grids differ from the original's for the same root. The original is clock-seeded (§9), so it
   cannot be matched even in principle; the rules are the same. The port keeps one process-wide `CrtRandom`, seeded
   from the clock once (D-11, OI-3).
+- **Setup retries** (`round_crossword.hpp` header): the original retries the whole round setup forever when the
+  grid cannot be built (§3.2). `CrosswordRound::start` gives up after `Config::max_setup_retries` (1000) and
+  throws, so a bad dictionary cannot hang the game.
+- **Locked-letter guard** (`CrosswordRound::guess`): a row that disagrees with a locked letter is ignored. The
+  original's row keeps its locked letters (`0x41aa20`, §3.4), so it never reaches ENTER with one, and the guard
+  changes nothing in play.
 - Other valid words fill the slot, as in the exe (OI-12). Full animations (grid turn, pan, zoom) as in the exe.
 - The port's save tag is `CROSSWORD`, as in the exe (OI-11); keys and file layout stay the port's own text format
   (D-10).
@@ -565,7 +583,12 @@ Decisions and deviations (user, T4.4, 2026-10-22):
   `https://www.dictionary.com/browse/` deviation as Classic (`game-scene.md` §4), in states 1 and 2 only, played
   word / answer, no popup 10. The port's dialogs are modal, which matches the INFERRED reading above; if the user
   finds the original's clicks pass through its dialogs, that is a T7.1 gap.
-- INFERRED readings (popups 4, 7, 9; 1000 / 500 / 1500 ms; Up / Down = zoom) are working assumptions until T7.1.
+- **List look** (`0x41b320`, §11): the switch of every row's cells (`IMAGE_XBOX` / `IMAGE_BLITZDOT`) that runs
+  before a zoom-out and after a zoom-in is not drawn by the port; T7.1.
+- **Which rack slot a locked letter empties** is UNCONFIRMED (§3.4); the port takes the leftmost free ball with
+  that letter (§11).
+- INFERRED readings (popups 4, 7, 9; Up / Down = zoom) are working assumptions until T7.1. The view's durations
+  are no longer among them (CONFIRMED above).
 
 ## 11. Search trails for UNCONFIRMED items
 
@@ -578,7 +601,7 @@ Decisions and deviations (user, T4.4, 2026-10-22):
 | Which rack slot a locked letter empties | screenshot A (CW74) shows slot 0; the code that moves the ball was not traced | open; the port takes the leftmost free ball with that letter |
 | List look `0x41b320` | `0x41b320(flag)` calls `0x43d280(word + 0xb8, flag)` on every word (file read, T6b.5): square `IMAGE_XBOX` at scale 2.0 (`0x59b9d8`) or `IMAGE_BLITZDOT` at 2.5 (`0x59b9dc`), the same switch as Lightning | not drawn by the port; T7.1 |
 | Popup 4 / 7 / 9 meanings | `0x41e270`, `0x41aa20`, `0x41df10` pseudo (CW37, CW38); `0x41e060`, `0x43c060`, `0x40b230` not decompiled | INFERRED readings in §3.3-§3.4 |
-| Zoom, pan, rotate durations | register immediates next to the modifier calls: `mov esi,0x3e8` @`0x41b27d`, `mov edx,0x1f4` @`0x41d304` and `0x41cc2f`, `mov esi,0x5dc` @`0x41d7b9` (CW47, CW49, CW50, CW53); the modifier constructors `0x47ece0` / `0x486560` were not decompiled | INFERRED 1000 / 500 / 1500 ms |
+| Zoom, pan, rotate durations | register immediates next to the modifier calls: `mov esi,0x3e8` @`0x41b27d`, `mov edx,0x1f4` @`0x41d304` and `0x41cc2f`, `mov esi,0x5dc` @`0x41d7b9` (CW47, CW49, CW50, CW53); constructors decompiled in batch O4 (`game-scene.md` §9.1, AN1, AN2): `0x47ece0` stores `ESI` and `0x486560` stores `EDX` as the duration `+0x44`, and `EDX = 0x4513d0` is the easing | CONFIRMED 1000 / 500 / 1500 ms, smoothstep (O4); the turn is `ModifierRotation` `+0x50 = 0x320` @`0x41c9dc`, 800 ms, linear (`+0x54 = 0`), after a 300 ms delay (update `0x478bf0`, file read) |
 | High-score `extra` | `0x41f800` (CW33): `0x449c90` int → string before the insert | INFERRED round |
 | Load details | pseudo `0x420fa0` (CW54); `SCORED` store @`0x421c9d` (file read); `0x4381e0` (table read) and `0x461840` not decompiled; the save loop's word order not decompiled | flow and zoom CONFIRMED; grid never rebuilt, save used up on resume, word 0 = root: INFERRED |
 | Live CRT seed at round start | five `srand` callers (CW26); `0x482af0` ← `0x482400` ← `0x440e50` ← `0x46df00`, which has no direct caller (CW67 to CW71); the vtable that holds `0x46df00` and any device-reset path were not traced | INFERRED `_time64` (`0x482b04`) is the last seed before a round; all clock-based |

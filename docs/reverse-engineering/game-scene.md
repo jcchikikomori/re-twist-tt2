@@ -223,10 +223,11 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   There is no timer: a held key (the key translator `0x484770` passes every `WM_KEYDOWN`
   repeat through) moves the rack once per finished 400 ms slide and sounds on every repeat.
   When allowed, `0x43c370` shuffles (`0x439370`) and shuffles again while the new order equals
-  the order before or a second string (INFERRED: the rack word). The shuffle's random source
-  is INFERRED to be the game LCG. Counted in `TRACKER/TWISTS` (the port counts only twists
-  that move the rack). **Port deviation:** the port plays `SOUND_word_twist` only when the
-  rack moves, so a held key doesn't click on every repeat while the balls slide.
+  the order before or the rack word `table+0x1c` (CONFIRMED, §4.1-§4.2; this replaces an
+  earlier INFERRED reading). The shuffle draws the CRT `_rand()`, not the game LCG (CONFIRMED,
+  §4.1). Counted in `TRACKER/TWISTS` (the port counts only twists that move the rack).
+  **Port deviation:** the port plays `SOUND_word_twist` only when the rack moves, so a held
+  key doesn't click on every repeat while the balls slide.
 - Sound playback (CONFIRMED, `0x4634b0`,
   `ev_d92c44a24f8b39b08f4a98e21e4f6a48caf6f2a9f1b520a78e3c8c24a3984158`): every `SOUND_*` is
   played on a **free voice** (`-1`), with volume `0..255`, pan `128 ± 127` and the frequency
@@ -234,6 +235,119 @@ After the grid is built the panel pieces are fitted to it (`tx, ty, tw, th` = ta
   `FSOUND_SetVolume` / `FSOUND_SetPan` / `FSOUND_SetFrequency` (INFERRED from the argument
   shapes; the library is linked statically). A sound never waits for or cuts off an earlier
   copy of itself, which is what SDL_mixer's `Mix_PlayChannel(-1, …)` does too.
+
+### 4.1 Round-start deal order (REA batch D, 2026-10-22)
+
+Claude traced this for T9.3 (O5) of `docs/plans/wotd-crossword.md` (`untimed-polish.md` task 9.1, decision F10).
+Same binary, Ghidra 12.1.4 through REA, one session; the call sites were also read in a local `objdump` listing of
+the exe. Evidence ids DL1-DL10 are listed in §4.4 (`DL`, because `D1` / `D6` already name port deviations). Tags as
+at the top of this file; **UNCONFIRMED** = searched for and not found, with the search trail.
+
+The deal (CONFIRMED, DL1-DL9):
+
+```text
+0x425c50 round start
+  table = 0x4396e0(scene, rack, common, full, 0, 0, 0)              call @0x4261c1-0x4261cd
+    ball[i] = LetterBall(code point i of rack), i = 0..n-1           @0x43988b-0x4398a8
+    0x43bad0(0, -1, 1.0) for ball[0..n-1]: first free cell, a snap   @0x439af5-0x439b1a, row +0xb0
+  0x43c370(row = [table+0xb0], word = table+0x1c, slide = 0)        @0x426242-0x426253
+    before = the row's letters                                       0x43c170 @0x43c3c8
+    if 0x43c280(before):                                             2+ letters, not all equal, none moving
+      do    0x439370(cells, cells + n)                               MSVC random_shuffle on CRT _rand()
+      while row == before or row == word                             compares @0x43c43d, @0x43c49a
+      cell i -> (i*69 + 34.5, 34.5), set at once (slide = 0)        vtable +0x34 @0x43c61b-0x43c636
+  0x43c940(1)                                                        the flip-in (§4 above, §9.2 row 4)
+```
+
+- **Before the shuffle the balls are in rack-word order.** The ctor reads code point `i` of the rack string
+  (`0x45f8c0` gives its byte offset, `0x460410` decodes it) and builds ball `i` from it. Then it puts ball `i` into the
+  first free cell of the available row: `+0xb0`, because the ctor's last argument is 0 (@`0x439ac8`). `0x43bad0`
+  with a first argument of 0 sets the position through vtable `+0x34` and never calls `0x43a4c0`, so nothing slides
+  (DL1, DL2, DL5).
+- **The RNG is the CRT `_rand()`, not the game LCG.** `0x439370` is MSVC `std::random_shuffle(first, last)`: for
+  `i = 1 .. n-1`, `j = rand() % (i + 1)`, then `swap(a[i], a[j])`. It takes extra 15-bit draws only above 32,767
+  elements, so a pass costs `n - 1` draws. That is `tt2::CrtRandom::shuffle` exactly (DL4). The bag (`0x43d550`) and
+  the target length draw from the Java LCG `0x5fde90` (W66), so the deal does **not** share the bag's stream. The CRT
+  state is process-wide and clock-seeded (`crossword.md` §9), shared with the twist, Crossword and the menu's idle
+  timers (`welcome-flow.md`).
+- **A guard with no cap: the original never deals the rack word in order.** The loop is a do-while. It shuffles at
+  least once, then again while the row's letters equal the order before the call (first compare) or the rack word
+  `table+0x1c` (second compare). At round start both strings are the rack word. Both compares are a byte compare
+  (`0x402da0`) plus equal sizes, on UTF-8 strings that `0x43c170` rebuilds from each ball's `+0x188` code point
+  (`0x422aa0`). The ball ctor stores its letter argument there unchanged (@`0x439e33`), and `0x460410` changes no
+  case, so a row that spells the word always matches, including an order that only swaps two equal letters (DL4,
+  DL6, DL7, DL9). Expected passes are `1 / (1 - m / n!)`, with `m` the arrangements that spell the word: for `stone`,
+  `120 / 119 ≈ 1.008`.
+- **Nothing skips the shuffle at round start.** `0x43c280` refuses with fewer than 2 letters, with every letter the
+  same, or while a ball's move `+0x184` is set. A rack has 5-8 letters, the ball ctor zeroes `+0x184`
+  (@`0x439e2d`), and the snap above starts no move (DL5, DL9).
+- **The first frame is already shuffled.** `slide = 0` places the balls at once, and only then does `0x43c940(1)`
+  start the flip-in, so the word order is never drawn (DL3, DL6).
+- **A resumed game is dealt afresh.** The save keeps `WORD` but no ball order (§7), and the load passes `WORD` back
+  to `0x425c50` (W36).
+
+### 4.2 Every deal through `0x43c370` (CONFIRMED, DL8-DL9)
+
+| Caller | Mode, moment | Row / word / slide | Site |
+| --- | --- | --- | --- |
+| `0x425c50` | Classic Untimed / Timed and WOTD, round start | `[table+0xb0]` / `table+0x1c` / 0 | @`0x426242`-`0x426253` |
+| `0x425240` | the same, TWIST | `[table+0xb0]` / `table+0x1c` / 1 (400 ms, §9.2 row 6) | @`0x42532e`-`0x425347` |
+| `0x414340` | Lightning, each word's build | `[word+0xb0]` / the word passed to `0x4396e0` / 0 | @`0x4143f3`-`0x414400` |
+| `0x413090` | Lightning, TWIST | `[word+0xb0]` / `word+0x1c` / 1 | @`0x41317e`-`0x413197` |
+| `0x434f40` | Crossword word object, no restore string (@`0x435303`-`0x435312`) | `[word+0xb4]` / `EDI` (INFERRED `word+0x18`) / 0 | @`0x4353f5`-`0x4353fd` |
+| `0x41b060` | Crossword, TWIST | `[word+0xb4]` / `word+0x18` / 1 | @`0x41b14e`-`0x41b160` |
+
+- WOTD runs the same `0x425c50`, so its deal is the Classic one. Its reseed of the LCG `0x5fde90` (§8.2) does not
+  reach the CRT.
+- TWIST uses the same shuffle and the same guard, so a twist always changes the order and never spells the word.
+- The shuffle runs over **all** `n` cells (`[+0x184, +0x184 + 4·+0x188)`, @`0x43c52f`-`0x43c595`), and the layout
+  steps 69 px per cell, empty or not. INFERRED: a ball in the played row leaves its available cell empty, so a twist
+  mid-word also moves the gaps. A pass that only moves gaps leaves the letters equal to `before` and shuffles again.
+- The Crossword deal's word string is INFERRED from register flow: `EDI = word+0x18` @`0x434f7a`, and the same
+  `EDI` bounds the ball loop @`0x4352f6`. Its TWIST passes `word+0x18` explicitly.
+
+Worked example (CONFIRMED arithmetic, DL10): `srand(1)` draws `41, 18467, 6334, 26500, 19169`. With the rack
+`garden`:
+
+| i | draw | j = draw % (i + 1) | row after `swap(a[i], a[j])` |
+| --- | --- | --- | --- |
+| 1 | 41 | 1 | `garden` |
+| 2 | 18467 | 2 | `garden` |
+| 3 | 6334 | 2 | `gadren` |
+| 4 | 26500 | 0 | `eadrgn` |
+| 5 | 19169 | 5 | `eadrgn` |
+
+`eadrgn` differs from `garden`, so one pass deals it (5 draws). With `srand(195)` and `stone`, the first pass gives
+back `stone`; the guard rejects it, and the second pass deals `snteo` (8 draws).
+
+Port notes (no change made here; T9.3 waits for the user's F10 answer): `GameScene::scrambled()`
+(`game_scene.hpp:1063-1074`) already shuffles at least once and again while the row spells the word, as the exe
+does, but it draws the game LCG `rng_` and caps the loop at 8 tries. `BlitzScene::scrambled()`
+(`blitz_scene.hpp:1222-1229`) is a copy. `GameScene::twist()` draws the LCG too, and shuffles only the available
+balls' slots, so its gaps never move. `CrosswordScene::deal_racks()` and `CrosswordScene::twist()` use the CRT but
+shuffle once, with no "differs from before / from the word" loop.
+
+### 4.3 Search trails
+
+| Item | Searched | Result |
+| --- | --- | --- |
+| A deal path that skips `0x43c370` | callers of `0x43c370` (DL8); the round start after the ctor (DL3, DL9) | none: every new rack in every mode goes through it |
+| A word-order deal | the loop's exit condition @`0x43c4a1`-`0x43c4bf`; `0x43c280`'s refusals (DL5, DL6) | none at round start; a single-letter or one-letter-repeated rack would skip the shuffle, and no rack word is like that |
+
+### 4.4 Evidence ids (batch D)
+
+| Id | Call | evidence_id |
+| --- | --- | --- |
+| DL1 | pseudo `0x4396e0` (`AnagramTable` ctor: balls, rows, snap loop) | `ev_44cb03845ebe64efc330368a5848148a7b2810fc4eeb8f8f76df83569b8d5538` |
+| DL2 | asm `0x4396e0` (ball `i` = code point `i`; row `+0xb0`; `0x43bad0(0, -1, 1.0)`) | `ev_81a2810316ba8e08cbdbedd605c4445faace9458b216040f9d1efe10e96e2ef3` |
+| DL3 | pseudo `0x425c50` (ctor, then `0x43c370(table+0x1c, 0)`, then `0x43c940(1)`) | `ev_48575bcd821545fb8381f5848f6747d5854fdb32bc35c8f13f433c9eb23b69d8` |
+| DL4 | pseudo `0x43c370`, `0x439370` | `ev_257816e08a54c3c2815677b7960884c7d42e708c0d0839bad1ae3b98ffaec007` |
+| DL5 | pseudo `0x43bad0`, `0x43c280`, `0x43c170` | `ev_f066cd594ef478c5828d7a18989acaf8a68aaa9180fa7327f901520f107890f8` |
+| DL6 | asm `0x43c370` (the do-while, both compares, the shuffle range, snap or slide) | `ev_7d3a55bd29efde3b573689704f2847fd42d7cc88dc3fc7e99fc0c347f559d9f4` |
+| DL7 | pseudo `0x45f8c0`, `0x460410`, `0x422aa0`, `0x45fa60`, `0x402da0` (UTF-8 string helpers, compare) | `ev_62fa905eadfee0aac7890c4decc681748a6148c1e1f574760a37a0dbd42733a4` |
+| DL8 | callers `0x43c370` (`0x413090`, `0x414340`, `0x41b060`, `0x425240`, `0x425c50`, `0x434f40`) | `ev_18e281dc5da19ca204249fde5928de2be3bb45e5c50fe8bd079a40dfc1285e75` |
+| DL9 | `objdump` of `0x426150`-`0x426271`, the §4.2 call sites, and `0x439d00` @`0x439d2b`-`0x439e33` (`+0x184 = 0`, `+0x188` = the letter) | none (local listing) |
+| DL10 | simulation of `0x43c370` + `0x439370`, checked against `tt2::CrtRandom` (`engine/include/tt2/random.hpp`) | none (local) |
 
 ## 5. Round flow
 
@@ -733,8 +847,8 @@ board (`Board::on_board`), instead of when it is not in the common list.
   | `0x425420` third miss (W39) | Pass / time-up miss path | no (WOTD never calls it) |
   | `0x411ef0` (W42) | Blitz game-over reveal, gated by a WOTD string compare | no (Blitz mode string) |
 
-  `0x411ef0` is the "UNKNOWN purpose" copy noted in `lightning.md` §4.2: a leftover from the shared code,
-  dead in Blitz.
+  `0x411ef0` is the `player+0x38` copy in `lightning.md` §4.2 (once tagged UNKNOWN there): a leftover from the
+  shared code, dead in Blitz.
 - **Not written** at round start (`0x425c50` only computes `+0x1ec`, W6), on leave (`0x427b20` saves, W34), or in
   the save writer (W35). So a mid-round leave keeps the menu button **enabled** on the same day, and clicking it
   resumes the save. The OI-10 risk (a same-day save behind a closed gate) does not exist in the exe: `WOD` is only
@@ -928,10 +1042,186 @@ install's `dialogs.xml` / `text.xml`; then REA reads for every difference. The g
   NEXTROUND "back to the menu" card, the `2026-10-22` date in HIGH SCORES, and the greyed WOTD menu button
   afterwards ("word of the day already played today").
 
-## 9. Address index
+## 9. Animation inventory (REA batch O4, 2026-10-22)
+
+Claude ran this batch for T9.1 of `docs/plans/wotd-crossword.md` (task 8.1 of `untimed-polish.md`). Same binary,
+Ghidra 12.1.4 through REA, one session, plus two local reads of the exe with `/usr/bin/python3` and `objdump`: an
+RTTI walk that maps every `GF2::Modifier*` class to its vtable (AN28), and a scan of the whole `.text` listing for
+every vtable store and constructor call of those classes (AN29, 155 raw matches). The REA xref and caller lists
+(AN7-AN18) match that scan site for site. Evidence ids AN1-AN30 are listed in §9.5. Tags as at the top of this file;
+**UNCONFIRMED** = searched for and not found, with the search trail.
+
+Short answer: every animation the exe builds for the Classic scene and the dialogs over it is already in the port.
+Of the rows the plan expected to be missing, the slot fill is built, and the score count-up, a ball hover / press
+effect and a GAME OVER animation do not exist in the original. Only `DialogPause` (key P) is not ported, by choice
+(§6).
+
+### 9.1 Modifier classes and their duration fields (CONFIRMED)
+
+A GF2 modifier is a small object. The code passes its duration in a register, and the constructor stores it in a
+field. Most classes derive from `ModifierFraction` (vtable `0x597624`). Its update `0x47ed40` (AN2) adds the frame
+time to `+0x48`, ends the modifier when `+0x48 >= +0x44` (after `+0x4c` passes; 1 = once), and stores
+`+0x50 = ease(+0x48 / +0x44)` through the function pointer at `+0x54`. So for every Fraction subclass **`+0x44` is
+the duration in ms and `+0x54` the easing**. The base constructor `0x47ece0` takes the duration in `ESI` and the
+easing in `EDX`; `EDX = 0` stores the linear `0x4307e0` instead (AN1). Smoothstep `0x4513d0` is in §4.
+
+| Class (vtable) | Built by | Duration | Easing | Other fields | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| `ModifierFraction` (`0x597624`) | base ctor `0x47ece0` | `ESI` → `+0x44` | `EDX` → `+0x54`; 0 = linear `0x4307e0` | `+0x48` elapsed, `+0x4c` passes (1), `+0x50` eased value | AN1, AN2 |
+| `ModifierDelay` (`0x5943bc`) | `0x450b10`, or inlined | `EDX` → `+0x44`, counted down by the update `0x450c00` (file read) | none | `+0x48` / `+0x4c`: optional node to wait for instead | AN1, AN13 |
+| `ModifierAlpha` (`0x59440c`) | `0x451030`, or inlined | `EDX` → `+0x44` | always linear | from `[esp+4]` → `+0x58`, to `[esp+8]` → `+0x5c` | AN1, AN16 |
+| `ModifierScale` (`0x59700c`) | always inlined: `0x47ece0`, then the vtable store | `ESI` | `EDX`: smoothstep `0x4513d0`, or 0 = linear | from (x, y) `+0x58` / `+0x5c`, to `+0x60` / `+0x64` | AN1, AN14 |
+| `ModifierLocation` (`0x597f24`) | `0x486560` | `EDX` → `+0x44` | linear | start (x, y) from the two stack floats | AN1, AN9 |
+| `ModifierLocationLine` (`0x59446c`) | `0x486560`, then the vtable store (inlined), or the XML helper `0x451400` | `EDX` | the caller writes `+0x54`; `0x451400` picks smoothstep when its 4th argument is set | target (x, y) `+0x70` / `+0x74` | AN1, AN17 |
+| `ModifierFrame` (`0x5971dc`) | `0x4793c0` (whole sheet), `0x479420` (range), or inlined | first stack argument → `+0x48`, **ms per frame**; 0 = set the frame at once and stop | none | `EDX` → `+0x44`, **passes** (1 = once, ≤ 0 = loop); `+0x4c` first, `+0x50` last (−1 = sheet end), `+0x5c` ping-pong | AN1, AN3, AN15 |
+| `ModifierVisible` (`0x59768c`) | inlined (`0x47ef30` for XML) | instant | none | `+0x44` visible flag | AN4, AN18 |
+| `ModifierClipRect` (`0x5970c4`) | `0x478390` | `ESI`, passed on to `0x47ece0` | **always linear**: `0x478390` starts with `XOR EDX, EDX` | from rect `[EBX]`, to rect `[EDI]` | AN1, AN30 |
+| `ModifierSimpleAlpha` (`0x591a8c`) | `0x4304d0` (Lightning only) | fixed **400 ms** | linear | from, to | AN2 |
+| `ModifierRotation` (`0x59714c`) | `0x478b70` (XML), or inlined (Crossword `0x41c9d6`) | `+0x50`; the update `0x478bf0` divides the elapsed `+0x4c` by it | byte `+0x54`: 1 = smoothstep (inline `(3 − 2t)·t²`), 0 = linear | from angle `+0x44`, to `+0x48`; byte `+0x55` = endless spin | file read |
+| `ModifierLetterballContainer` (`0x591a14`) | `0x430320` | none | none | a named group (`"LB_ANIM"`) that holds a ball's move chain at ball `+0x184` | AN2, AN6 |
+
+Two readings change:
+
+- `0x47ece0` is the **`ModifierFraction` base constructor**, not a `ModifierScale` one. `ModifierScale` has no
+  constructor of its own: every site calls `0x47ece0` and then stores the vtable `0x59700c` inline (AN14). The
+  layout is the same, so the durations read earlier from `ESI` (§5.1, `crossword.md`, `lightning.md`) stand.
+- `ModifierFrame` takes **`EDX` = passes** and the **first stack argument = ms per frame**, not "`EDX` = ms per
+  frame" as the table in `welcome-flow.md` §0 has it. The update `0x479710` (AN3) steps the frame each time `+0x54`
+  reaches `+0x48`. At the last frame it ends when `+0x44 == 1`, counts `+0x44` down when it is larger, and loops
+  when it is 0 or less; `+0x48 = 0` sets the frame at once. Every caller in game code passes `EDX = 1` (the XML
+  sprite parser aside, §9.4), with 50, 60, 70 or 100 ms on the stack (`0x4293a3`, `0x43a8d9`, `0x42debb`,
+  `0x42bc40`). The frame times in this file and in the
+  flows of `welcome-flow.md` already follow this reading; only that table is off.
+
+### 9.2 Classic scene animations
+
+One row per animation the Classic scene (Untimed, Timed, Word of the Day) and the dialogs over it can show. "built
+(matches)" means the original has no animation there and the port adds none. Port paths are under
+`ui/include/tt2ui/`.
+
+| # | Target | Modifier chain | Duration / easing | Address | Port status | Tag | Evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | Found word, per letter (a guess) | Delay → Scale tile y 1 → 0 → Frame letter (set) → Scale tile y 0 → 1 ∥ Scale letter y 0 → 1 ∥ Visible(1) | Delay `i·100`; each Scale 150 ms (`+0x44 = 0x96`), linear (`+0x54 = 0x4307e0`); Frame 0 ms | `0x432b20` → `0x4310f0(slot, 0)` | built, `game_scene.hpp:60-93` (`anagram_tile_at` :78) | CONFIRMED | AN4, AN19, §2 |
+| 2 | Missed word, per letter (round-end reveal) | as 1, plus Frame tile → 1 (yellow) after the squash | as 1 | `0x4333a0` → `0x4310f0(slot, 0)` | built, `game_scene.hpp:86` | CONFIRMED | AN4, AN19, §2 |
+| 3 | Restored word (resumed game) | as 1, every letter at once | 300 ms for the whole word | `0x433090` → `0x432b20` → `0x4310f0(…, 1)` | built, `game_scene.hpp:71-80` | CONFIRMED | AN4, AN19, §2 |
+| 4 | Rack ball, round start | Delay → Frame first .. first + 11 ∥ Method `0x43a940` (`SOUND_letter_load`) | Delay `i·120`; 60 ms per frame (`+0x48 = 0x3c`), one pass (`+0x44 = 1`): 720 ms | `0x425c50` → `0x43c940` → `0x43a820` | built, `game_scene.hpp:173-174`, `:238-268`, `:1046` | CONFIRMED | AN5, AN20, §4 |
+| 5 | Ball placed or taken back (click, typing, Backspace, CLEAR, LAST WORD) | Container `"LB_ANIM"` → LocationLine ∥ Scale → MethodParam `0x43a420` (re-parent) → Method `0x43a2f0` (clears `+0x184`) | slide 300 ms (`EDX = 0x12c` @`0x43a5eb`), smoothstep; Scale 300 ms (`ESI = 0x12c` @`0x43a65e`), linear, to the caller's scale: Classic passes 1.0 (`fld1` @`0x4246e6`, `0x424e6f`, `0x424fca`, `0x425142`, `0x427838`, `0x4278c3`, forwarded @`0x43bd2a`), so it does not show | `0x43bad0` → `0x43a4c0` (container set) | built, `game_scene.hpp:175`, `:239-242`, `:1513`; the 1.0 → 1.0 scale is not modelled | CONFIRMED | AN5, AN6, AN21 |
+| 6 | Twist relayout | LocationLine → Method `0x43a2f0` | 400 ms (`EDX = 0x190` @`0x43a781`), smoothstep | `0x425240` → `0x43c370` → `0x43a4c0` (no container) | built, `game_scene.hpp:176`, `:1609` | CONFIRMED | AN6, AN21 |
+| 7 | Ball hover | none; the hand cursor only | none | `0x427a60` | built (matches), `game_scene.hpp:746-750` | CONFIRMED | §4, AN29 |
+| 8 | Ball press | none of its own; it starts row 5 | none | `0x427680` | built (matches) | CONFIRMED | §4, AN29 |
+| 9 | Score label | none; setText jumps to the new total | none | `0x424730` | built (matches), `game_scene.hpp:635` | CONFIRMED | W37, W55, AN29 |
+| 10 | Clock, last 10 s | none; one `SOUND_game_clock_countdown` per second | none | `0x426860` | built (matches), `game_scene.hpp:930-931` | CONFIRMED | W17, AN29 |
+| 11 | Message popup (kinds 0, 3, 5, 8, 10, 11) | Alpha 0 → 1 → Scale 0 → 1.2 → Scale 1.2 → 1 → Delay → Alpha 1 → 0 → Method `0x4235c0` | 150 linear; 250 smoothstep; 100 linear; 900; 250 linear: 1650 ms | `0x428ec0` | built, `scene_popups.hpp:53-60`, `:131-140` | CONFIRMED | §5.1, AN1, AN7, AN8, AN10 |
+| 12 | Banner popup (kind 1 ALL WORDS, kind 2 BINGO) | as 11, with Frame (whole sheet) → Delay in place of the 900 ms Delay | Frame 50 ms per frame (`push 0x32` @`0x4293a3`), one pass (`EDX = 1` @`0x4293a5`); Delay 1000: 2500 ms for 15 frames | `0x428ec0` @`0x42934f`-`0x4293e2` | built, `scene_popups.hpp:57-58`, `:135-136` | CONFIRMED | AN3, AN11, §5.1 |
+| 13 | Trophy popup, trophy image | Alpha 0 → 1 → Scale 0.05 → 0.6 → Scale 0.6 → 0.5 → Delay → Alpha 1 → 0 → Method `0x4235d0` | 200 linear; 500 smoothstep; 300 linear; 2000 (`0x7d0` @`0x429b7c`); 500 linear: 3500 ms | `0x429510` | built, `scene_popups.hpp:162-163`, `:215-217`; `trophy_room.hpp:93-103` | CONFIRMED | `trophies.md` E2-E4, AN7, AN8, AN13 |
+| 14 | Trophy popup, title | as 13, scale 0.05 → 1.2 → 1.0 | as 13 | `0x429510` | built, `scene_popups.hpp:224-226` | CONFIRMED | `trophies.md` E3, AN14 |
+| 15 | Round end: reveal hold | Delay → Method `0x428a60` | the caller's: 1000 (all words) or 3000 | `0x428840` @`0x428a02` | built, `game_scene.hpp:395-399`, `:1239` | CONFIRMED | W14, W15, W55, AN13 |
+| 16 | Miss (Pass, time-up miss): reveal hold | Delay | 3000 (`0xbb8` @`0x425653`) | `0x425420` | built, `game_scene.hpp:395`, `:1239` | CONFIRMED | W39, AN13 |
+| 17 | Third miss: reveal hold before game over | Delay → `0x427d10` | 3000 (`0xbb8` @`0x428dc4`) | `0x428c80` | built, `game_scene.hpp:395`, `:1239` (Classic), `:1331` (WOTD) | CONFIRMED | W40, AN13 |
+| 18 | GAME OVER | none; no modifier in `0x427d10`, the `GAME_OVER` sprite is never looked up, and the end card uses the dialog fade (row 20) | none | `0x427d10` | built (matches: not drawn), `scene_popups.hpp:25-27` | CONFIRMED | W24, W25, AN29, §5.1 |
+| 19 | Commentary | none; `COMMENTARY` / `COMMENTS` are never looked up | none | none | built (matches: not drawn), `scene_popups.hpp:25-27` | CONFIRMED | §5.1 |
+| 20 | Any dialog, show / hide | Alpha 0 → 1 / 1 → 0 | `DIALOG_FADE_TIME` 200 ms in `EDX`, linear | `0x40ccc0` / `0x40ce80` | built, `dialog_fade.hpp:30` (acts on the click, not after the fade: §6) | CONFIRMED | §6, AN1, AN7 |
+| 21 | HOW TO PLAY, page change | Alpha 1 → 0 ∥ Alpha 0 → 1 | 200 ms each (`EDX = 0xc8`), linear | `0x404f50` | built, `help_dialog.hpp:41-42` | CONFIRMED | `help-and-settings.md`, AN7 |
+| 22 | HOW TO PLAY, open | Delay on the dialog, nothing chained to it | 200 ms (`+0x44 = 0xc8` @`0x404ea9`) | `0x404e30` | built (matches: nothing to draw) | INFERRED (no visible effect, §9.4) | AN13, AN29 |
+| 23 | `DIALOG_NEXTROUND` / `DIALOG_CONGRATS` letterballs | Delay → Frame, as row 4 | Delay `500 + 200·i`, then as row 4 | `0x409100` / `0x401290` → `0x43a820` | built, `game_scene.hpp:282-316`, `:1426-1434` | CONFIRMED | §6, AN20 |
+| 24 | Same dialogs, particles (8 per ball) | Delay → LocationLine ∥ Alpha 1 → 0 | the ball's delay; 700 ms (`EDX = 0x2bc`), linear; `600 + rand % 90` ms, linear | `0x409100` @`0x409708`-`0x4098d6`; `0x401290` @`0x401898`-`0x401a66` | built, `game_scene.hpp:333-337`, `:361` (own random stream: §6) | CONFIRMED | §6, AN9, AN13, AN16, AN17 |
+| 25 | Same dialogs, `SPARKLE` (`IMAGE_BURST`) | XML `frametime="40"` → Frame range from the sprite parser | 40 ms per frame, looping | `0x444e70` @`0x445f08` | built, `game_dialogs.hpp:92-99` | 40 ms CONFIRMED (`dialogs.xml`); the loop INFERRED (§9.4) | AN12, AN26 |
+| 26 | `DialogPause` (key P), show | Delay → Method `0x40a1c0` | 100 ms (`+0x44 = 0x64` @`0x40a116`) | `0x409fa0` | different: not ported (§6) | CONFIRMED; `0x40a1c0`'s effect INFERRED (§9.4) | AN13, AN29 |
+
+Worked example, a bingo on the last free 6-letter slot: the six letters flip in from 0 to `5·100 + 300 = 800` ms
+(row 1), while the BINGO banner grows in over `150 + 250 + 100 = 500` ms and shows its 15 frames for 750 ms (row 12).
+
+Bounded negative: the `TextTwist2Scene` methods themselves build modifiers only in `0x425420`, `0x428840`,
+`0x428c80`, `0x428ec0` and `0x429510`. There is none in the ctor `0x423a20`, round start `0x425c50`, ENTER
+`0x424730`, the refresh `0x425710`, the input handlers `0x427560` / `0x427680` / `0x427a60`, the update `0x426860`
+or game over `0x427d10` (AN13-AN18, AN29). Everything else the scene shows moving comes from the AnagramTable flip
+`0x4310f0` and the LetterBall helpers `0x43a4c0` / `0x43a820`.
+
+### 9.3 Every construction site, by caller
+
+Every site from AN29, grouped by the function that builds it; the constructors' own vtable stores are left out. The
+Classic rows of §9.2 come from the first ten callers, plus the XML sprite parser in the last row (row 25).
+
+| Caller | What it animates | Sites (class @address) | Documented in |
+| --- | --- | --- | --- |
+| `0x4310f0` | word flip (rows 1-3; Crossword reaches it through `0x436ff0`) | Delay @`0x4311ce`; Scale @`0x43129f`, `0x4314f2`, `0x4315bf`; Frame @`0x43135f`, `0x431414`; Visible @`0x43165d` | §2 |
+| `0x43a820` | ball flip (rows 4, 23) | Delay @`0x43a869`; Frame @`0x43a8cc` | §4 |
+| `0x43a4c0` | ball move (rows 5, 6; Lightning's reveal through `0x43c6a0`) | Container @`0x43a55b`; LocationLine @`0x43a60e`, `0x43a7a4`; Scale @`0x43a673` | §4 |
+| `0x425420`, `0x428840`, `0x428c80` | reveal holds (rows 15-17) | Delay @`0x42564d`, `0x4289fc`, `0x428dbe` | §5 |
+| `0x428ec0` | popups (rows 11, 12; every game scene) | Alpha @`0x42926f`, `0x42941c`; Scale @`0x4292b9`, `0x429316`; Delay @`0x42936c`, `0x4293dd`; Frame @`0x4293aa` | §5.1 |
+| `0x429510` | trophy popup (rows 13, 14; every game scene) | Alpha @`0x429a39`, `0x429bbb`, `0x429c1e`, `0x429d8e`; Scale @`0x429a9b`, `0x429b02`, `0x429c7c`, `0x429cdf`; Delay @`0x429b76`, `0x429d4b` | `trophies.md` §1 |
+| `0x409100` / `0x401290` | `DIALOG_NEXTROUND` / `DIALOG_CONGRATS` particles (row 24) | Delay @`0x409708` / `0x401898`; Alpha @`0x40981e` / `0x4019ae`; LocationLine @`0x4098d6` / `0x401a66` | §6 |
+| `0x40ccc0` / `0x40ce80` | dialog show / hide (row 20) | Alpha @`0x40cd8d` / `0x40cf3f` | §6 |
+| `0x404e30` / `0x404f50` | HOW TO PLAY open / page change (rows 21, 22) | Delay @`0x404ea3`; Alpha @`0x404f7f`, `0x404fbf` | `help-and-settings.md` |
+| `0x409fa0` | `DialogPause` show (row 26) | Delay @`0x40a110` | §6 |
+| `0x43a310` (only from `0x43c890`) | pearl ↔ square tile flip, 60 ms per frame, 5 frames | Frame range @`0x43a33f`, `0x43a392`, `0x43a3d2` | Lightning and Crossword only (AN22); `lightning.md` §1.1 |
+| `0x43c990`, `0x43cb60` | hint letter (Lightning, from `0x4131f0`) | Frame @`0x43ca37`; Alpha @`0x43cb1c`; Visible @`0x43cbb7` | `lightning.md` §2.5 |
+| `0x43cc30`, `0x43ce60`, `0x43d310` | Crossword letters and reveal (from `0x41c740`, `0x41fed0`) | Alpha @`0x43ccc9`, `0x43cef5`, `0x43d158`; Visible @`0x43cd2d`, `0x43d1ee`; Delay @`0x43cfdf`; Frame @`0x43d06e`, `0x43d38f` | `crossword.md` |
+| `0x4116e0`, `0x411e10`, `0x411ef0`, `0x414780` | Lightning: +8 s bar, lose, reveal, word switch | ClipRect @`0x411b77`; Delay @`0x411eac`, `0x411f87`, `0x4129d8`, `0x4147fd`; Alpha @`0x41217f`, `0x4122c7`, `0x412752`; Scale @`0x4123a2`, `0x41249f`, `0x412827`, `0x41291a`, `0x41492f`, `0x414bad`; LocationLine @`0x4148ba`, `0x414ac4`; SimpleAlpha @`0x414a09`, `0x414c12` | `lightning.md` |
+| `0x41b1c0`, `0x41c910`, `0x41cab0`, `0x41d160`, `0x41d390`, `0x41e930`, `0x41fed0` | Crossword: zoom out, turn, pans, zoom in, the 700 ms advance, reveal | Scale @`0x41b292`, `0x41d7ce`, `0x41ffba`; Delay @`0x41c960`, `0x41ea56`, `0x420175`, `0x42032b`; Rotation @`0x41c9d6`; LocationLine @`0x41cc6e`, `0x41d327` | `crossword.md` §3 |
+| `0x42b080` (a `LoadScene` vtable slot), `0x42c760`, `0x42dd30`, `0x42fe30` | loading screen, menu fades, logo, trophy room | Delay, Alpha, Frame, Scale | `welcome-flow.md`, `trophies.md` |
+| GF2: `0x444e70`, `0x4433e0`, `0x4462b0`, `0x441bb0`, `0x45bb60`, `0x46c2f0`-`0x46c8ac`, `0x477410`, `0x478b70`, `0x47e6e0`, `0x47e7e0`, `0x47ef30`, `0x484d00` | XML sprite attributes (`frametime`, row 25), the text blink (callers `0x4068d0`, `0x45e080`), fade-to-black and `SceneTransitionAlpha` scene changes, XML rotation / sound / visible / skew | all classes | §9.1, `welcome-flow.md` §0 |
+
+### 9.4 Search trails (INFERRED items; none UNCONFIRMED)
+
+No row in §9.2 is UNCONFIRMED, so F9 of the plan does not trigger: no parameter is left for the user to decide.
+
+| Item | Searched | Result |
+| --- | --- | --- |
+| `SPARKLE` loop count (row 25) | `dialogs.xml` gives `frametime="40"`; the sprite parser `0x444e70` builds the Frame @`0x445f08` with `EDX` from a stack local filled by the attribute reads @`0x445cdc`-`0x445e98` (file read), not traced to one attribute | INFERRED loop while the dialog is up; the port loops |
+| HOW TO PLAY open delay (row 22) | `0x404e30` adds a 200 ms `ModifierDelay` to the dialog through `0x448cf0` and chains nothing after it (file read) | INFERRED no visible effect |
+| `DialogPause` method (row 26) | `0x40a1c0` is `mov eax, [0x5fde9c]; mov byte [eax+0x18], 1; jmp 0x463fc0`; `0x463fc0` not decompiled | INFERRED: pauses the engine 100 ms after the dialog opens |
+| The ball move's scale (row 5) | Classic callers of `0x43bad0` pass 1.0 (row 5); `0x43a4c0` adds extra methods only when the scale is 0.5 (`0x43a6ac`, Crossword) | CONFIRMED no visible change in Classic |
+
+Port notes (no change made here): `modifier.hpp:72` calls `0x47ece0` the `ModifierScale` constructor; it is the
+`ModifierFraction` base, and the port's semantics are right. Comments that still call the Crossword durations
+INFERRED (`crossword_scene.hpp:82-103`) can now say CONFIRMED.
+
+### 9.5 Evidence ids (batch AN)
+
+| Id | Call | evidence_id |
+| --- | --- | --- |
+| AN1 | pseudo `0x450b10`, `0x451030`, `0x47ece0`, `0x486560`, `0x451400`, `0x4793c0`, `0x479420`, `0x478390` (constructors) | `ev_558f1f3837d36efe5daf961c72f92e5c99fa9c0acd9fd3b74d4453144c828bf2` |
+| AN2 | pseudo `0x47ed40` (Fraction update), `0x4304d0` (SimpleAlpha), `0x430320` (LetterballContainer) | `ev_56ffa74e8913f01573021daeea885da85a0dfd21da59a3e82fdc13f1e2aff723` |
+| AN3 | asm `0x479710` (ModifierFrame update) | `ev_36ee274ce8940a6381f0d065a336abc21a1eb621801bbcf938da815f52b6364a` |
+| AN4 | pseudo `0x4310f0` (word flip) | `ev_42bd88dc8f9f50aaba1be94d8bd5a3174390cdd65c3dbbabf202e87f13ea2cd3` |
+| AN5 | pseudo `0x43a820` (ball flip), `0x43a4c0` (ball move) | `ev_a13e9af9f2096beac0ae69cf4cc8ffd7d854b5e2088d1d08b1a3f6f5a7945632` |
+| AN6 | asm `0x43a4c0` (300 / 400 ms, easing, scale) | `ev_15bcab3045c66e3e536a066dcdc6da52bca82f35a50b96f78b59ac9ea79ee2a1` |
+| AN7 | callers `0x451030` (ModifierAlpha) | `ev_133b82239b0c3646b0311e5b65be14c43dc4d1516de5b16cb0404fc27429c813` |
+| AN8 | callers `0x47ece0` (ModifierFraction) | `ev_905ac0c3430ff4aeeeae5d13de238c420bc6e92f64a3f0b983d311089dbd034e` |
+| AN9 | callers `0x486560` (ModifierLocation) | `ev_6fd46a130470aa38b95c3887b97703e36edba634007fef8b791e59357e26991b` |
+| AN10 | callers `0x450b10` (ModifierDelay) | `ev_8cc65fcf167a37a08eda4acfbe908b104c1badcc0318bae1cbb414aaf9bf7e38` |
+| AN11 | callers `0x4793c0` (ModifierFrame, whole sheet) | `ev_a92025c9bb571fb8580781360b0b1048651e028d3f51fa55e6d8a5da1560bd58` |
+| AN12 | callers `0x479420` (ModifierFrame, range) | `ev_e268d1d69f7588b7d007a66f54ef3b132093a41629778d365b478b7b121cb294` |
+| AN13 | xrefs `0x5943bc` (ModifierDelay vtable, 24 sites) | `ev_39f204df721e4df0c6799440226d8fb836f4322ac394be2b0ddbfa1f73c516ac` |
+| AN14 | xrefs `0x59700c` (ModifierScale vtable, 22 sites) | `ev_3dfba6dabf406bf65c529b992afda569190dc9b2330facf23ff36812a0eac4ff` |
+| AN15 | xrefs `0x5971dc` (ModifierFrame vtable, 10 sites) | `ev_a4393266192ce8e2d856db7232b683c10a94bd2ea406167fd6e19e43ea272707` |
+| AN16 | xrefs `0x59440c` (ModifierAlpha vtable, 9 sites) | `ev_11f4759b306aa40632374c3a0ce9eedc68ebbfde8af77ac216756cb1c1814b80` |
+| AN17 | xrefs `0x59446c` (ModifierLocationLine vtable, 9 sites) | `ev_70754c85700da9c0e3a11e6fff2dce2591d91abaa91de450d69524812bda5b9d` |
+| AN18 | xrefs `0x59768c` (ModifierVisible vtable, 5 sites) | `ev_cd6d6c9cacf645b020d34d580dc0b2af00542be93f82237b2d8ff6568da3a2a1` |
+| AN19 | callers `0x4310f0` (`0x432b20`, `0x4333a0`, `0x436ff0`) | `ev_37fa0de01b95d3044c492a4db83b320329fa86e26c7b1f150f5172afb7f4f8f3` |
+| AN20 | callers `0x43a820` (`0x401290`, `0x409100`, `0x43c940`) | `ev_d8975dda67c8c659b15609daff45f13b30429d088979e74561747fae67b7e765` |
+| AN21 | callers `0x43a4c0` (`0x43bad0`, `0x43c370`, `0x43c6a0`) | `ev_69aa7fefc1cad9827d04a4ef443aeb2fa16b94b464c6841d9cea07fd7174e840` |
+| AN22 | callers `0x43a310` (only `0x43c890`) | `ev_6a0cc1cf74ce2811534e429b377e51af4f9a100c82335faa0e3371dd1f2e3af1` |
+| AN23 | callers `0x43ce60`, `0x43d310` (both `0x41fed0`), `0x43cc30` (`0x41c740`), `0x43cb60` (`0x4131f0`) | `ev_475d31209fdbdf61c3e5ac19cde6a837ecebdb897f9e7c226bdf780b5b303452`, `ev_c1706d63016dcf060e7b4d6587ab994a13a019eb330271d90c7b71ba0db3f6fa`, `ev_59b713be4d9fa19b3475426a15357caa802352ff925aee36fc5cf7314db5a768`, `ev_ae6888de3e3277fb40d3c078365cab414425e95d9c417a50e828abe7d072ee08` |
+| AN24 | containing procedure of `0x43ca37` (`0x43c990`), `0x43cef5` (`0x43ce60`), `0x43d38f` (`0x43d310`), `0x42bc03` (`0x42b080`) | `ev_12677c97ba450fbbdbcead011f56d7af733853543881915fd30a8244a7545e21`, `ev_3f67f418de2e362e756381e1fca51e6dcfe83c0c723ad9694f06e36e14f8e36e`, `ev_f0a904374621d4e31b1765a45bc86011081df4565785820681209263824f0688`, `ev_f467946e7c0883ba94ffe6d6c17cfaff080eb7eef7cdf46c301a3620edc71bc0` |
+| AN25 | callers / xrefs `0x42b080` (none / the `LoadScene` vtable slot `0x590c20`) | `ev_755b91cc2acc55d08afbcca12e48aa6f0b54647ce9ebfdb1cf108053a6b25b54`, `ev_0a66e9e5bb3e4eeb67267e57f3a9e5f61ac3f2e619f52155cf1213e4654466f8` |
+| AN26 | callers `0x45bb60` (Blink), `0x441bb0` (none), `0x444e70` (XML sprite parser, from `0x47b4a0`), `0x4433e0` (from `0x442ac0`) | `ev_ee6d9ce6e9c747fd0f35f18ac88e7964aac2385d83d1335ca80d4451ab2e3df9`, `ev_0c90b32d9af99a9c457f98b502597bc62be25685f6227b9eea0efd84c455b8df`, `ev_cd4f3f076e94b73a53656b09802f4d87e4e9f885cca5e0a5388f5895141f484d`, `ev_885f62ae00400ce2685d18010f55af8d132443e53d559593034febe70ee9600f` |
+| AN27 | callers / xrefs `0x477410` (none / `SceneTransitionAlpha` vtable slot `0x596c18`), callers `0x42fe30` (`0x42fb20`) | `ev_1e8220977ef7d52cf6d5665db9fc37c6cc552a4145fe44424af474d949b0b1a7`, `ev_6d920b7570aa462d116ea26400926aeba52c3fd380c8cc1d1c3c4918d49d7029`, `ev_83c96fd1eba60b9dfbe949cfaf230d7c7deab020a9d2731b5da058631feeb2e2` |
+| AN28 | RTTI walk: `.?AVModifier*@GF2@@` type descriptors → complete object locators → vtables | none (Python over the exe) |
+| AN29 | `objdump -d` of `.text`: every vtable store and constructor call of AN28's classes, grouped by function | none (local listing) |
+| AN30 | asm `0x478390` (`ModifierClipRect`: `XOR EDX, EDX`, then `0x47ece0`) | `ev_980f5c0007c26f44ef7c4923124c0ff182b92fa6266a9988dfd4a2a9ba827a9a` |
+
+## 10. Address index
 
 | Address | What |
 | --- | --- |
+| `0x47ece0` / `0x47ed40` | `ModifierFraction` base ctor (`ESI` = duration, `EDX` = easing) / its update (§9.1) |
+| `0x450b10` / `0x451030` / `0x486560` | `ModifierDelay` / `ModifierAlpha` / `ModifierLocation` ctors, `EDX` = duration (§9.1) |
+| `0x4793c0` / `0x479420` / `0x479710` | `ModifierFrame` ctors (`EDX` = passes, stack = ms per frame) / its update (§9.1) |
+| `0x478390` | `ModifierClipRect` ctor: always linear (§9.1) |
+| `0x4310f0` | Word-appear flip (§2, §9.2) |
+| `0x429510` | Trophy popup (§9.2, `trophies.md`) |
 | `0x423a20` | `TextTwist2Scene` ctor: looks up the components, loads both `.tree` files |
 | `0x43e070` | Recursive `.tree` node reader (letters, `0`/`1`, children); anchor check 2026-10-14 `ev_b0fd200dbf3523b14f18941871fe88b17c0aed2eac8ed5f6991650daf2055e70` |
 | `0x425c50` | Round start: timer / round / score reset, rack pick, `AnagramTable` ctor |
@@ -945,7 +1235,7 @@ install's `dialogs.xml` / `text.xml`; then REA reads for every difference. The g
 | `0x430800` | One word of the grid (tiles + small letters) |
 | `0x4396e0` | `AnagramTable` ctor: grid position, two `LetterballContainer`s, balls |
 | `0x43ab90` | `LetterBox` ctor (the letter row container): cell sprites, frame by row |
-| `0x439d00` | `LetterBall` ctor: `IMAGE_LETTERBALL_ANIM` frame = letter × 17 |
+| `0x439d00` | `LetterBall` ctor: `IMAGE_LETTERBALL_ANIM` frame = letter × 17; `+0x184 = 0`, `+0x188` = the letter (§4.1) |
 | `0x43bad0` | Put a ball into a container cell (first free cell for index −1) |
 | `0x43c370` / `0x43c940` | Container relayout / reveal animation |
 | `0x43a820` / `0x43a940` | Ball flip (12 frames, 60 ms) / its `SOUND_letter_load`, as the flip starts |
@@ -980,4 +1270,10 @@ install's `dialogs.xml` / `text.xml`; then REA reads for every difference. The g
 | `0x432330` / `0x432850` | Table list `+0x180` = the board words (count `+0x184` = slots) / guess check: "uncommon" = not in that list (§8.3) |
 | `0x427b10` / `0x427b40` | Clear `+0x260` and refresh (vtable `+0xe0`: pause menu, tutorial) / leave for `SCENE_SELECTION` |
 | `0x423640` | `GameScene` ctor: `+0x260 = 0`, trophy queue emptied (§8.11) |
-| `0x43c370` / `0x439370` | Deal and twist relayout / rack shuffle with the CRT `_rand()` (§8.2) |
+| `0x43c370` / `0x439370` | Deal and twist relayout: shuffle until the row differs from before and from the word / MSVC `random_shuffle` on the CRT `_rand()` (§4.1, §8.2) |
+| `0x4261c1`-`0x426266` | Round start: `AnagramTable` ctor, `0x43c370([table+0xb0], table+0x1c, 0)`, `0x43c940(1)` (§4.1) |
+| `0x43c170` | The row's letters as a UTF-8 string, empty cells skipped (§4.1) |
+| `0x45fa60` / `0x45f8c0` / `0x460410` / `0x422aa0` | UTF-8 string: code-point count (cached at `+0x20`) / byte offset of code point `i` / decode one code point, no case change / append one (§4.1) |
+| `0x402da0` | Byte compare behind the string `==` (§4.1) |
+| `0x413090` / `0x414340` | Lightning TWIST / word build: both deal through `0x43c370` (§4.2) |
+| `0x41b060` / `0x434f40` | Crossword TWIST / word object: both deal through `0x43c370` (§4.2) |

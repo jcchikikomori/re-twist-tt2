@@ -159,7 +159,11 @@ open 0x42e390 (E30), exit 0x42fcb0 (E31).
 
 ## 4. The port
 
-Rules above are implemented as read; the deliberate differences:
+Rules above are implemented as read, in all five modes: Lightning's ids 3-6 ([lightning.md](lightning.md) §5),
+Crossword's ids 8 and 9 when the puzzle is solved and its round count (tracker 3) when `DIALOG_NEXTROUND` closes
+([crossword.md](crossword.md) §5.2, §6; `award_crossword_round`, called from `ui/include/tt2ui/crossword_scene.hpp`),
+and the Word of the Day round count (tracker 4) at state 3 ([game-scene.md](game-scene.md) §8.5). So Well Rounded,
+Maniac and Fanatic can be won. The deliberate differences:
 
 - **Round count timing.** The port counts a completed Classic round (Well Rounded / Maniac / Fanatic)
   when `DIALOG_NEXTROUND` opens, after the reveal, not when its OK is pressed (0x425190). The popup
@@ -179,8 +183,6 @@ Rules above are implemented as read; the deliberate differences:
   reveal ends, so leaving mid-reveal still counts it as seen.
 - **Music volume.** `MUSIC_trophy_room` plays at the music volume; the port has no per-stream gain
   for the original's 0.7.
-- **Crossword trophies** (ids 8, 9) and the Crossword round count wait for that mode; until then
-  Well Rounded and the round tiers cannot be won. Lightning's (ids 3-6, round count 2) are in.
 - **Popup art.** No placeholder exists for `FONT_TROPHYNAMES` or the trophy images; they need the
   imported assets, like the rest of the game today.
 

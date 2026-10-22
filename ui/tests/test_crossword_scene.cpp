@@ -1260,6 +1260,33 @@ TEST(crossword_zoom_toggles_the_grid_view) {
     ASSERT_EQ(f.r().selected(), std::size_t{2});   // the selection stays
 }
 
+// The grid view's durations are the exe's immediates, CONFIRMED by batch O4
+// (game-scene.md §9.1; crossword.md §3.3, §3.7): pan 0x1f4 (CW49), turn
+// wait 0x12c and turn 0x320 (CW50, 0x41c910), zoom in 0x5dc (CW50), zoom out
+// 0x3e8 (CW47). Half-way, linear and smoothstep agree (0.5), so this looks a
+// quarter of the way in: the turn is linear (+0x54 = 0), -pi/2 * 0.25; the
+// zoom back in is smoothstep, 0.5 + 0.5 * (3 - 2 * 0.25) * 0.25^2 = 0.578125
+// (linear would be 0.625).
+TEST(crossword_view_durations_and_easings_match_the_exe) {
+    ASSERT_EQ(CROSSWORD_PAN_MS, 500);
+    ASSERT_EQ(CROSSWORD_TURN_WAIT_MS, 300);
+    ASSERT_EQ(CROSSWORD_TURN_MS, 800);
+    ASSERT_EQ(CROSSWORD_ZOOM_IN_MS, 1500);
+    ASSERT_EQ(CROSSWORD_ZOOM_OUT_MS, 1000);
+    Fixture f;
+    f.c().key_word(true);   // "nap", down: the pan, then the turn
+    f.run(CROSSWORD_PAN_MS + CROSSWORD_TURN_WAIT_MS);
+    ASSERT_TRUE(near(f.c().view_turn(), 0.0f));
+    f.run(CROSSWORD_TURN_MS / 4);
+    ASSERT_TRUE(near(f.c().view_turn(), CROSSWORD_TURN_VERTICAL * 0.25f));
+    f.settle();
+    f.click("BUTTON_Zoom");   // at 0.5: the pan (already there), then 1.0
+    f.run(CROSSWORD_PAN_MS);
+    ASSERT_TRUE(near(f.c().view_scale(), 0.5f));
+    f.run(CROSSWORD_ZOOM_IN_MS / 4);
+    ASSERT_TRUE(near(f.c().view_scale(), 0.578125f));
+}
+
 // AC-C6 negative (0x41f120, 0x41b910): while ZOOM animates, keys, clicks
 // and buttons are ignored, ZOOM itself included.
 TEST(crossword_keys_during_the_zoom_are_ignored) {

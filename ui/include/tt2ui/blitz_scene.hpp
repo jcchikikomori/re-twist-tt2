@@ -87,8 +87,9 @@ constexpr int BLITZ_SWITCH_CLEAR_MS = 500;
 // the entry row fades (linear) in the same 400 ms.
 constexpr int BLITZ_SWITCH_MS = 400;
 // 0x4116e0 @0x411af4: the +8 s clip grows for (L + 4) * 100 ms, L = the
-// solved word's length. Worked example: L = 6 -> 1000 ms. Its easing is
-// UNKNOWN (the register is clobbered before 0x47ece0); the port is linear.
+// solved word's length. Worked example: L = 6 -> 1000 ms. Linear, CONFIRMED:
+// ModifierClipRect 0x478390 zeroes EDX before the base ctor 0x47ece0, which
+// then stores the linear 0x4307e0 (game-scene.md §9.1, AN1, AN30).
 inline int blitz_time_added_ms(std::size_t length) { return (static_cast<int>(length) + 4) * 100; }
 // 0x411ef0: per word, first at 400 ms then +100 ms; the solved letters
 // fade in over 400 ms; the mark fades in over 150 ms while it grows

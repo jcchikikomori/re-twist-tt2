@@ -65,7 +65,7 @@ ctest --test-dir build --output-on-failure    # engine + headless UI tests
 | `--assets DIR` | Load the art from `DIR` as is: no import, no checks, no prompt |
 | `--asset-manifest FILE` | Check imports against `FILE` instead of `data/original-assets.sha256` |
 | `--player NAME` | Add `NAME` if new and make it the current player |
-| `--play untimed\|timed` | Start a game as soon as the menu is up |
+| `--play untimed\|timed\|lightning\|wotd\|crossword` | Start a game as soon as the menu is up |
 | `--speed N` | Run the clock `N` times faster |
 | `--exit-after MS` | Quit after `MS` simulated milliseconds |
 | `--dump-frames DIR` | Write `frame_NNNN.bmp` at `--fps N` (headless with `SDL_VIDEODRIVER=dummy`) |
@@ -130,6 +130,13 @@ folder (`--save-dir` moves them); `--asset-dir DIR` moves the imported assets.
 Every file is checked against the SHA-256 checksums in `data/original-assets.sha256`, which holds
 file names and checksums only. One missing or different file means nothing is copied, and a failed
 import keeps the previous one. The game's DLL and `.nfo` files are never copied.
+
+### After an update: import once more
+
+An update can add files to that list. The one with Crossword does: it needs the six files in
+`images/crosswordscene/`, which no 0.5.x import has. The game then treats your import as out of date.
+It still loads the files you imported before, but asks on every launch until you import again, the same
+way as the first time: your install folder on the desktop, or a ZIP of it on Android.
 
 ## Android
 
@@ -200,15 +207,16 @@ tick **Unblock**.
 .
 ├── engine/
 │   ├── include/tt2/          # header-only engine: RNG, .tree codec, bag, board, scoring,
-│   │                         #   Classic / Lightning / Crossword rounds, profiles, settings,
-│   │                         #   the resumable saved game
+│   │                         #   Classic / Lightning / Crossword rounds, the Word of the Day
+│   │                         #   clocks, profiles, trophies, settings, the resumable saved games
 │   └── tests/                # engine unit tests (in-tree harness)
 ├── android/                  # the Android app (Gradle): MainActivity, the Kotlin ZIP importer
 │                             #   and its tests; the native code is this repo's CMakeLists.txt
 ├── ui/
 │   ├── include/tt2ui/        # headless scene model: sprites, modifiers, welcome flow,
-│   │                         #   bitmap fonts, profile dialogs, game scene and its dialogs,
-│   │                         #   HOW TO PLAY, SETTINGS, IMPROVEMENTS, the asset import and its prompt
+│   │                         #   bitmap fonts, profile dialogs, the Classic / Word of the Day,
+│   │                         #   Lightning and Crossword scenes and their dialogs, HOW TO PLAY,
+│   │                         #   SETTINGS, IMPROVEMENTS, the asset import and its prompt
 │   ├── src/main.cpp          # the SDL3 front end; audio.cpp plays sounds through SDL3_mixer
 │   └── tests/                # headless UI tests
 ├── src/main.cpp              # engine driver / smoke test
@@ -247,13 +255,15 @@ tick **Unblock**.
 | Area | State |
 | --- | --- |
 | Dictionary | Open `.tree` files committed. The codec round-trips both the original and the open files byte-for-byte and matches the Python reference decoder. The game prefers your own `data/common.tree` / `data/full.tree` (gitignored) and falls back to the open lists. |
-| Engine | Classic (Timed, Untimed, Word of the Day), Lightning and Crossword rounds, profiles, high scores, settings and the Untimed saved game. All unit-tested. |
+| Engine | Classic (Timed, Untimed, Word of the Day), Lightning and Crossword rounds, profiles, high scores, trophies, settings and the saved game of every mode. All unit-tested. |
 | Boot flow | Splash → loading → main menu with the original timings and fades. |
 | Original assets | **Required for now.** Imported from your own install on first launch, checked against SHA-256 checksums. The replacement art isn't made yet. |
 | Profiles | Welcome label, name input, player select and remove confirmation, saved to the per-user data directory. |
 | **Untimed / Timed** | **Playable.** Word grid, pearl letter balls, twist / clear / last word / enter, the 2:00 clock, the in-game popups, pause menu, Exit / Give Up confirmations, round-end reveal, GAME OVER and new high score, resume on the next launch, HOW TO PLAY and SETTINGS. |
-| Lightning, Crossword, Word of the Day | Engine done; the menu entries are still stubs. |
-| Trophies | Slots saved; unlock conditions not reconstructed yet. |
+| **Lightning** | **Playable.** Five to ten bingo-only words per round, the 80.3 s clock that every solved word tops up by 8 s, automatic hints, GAME OVER when time runs out, resume on the next launch. |
+| **Word of the Day** | **Playable.** One 2:00 round a day on the day's word (seed 1337, counted from 2008-09-03). GIVE UP until the first bingo, then DONE; the menu button greys out once the day's game is over, and the high score carries the date. **IMPROVEMENTS → DAILY WORD CLOCK** picks the original's clocks or your local day. With your own `common.tree` the word matches the 2008 game's; with the open list it differs. |
+| **Crossword** | **Playable.** An 18×11 grid of crossing words, all spelled from one root word: pick a word with the arrows or a click and type it, with TWIST, ZOOM, CLEAR and LAST WORD. No clock: solve every word for +1000 and the next puzzle; GIVE UP ends the game. Resume on the next launch. The grids differ from the original's, which seeds them from the clock. |
+| Trophies | All 24, with the original's rules ([trophies.md](docs/reverse-engineering/trophies.md)): the in-game popup and the trophy room. Well Rounded, Maniac and Fanatic count finished rounds in all five modes. |
 | Android | Android 12+ tablets and phones (arm64): OpenGL ES first, the ZIP importer, adaptive launcher icon, splash screen, and a signed release APK built in CI. Tested on a Galaxy Tab A7 Lite (Android 14). |
 
 Current work is the animation polish for Untimed (easing, fades, letter flips). The bigger picture

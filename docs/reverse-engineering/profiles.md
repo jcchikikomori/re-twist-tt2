@@ -190,7 +190,8 @@ menu re-opens the dialog (`0x42d9b0`).
   `player.WOD != today`, where
   `today = (time64() - tz_minutes * 60) / 86400 - 14125`
   (`_ftime64_s` timezone, epoch day 14125 = 2008-09-03, same as
-  `bag.hpp::WOTD_EPOCH_DAY`).
+  `wotd_day.hpp::WOTD_EPOCH_DAY`; the three Word of the Day clocks are
+  in [game-scene.md](game-scene.md) §8.1).
 
 ## 4. High scores
 
@@ -325,8 +326,9 @@ listed here:
   not registry + per-player XML. There is no obfuscation pass.
 - Names may not contain tab or newline (the file format's separators).
   The original has no such limit; it is a 15-character box either way.
-- Trophy conditions follow `trophies.md` (`engine/include/tt2/trophies.hpp`);
-  the Lightning and Crossword ones wait for those modes.
+- Trophy conditions follow `trophies.md` (`engine/include/tt2/trophies.hpp`)
+  in all five modes, Lightning ([lightning.md](lightning.md) §5) and
+  Crossword ([crossword.md](crossword.md) §6) included.
 
 ### 5.1 The UI (`ui/include/tt2ui/profile_dialogs.hpp`)
 
