@@ -106,8 +106,24 @@ So the rack word has to have **at least 15 sub-anagrams in the common list** (th
   0043d70a: call 0x4c6766                  ; time(NULL)
   0043d711: mov eax,0xc22e4507 ; mul ecx ; shr edx,0x10   ; /86400
   0043d71e: sub edx, 0x372d                ; - 14125 days
+  0043d727: lea eax,[edx*8] ; sub eax,edx ; lea eax,[base+eax*4] ; pool[day] (0x1c-byte strings)
   ```
-  After that, 0x4262b0 caps the WOTD board at **5 words per length** (3..8). **CONFIRMED**
+  REA batch W (2026-10-22, `game-scene.md` §8.2, evidence W1-W3) corrects and extends this reading:
+  - **No modulo, no bounds check:** the index goes straight into the shuffled pool. With the original list
+    (22,048 words of 5-8 letters) day 22,048 (2069-01-14) reads past the end; a date before 2008-09-03 gives a
+    negative index. **CONFIRMED**
+  - **No 15-sub-anagram test:** the WOTD word is taken as is; only the Classic bag (0x43d550) skips words with
+    fewer than 15 sub-anagrams. About 26 % of the original pool would fail that test (INFERRED estimate), so the
+    port's walk-forward in `Bag::word_of_the_day` changes the word on roughly one day in four. **CONFIRMED** (the
+    missing test), INFERRED (the share).
+  - The seed is written into the **global** Java LCG (`0x5fde90`), not a private one, and WOTD skips the
+    MAX WORD LENGTH loop (`player+0x3c`) entirely. **CONFIRMED**
+  - Three clocks: the word uses the UTC day (`time()`), the menu gate, the save `DAY` and `player.WOD` use the
+    local standard-time day (`_ftime64_s` `timezone`, `dstflag` never read), and the high-score date is the UTC
+    calendar date as `YYYY-MM-DD` (`GetSystemTime`). **CONFIRMED** (`game-scene.md` §8.1, §8.6, §8.7)
+
+  After that, 0x4262b0 keeps the **first 5 common sub-anagrams of each length 3..8** (list order) and runs
+  **before** the 48-slot quota, so the quota never trims a WOTD board. **CONFIRMED** (`game-scene.md` §8.3)
 - **Lightning/Blitz:** see §3. **Crossword:** see §4.
 
 ### Sub-anagram enumeration (CONFIRMED, 0x43dd80 → 0x43de40)

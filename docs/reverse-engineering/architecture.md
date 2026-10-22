@@ -238,10 +238,11 @@ Reuses the same `TextTwist2Scene` class with a different bag:
 seed   = 1337;                                  // fixed, 0x539
 dayIdx = (time(NULL) / 86400) - 14125;          // days since 2008-09-03
 shuffled = shuffle(commonPool5to8, seed);
-word = shuffled[dayIdx % poolSize];             // first entry with ≥15 sub-anagrams
+word = shuffled[dayIdx];   // no modulo, no bounds check, no 15-sub-anagram test (game-scene.md §8.2)
 ```
 
-After picking, `+0x18c` caps the board at **5 slots per length** (3..8).
+After picking, `0x4262b0` keeps the first **5 common sub-anagrams per length** (3..8), before the
+48-slot quota. Rules, round end and day numbers: `game-scene.md` §8.
 
 ## 9. Persistence
 

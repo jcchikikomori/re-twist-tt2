@@ -334,7 +334,7 @@ defined strings). They are leftovers from the first game (`docs/design/original-
   `ev_f5625215aea38c76cfd0a11f37c1024737f1adef063e566f82fe909c0346064b`.
 - Scene states (`+0x20c`, run by `0x426860`, jump table `0x427058`, CONFIRMED): 1 and 2
   open `DIALOG_MENU`; 3 is round end (outside WOTD it plays
-  `SOUND_game_next_round_acheived` and opens `DIALOG_NEXTROUND`); 4 is the Pass / Give Up
+  `SOUND_game_next_round_acheived` and opens `DIALOG_NEXTROUND`; WOTD: §8.5); 4 is the Pass / Give Up
   question above; 5 opens `DIALOG_TUTORIAL`, which round start `0x425c50` selects on a
   player's first game (`ev_48575bcd821545fb8381f5848f6747d5854fdb32bc35c8f13f433c9eb23b69d8`);
   6 opens `DIALOG_PASSROUND`.
@@ -559,7 +559,234 @@ All are `autocenter` and `dodarkenbackground="true"`.
 - Our file is plain text (`tt2/saved_game.hpp`), one per player and mode, at
   `savegames/<player>/<MODE>.txt`; the original binary format is not reproduced.
 
-## 8. Address index
+## 8. Word of the Day (REA batch W, 2026-10-22)
+
+Same binary, Ghidra 12.1.4 through REA, one session. Word of the Day (WOTD) is `TextTwist2Scene` with the mode
+string `scene+0x30c == "WORD_OF_THE_DAY"` (`0x5906c8`; the menu global `0x5fdea8 == 4`, `0x4242a0`). Every check
+below is a string compare on that field through `0x4972a0`. Evidence ids W1-W43 are listed at the end of the
+section. Tags as at the top of this file; **UNCONFIRMED** = searched for and not found, with the search trail.
+
+### 8.1 Three clocks, three day numbers (CONFIRMED)
+
+| What | Where | Formula | Clock |
+| --- | --- | --- | --- |
+| Rack word | `0x43d690` | `pool[(uint32)time() / 86400 - 14125]` | UTC |
+| Scene day `+0x1ec` | round start `0x425c50` @`0x425cb9`-`0x425cec` | `((uint32)(_time64() - tz * 60)) / 86400 - 14125` | local standard time |
+| Menu gate | `0x42f1a0` | `player.WOD !=` the same formula | local standard time |
+| Resume check | load `0x42a460` | saved `DAY !=` the same formula → delete the save, new game | local standard time |
+| High-score date | `0x43ff60` | `GetSystemTime` → `GetDateFormatA(..., "yyyy'-'MM'-'dd")` | UTC calendar date |
+
+- `tz` is the `timezone` field of `struct __timeb64` (`MOVSX ECX, word ptr [ESP+0x4a]`, offset `+0xa` of the
+  buffer passed to `_ftime64_s` @`0x425cb9`; W6). The `dstflag` field (`+0xc`) is **never read**, in `0x425c50`,
+  `0x42f1a0` or `0x42a460` (W4, W6, W36). So in summer the scene / menu day flips at 01:00 local daylight time.
+  Worked example: Berlin in July (`timezone = -60` minutes, `dstflag = 1`), 00:30 CEST is 23:30 local standard
+  time, so the menu still shows yesterday's day number until 01:00.
+- The divisions are unsigned on the low 32 bits of the time (`MUL` by `0xc22e4507`, `SHR EDX, 0x10`).
+- The scene day is computed **once per round start** (every mode, not only WOTD) and kept in `+0x1ec`; the load
+  path overwrites it with the saved `DAY` (W36).
+
+### 8.2 Rack word (`0x43d690`, CONFIRMED; corrects `gameplay-notes.md` §2)
+
+- The only caller is round start `0x425c50` (W3), and only when no resume word was passed and the mode is WOTD
+  (`0x425fd0` → `0x4261d4`). The classic target-length loop that reads the player's 6/7/8 setting
+  (`player+0x3c`, `0x426008`-`0x426104`) is skipped, so **WOTD ignores MAX WORD LENGTH** (W6).
+- `0x43d690` builds the 5-8 letter pool (`0x43dcb0`), reseeds the **global** Java LCG at `0x5fde90` with
+  `1337 ^ 0x5DEECE66D`, shuffles (`0x43d950`, a `random_shuffle` with a generator callback, W43), then takes
+  `pool[day]` **directly**: `LEA EAX, [EDX*8]; SUB EAX, EDX; LEA EAX, [base + EAX*4]` = `base + day * 0x1c`
+  (W2). There is **no modulo and no bounds check**, and **no 15-sub-anagram test**: the sub-anagram list
+  (`0x43dd80`) is built but its size is not compared. That test lives only in the Classic bag `0x43d550`.
+- Consequences, with the original `TextTwist2Words.tree` (pool = **22,048** words of 5-8 letters, counted with
+  `docs/reverse-engineering/tree_decode.py`): day 0 is 2008-09-03; from day 22,048 (**2069-01-14**) the read goes
+  past the end of the vector; before 2008-09-03 the index is negative. About **26 %** of the pool has fewer than
+  15 common sub-anagrams (5,775 of 22,048; same count with the open list: 3,964 of 19,256 = 21 %), so on about
+  one day in four the exe hands out a word the Classic bag would refuse. INFERRED (estimate, assumes the day
+  indices hit the pool evenly).
+- INFERRED: reseeding the global LCG also fixes every later draw from it in that game (the twist shuffles),
+  the way the Classic bag reseed does. The generator body (`0x43da00` / `0x43dad0`) was not read.
+- A resumed game does not call `0x43d690`: `0x42a460` passes the saved `WORD` to `0x425c50` (W36).
+
+### 8.3 Board (`0x4262b0`, CONFIRMED)
+
+`0x425c50` enumerates the rack against the common tree (`+0x268`) and the full tree (`+0x2ac`) (`0x43d7b0`
+twice), then **only in WOTD** calls `0x4262b0` on the common list (EAX = the first result, @`0x426193`), before the
+`AnagramTable` ctor `0x4396e0` (W6). `0x4262b0` keeps a counter per length, `[0, 0, 0, 5, 5, 5, 5, 5, 5]` for
+lengths 0-8, walks the list in order and erases (`0x418840`) every word whose length counter is already 0
+(W41). So:
+
+- the board gets the **first 5 words of each length 3-8 in sub-anagram (DFS) order**, at most 30 slots;
+- the cap runs **before** the 48-slot quota of `0x432330`, which therefore never trims a WOTD board (30 < 48);
+- the full-tree list is not capped: any valid word still counts as a guess.
+- INFERRED: the capped list is also the list `AnagramTable` keeps as "common" (`table+0x180`), so a common
+  word cut by the cap would raise the "uncommon" out-flag at `0x432850`. Not traced further.
+
+Port note: `Board::build(rack, common, 5)` applies the 48 quota first and truncates to 5 afterwards
+(`engine/include/tt2/board.hpp:36-45`). For a rack with more than 48 common sub-anagrams a length bucket can drop
+below 5 in the port but not in the exe. Phase 2 (W2) fixes the order.
+
+### 8.4 Buttons (CONFIRMED)
+
+`dialogs.xml` (`SCENE_GAME`), read-only from the install:
+
+| Component | Image | Position | Other attributes |
+| --- | --- | --- | --- |
+| `BUTTON_WOTD_DONE` | `BUTTON_Done` (`images/gamescene/button_done.png`, `rowcount="4"`) | (317, 473) | `command="BUTTON_NextRound"`, `tooltip="CTOOLTIP_NextRound"`, `clicksound="SOUND_BUTTON"`, `setup="DEFAULT_BUTTON"` |
+| `BUTTON_PLAY_WOD` (main menu) | `IMAGE_BUTTON_WOTD` (`button_wotd.png`, 4 frames) | (85, 378) | `tooltip="CTOOLTIP_SELECTION_PLAY"`, `clicksound="SOUND_BUTTON"`, `disabledsound="SOUND_button_wordoftheday"`, `hitmaskthreshold="75"` |
+
+- The exe looks `BUTTON_WOTD_DONE` up by name once (`0x425e37`, the only xref to the string, W12) and keeps it at
+  `+0x1fc`; the NEXT ROUND pointer is saved in `+0x1f8`. Round start then makes `+0x224` (the "next round" slot
+  the refresh drives) point at **`WOTD_DONE` in WOTD** and at NEXT ROUND otherwise (`0x425e97`-`0x425f34`, W6).
+- The dispatcher `0x425b60` has no `BUTTON_WOTD_DONE` case: it matches commands, and the button's command is
+  `BUTTON_NextRound`, so a click runs `0x428840(3000)`, the NEXT ROUND path (W8, W9, W10).
+- Refresh `0x425710` in WOTD (W7): `BUTTON_Pass` and `BUTTON_Pass_2` are always hidden and disabled; GIVE UP is
+  shown while the round is **not** qualified (`[+0x1f4]+0x88 == 0`); `WOTD_DONE` is shown once it **is** (first
+  bingo found). Worked example: start → GIVE UP; first bingo → DONE replaces it; nothing else changes.
+- The tooltip text is `CTOOLTIP_NextRound` ("Advance to the next round"), a leftover the original never changed.
+
+### 8.5 Round flow and the single round (CONFIRMED; answers OI-5)
+
+- Timer: WOTD ticks like Timed (`0x426d59`/`0x426d67`: CLASSIC_TIMED or WORD_OF_THE_DAY), from 120,000 ms with
+  the 10 s warning (W17, W18).
+- First bingo: `+1000` and qualified, as in Classic, but the popup is **kind 11** (`IMAGE_IMAGE_POPUP_11`) instead
+  of kind 2 (the BINGO banner): `0x424730` tests the WOTD string @`0x424aa1` and queues `0x428e20(0xb)` (W37). A
+  repeat bingo or a plain word queues nothing new (the one-time popup 10 rule is unchanged). The guess that fills
+  every slot queues popup 1 (all words) instead, in every mode. INFERRED: kind 11 uses the message timing
+  (1650 ms, §5.1), since only kinds 1 and 2 are banners.
+- Round end paths in WOTD:
+
+  | Trigger | Code | Then |
+  | --- | --- | --- |
+  | DONE clicked (qualified) | `0x425b60` → `0x428840(3000)` | reveal, 3000 ms, state 3 |
+  | All words found | `0x424730` → `0x428840(1000)` | reveal, 1000 ms, state 3 |
+  | Time up, qualified | `0x426860` @`0x42701b` → `0x428840(3000)` | reveal, 3000 ms, state 3 |
+  | Time up, not qualified | `0x426860` @`0x426ff4`-`0x427014` | `+0x260 = 1`, `0x427cc0`, `0x428c80(…, 1)`: reveal, 3000 ms, game over |
+  | GIVE UP → YES | state 4 → `0x428610` → `0x4253a0` | `+0x264 = 2`, delete save, `WOD = +0x1ec`, `0x428c80(…, 1)` |
+
+  `0x428840` ends with the delay callback `0x428a60` = `mov byte [ecx+0x2f9], 0; mov dword [ecx+0x20c], 3`
+  (W15, W16). The time-up branch picks Timed vs WOTD at `0x426fc7`; WOTD never calls the miss path `0x425420`
+  (W18).
+- **No lives, no Pass:** state 4 in WOTD always asks the GIVE UP question (`TEXT_DIALOG_GIVEUP_HEADER` /
+  `TEXT_DIALOG_GIVEUP`, "Give Up?"), whatever the miss counter (`0x426bac` → `0x426c3e`, W18, W19, W20); YES ends
+  the game at once (`0x4253a0`, W21). `DIALOG_PASSROUND` never opens in WOTD.
+- **State 3 in WOTD** (`0x426a27` → `0x426b56`, W17, W18): `+0x264 = 1`, block `+0x260 = 1`, no sound, no
+  `DIALOG_NEXTROUND` here, then `count_round(player, 4)` (`mov eax, 4` @`0x426b74`, `call 0x40f2b0`) with its
+  trophy popup (`0x429480`), `0x427cc0` (delete the save, write `WOD`), and `0x428c80(…, 0)` (no second reveal,
+  3000 ms, W40) → game over `0x427d10`. Nothing in WOTD reaches the next-round starter `0x425190`, so **a WOTD game is
+  exactly one round**.
+- Game over `0x427d10` in WOTD (W24, W25):
+  1. `score > 0`: insert into table **`"wotd"`** (`0x5919c8`, W28) with the date text (§8.7). If it ranks (W29):
+     `SOUND_game_high_score_achieved` and `DIALOG_CONGRATS`.
+  1. Otherwise, qualified: `SOUND_game_next_round_acheived` and **`DIALOG_NEXTROUND`** after all, but `0x4099c0`
+     sets its WOTD flag (`dialog+0x1f4 = 1`) and the body to `TEXT_NEXT_ROUND_BODY_WOTD` ("Click to return to
+     the main menu!") (W30). Its OK (`0x409a70`) then calls owner slot `+0xdc` instead of `+0xd8`; on the game
+     scene vtable `0x590894` that is `0x427b20` (leave the scene; no save because `+0x264 != 0`), not `0x428aa0`
+     (next round) (W32, W33, W34).
+  1. Otherwise (not qualified): `DIALOG_ENDGAME` with `TEXT_END_ROUND_BODY_WOTD` ("Sorry, you didn't find the
+     Word of The Day."), `BUTTON_REPLAY` hidden and disabled, and `BUTTON_OK` (the menu button) moved to
+     x = 192.0 (`0x43400000` through vtable `+0x28`; INFERRED setX) (`0x404540`, W31).
+
+  So OI-5's answer is yes: `DIALOG_NEXTROUND` does appear in WOTD, but only as an end-of-game "back to the menu"
+  card, never to start a second round.
+- Tutorial: round start reads `player+0xc0+mode` with mode 4 and shows `DIALOG_TUTORIAL` the first time, with
+  `TEXT_TUTORIAL_TITLE_4` / `TEXT_TUTORIAL_BODY_4` (§5, W6). A resume (`0x42a460`) still passes through
+  `0x425c50`, but the flag was set on the first game, so it does not show again.
+
+### 8.6 `player.WOD` and the save `DAY` (CONFIRMED; answers OI-2 and OI-10)
+
+- **Save `DAY`** (`0x429dd0`, key `DAY` at `0x590860`) = scene `+0x1ec`, the **local standard-time** day taken at
+  round start (W35). The save is written only when the scene is left with `+0x264 == 0` (`0x427b20`, W34).
+- **Load** (`0x42a460`, WOTD only): reads `DAY`, recomputes today with the same local formula, and on a mismatch
+  deletes the save (`0x461840`) and starts a fresh game (`0x425c50(1, 0)`) with no prompt (W36). The scene start
+  `0x4242a0` picks load vs. fresh game (W38).
+- **`player.WOD` (`+0x38`) writers**, all `= scene+0x1ec` (the same local day), all at **game end**:
+
+  | Writer | When | Reached in WOTD |
+  | --- | --- | --- |
+  | `0x427cc0` (only caller `0x426860`, W22, W23) | state 3 round end, and time up without a bingo | yes |
+  | `0x4253a0` (W21) | GIVE UP → YES | yes |
+  | `0x425420` third miss (W39) | Pass / time-up miss path | no (WOTD never calls it) |
+  | `0x411ef0` (W42) | Blitz game-over reveal, gated by a WOTD string compare | no (Blitz mode string) |
+
+  `0x411ef0` is the "UNKNOWN purpose" copy noted in `lightning.md` §4.2: a leftover from the shared code,
+  dead in Blitz.
+- **Not written** at round start (`0x425c50` only computes `+0x1ec`, W6), on leave (`0x427b20` saves, W34), or in
+  the save writer (W35). So a mid-round leave keeps the menu button **enabled** on the same day, and clicking it
+  resumes the save. The OI-10 risk (a same-day save behind a closed gate) does not exist in the exe: `WOD` is only
+  written by paths that also delete the save (`0x427cc0` and `0x4253a0` both call `0x461840` first).
+- INFERRED edge (not play-tested): after a round-end reveal starts (`+0x264 = 1`) and before state 3 runs, the
+  pause menu can still exit the scene (`0x425b60` sets state 1 for `BUTTON_Menu` whatever `+0x264` is). That exit
+  writes no save and no `WOD`, so the same day can be played again.
+- Day rollover mid-game: the rack word and `+0x1ec` are fixed at round start, so a game that crosses midnight
+  keeps its word and writes the **start** day into `WOD`; the button is enabled again the next time the menu
+  is drawn. A save that crosses midnight is discarded on load (above).
+
+### 8.7 High-score entry (`0x427d6c`-`0x427ec9`, CONFIRMED; answers OI-4)
+
+- Table key `"wotd"` (`0x5919c8`, 4 chars), the same `0x4108a0(name, score, 0, +0x2fc, extra)` call shape as
+  Timed (W24, W25).
+- `extra` = `0x43ff60()` cut at the first `' '` (`0x5907d4`, W27): `0x43ff60` returns
+  `GetDateFormatA(LOCALE_SYSTEM_DEFAULT, 0, utc, "yyyy'-'MM'-'dd") + " " + GetTimeFormatA(..., "HH'-'mm'-'ss")`
+  from **`GetSystemTime`** (UTC) (W26). So the stored text is the **UTC date as `YYYY-MM-DD`**. Worked example:
+  a game finished at 07:30 on 2026-10-23 in Manila (UTC+8) is stored as `2026-10-22`. The HIGH SCORES dialog
+  shows it under `TEXT_HIGHSCORE_DATE` ("Date:", `profiles.md` §4.1).
+
+### 8.8 UNCONFIRMED
+
+| Item | Search trail |
+| --- | --- |
+| Kind 11 popup timing (message vs. banner) | `0x428ec0` decoded in §5.1 for kinds 1 / 2 only; kind 11 not stepped through |
+| Exit during the round-end reveal (§8.6 edge) | Static only: `0x425b60` state 1 is unconditional; `0x427b20` skips the save when `+0x264 != 0`; not play-tested |
+| Global LCG draws after the WOTD reseed | `0x43d950` calls `0x43da00` with generator `0x43dad0`; neither body read |
+| "Uncommon" flag on cap-trimmed common words | `0x4262b0` erases from the list passed as the common list to `0x4396e0`; `table+0x180` identity from §2, not re-read |
+
+### 8.9 Evidence ids (batch W)
+
+| Id | Call | evidence_id |
+| --- | --- | --- |
+| W1 | pseudo `0x43d690` | `ev_b836e1193a21e92dc6308cc5b099556a244b94882418ec0e20a2e8811836c70a` |
+| W2 | asm `0x43d690` | `ev_a6497a4234824599c8d2727818ee0ccc5502eb79cae6a288c2e386bb15d734a6` |
+| W3 | callers `0x43d690` | `ev_ad110912cb7b268a907e0ace6c829bc82b2a46dcc267c7b335365952b8079b82` |
+| W4 | pseudo `0x42f1a0` | `ev_6a9bb451625e15c4bcc93a6230ef2d2232b33c3cb13610990508a036ff4af9d4` |
+| W5 | pseudo `0x425c50` | `ev_48575bcd821545fb8381f5848f6747d5854fdb32bc35c8f13f433c9eb23b69d8` |
+| W6 | asm `0x425c50` | `ev_9459800fd26fae8313cfb42fbeb4ac74b8b3d2b94a27c727c5e707f2623e17cb` |
+| W7 | pseudo `0x425710` | `ev_52333333f7d1d525a504b153b09bd1bfa66307e5ca52024a9d0472e70a683fb5` |
+| W8 | pseudo `0x425b60` | `ev_104f9575430ab658e77ee43a6e339523b1acea4ee9872327d379a15d6fb3603f` |
+| W9 | asm `0x425b60` | `ev_5fa16e103908ed44ad634ebca65eb5520489ad508c340a7e77e390ddec315185` |
+| W10 | bytes `0x58fcdc` (button commands) | `ev_30c41d1568af11a2b8805c3c7109cd98787fb317813bb0682751b6b7f5ab275d` |
+| W11 | bytes `0x5906b8` (mode strings, button names) | `ev_cb634dec01a5c2feb9f391c5b0fee4316aded4cbed64972aa5c241b4142598df` |
+| W12 | xrefs `0x590744` (`BUTTON_WOTD_DONE`) | `ev_5685f5a0e6bea6baa81eb61cd61f7ff4682a046546d8404b7f00a336baa60290` |
+| W13 | xrefs `0x5906c8` (`WORD_OF_THE_DAY`) | `ev_e6883cb045453146d0ad92be5a5c20b2a9e138d7295065e359554c12cde8c205` |
+| W14 | pseudo `0x428840` | `ev_9abb52f29a32ae443791c04de1c4a9e216cc2c7814841d6e8f002dcfc1a9865b` |
+| W15 | asm `0x428840` | `ev_3eedebc8567245135e24eba1fbb142f4f3242768d73d4ed950e888319ccf019e` |
+| W16 | bytes `0x428a60` (sets state 3) | `ev_e455874aa7f03665668f87a148311c4308b217004973cb856d1a213233a4963a` |
+| W17 | pseudo `0x426860` | `ev_f5625215aea38c76cfd0a11f37c1024737f1adef063e566f82fe909c0346064b` |
+| W18 | asm `0x426860` | `ev_faa42e184823a6f1cb814bcda1ce22fb7171ed5f5d9f154bb2232d012abcaa66` |
+| W19 | bytes `0x58fe00` (GIVE UP header) | `ev_ba5ce98c0c702a8d36774c7c72a39215865841d08a18b84fbcfff7358f37f8a3` |
+| W20 | bytes `0x591860` (PASS / GIVEUP texts) | `ev_462b82291dea7f2a4898365570f8391679cca02ef275dd41c7ecd842683b610c` |
+| W21 | pseudo `0x4253a0` | `ev_1e2c943eb1fd9e777628f98b61f09d7e3a266dcf9a80b15b9efb2db1895a6c4e` |
+| W22 | pseudo `0x427cc0` | `ev_b54b4fe4628d8df262162f02979b003e80b0024601e8add11272f760cc4fd8d2` |
+| W23 | callers `0x427cc0` | `ev_3aa2949b32134c747ee9e860130372444c47f704c9b4be6cdc54e09eca0c00d1` |
+| W24 | pseudo `0x427d10` | `ev_4550c53f3139bcacec5d0ebe253ce9e96125d587c124ceec170bf22e5d4a3004` |
+| W25 | asm `0x427d10` | `ev_cd5e659b3524eae90deb2df9c8d3d5d3469849c9936ff358fe47012f5bc20cd7` |
+| W26 | pseudo `0x43ff60` | `ev_b307cac04dd07e02ba4eff244ce8c26bca41a585303787c64d780f97a5cb176a` |
+| W27 | bytes `0x5907c8` (`" "` at `0x5907d4`) | `ev_d55c8154269902a3bfbca930597a47c4f92a56370d9875b0f611c67342f8f941` |
+| W28 | bytes `0x591950` (dialog ids, table keys) | `ev_9ef2d4ca45e3569d7521007611b84a93188617b4c000e724baf19bca14d39687` |
+| W29 | bytes `0x58fe78` (high-score sound) | `ev_5867eb8888bfd955182528817b53183a1c8cecf4f38bf5ece7760ab9990de765` |
+| W30 | pseudo `0x4099c0` | `ev_6a9ee0507b98dc3449ac5fe9a3d5c32da7aa4192da9b901041de00e27dcc3377` |
+| W31 | pseudo `0x404540` | `ev_44297a4362aeed2953bf3f9cc1d97f5979cebc79390b55fc64981fbfae5239ec` |
+| W32 | pseudo `0x409a70` | `ev_429e531f96a80928008c46701b3880de1f7fd711951e8fc81c997587b0d39e8c` |
+| W33 | bytes `0x590964` (vtable slots `+0xd0`-`+0xdc`) | `ev_1598c772ac76ee0c8e6e386ae7625eee300e3ef40f059fb3d0af9f7b60cdb043` |
+| W34 | pseudo `0x427b20` | `ev_02555fcc3867e692d3011976f57a18d02a05569524377f9e28ea8f4a4e7ece1a` |
+| W35 | pseudo `0x429dd0` | `ev_feae34df9f8dba04115aaff060c35dbfb3f34c8c666590329500c7c324f00a34` |
+| W36 | pseudo `0x42a460` | `ev_0f083bb9728be876db346ce803d8fdc257f6c478f94a6f29005ce0891e227fd2` |
+| W37 | pseudo `0x424730` | `ev_e7f08e2c9eafb9f3ee109e9c87349a34776e6be1dafadff3ee385925c698ea1a` |
+| W38 | pseudo `0x4242a0` | `ev_839112ddb8536b7f891651bd06a1e26fc178b01e6a76306db3377a58769cddca` |
+| W39 | pseudo `0x425420` | `ev_12a29f6e7b7936f9e1ec43c0b1cfe9f71fe8405ad500536a162ce52b8c6a99af` |
+| W40 | pseudo `0x428c80` | `ev_a28bbd4f868f3bb994da7c816409e253bdd452a8799360d21d05bc56985997df` |
+| W41 | pseudo `0x4262b0` | `ev_b20255d271f0d3f487d5013980aaf9c5b14bc70b29db3225f8c64bbf7460c5cc` |
+| W42 | pseudo `0x411ef0` | `ev_c791c69f18e9efee08fdef54deb62fe4ff8ab9fee5699062aa866b69c0f6aed5` |
+| W43 | pseudo `0x43d950` | `ev_dc616f0f7776793550c6e1690a5476af0d4df870615de763181d4d443ce798ce` |
+
+## 9. Address index
 
 | Address | What |
 | --- | --- |
@@ -599,3 +826,10 @@ All are `autocenter` and `dodarkenbackground="true"`.
 | `0x468b20` / `0x595df4` | Label ctor / Label vtable |
 | `0x4698c0` / `0x469a40` / `0x46a7b0` | Label setText / layout tokenizer / word flush with the wrap rule |
 | `0x428a80` | Sets state 6 (`DIALOG_PASSROUND`) after a Timed time-up miss |
+| `0x43d690` | WOTD rack: global LCG reseeded with 1337, shuffled pool, `pool[utc_day - 14125]` (§8.2) |
+| `0x4262b0` | WOTD board cap: first 5 common sub-anagrams per length 3-8 (§8.3) |
+| `0x427cc0` | Delete the save; in WOTD `player.WOD = +0x1ec` (§8.6) |
+| `0x43ff60` | UTC `"yyyy-MM-dd HH-mm-ss"` (`GetSystemTime`); WOTD high score keeps the date (§8.7) |
+| `0x4099c0` / `0x404540` | WOTD bodies for `DIALOG_NEXTROUND` / `DIALOG_ENDGAME` (§8.5) |
+| `0x409a70` | `DIALOG_NEXTROUND` OK: owner `+0xd8` (next round) or, in WOTD, `+0xdc` = `0x427b20` (leave) |
+| `0x428a60` | Round-end delay callback: `+0x2f9 = 0`, state 3 |
