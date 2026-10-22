@@ -12,7 +12,7 @@ This document describes the current status and the upcoming milestones of this p
 - Began the Ghidra setup later on
 - Implemented the engine
 - Moved the UI from SDL2 to SDL3 (Vulkan, OpenGL or software rendering)
-- Ported the game to Android (0.5.0)
+- Ported the game to Android (0.6.0)
 - Added the last two modes, Word of the Day and Crossword (0.6.0)
 
 ## Ongoing Goals
@@ -95,7 +95,7 @@ All four are fixed:
   locked crossing letters, and save / resume.
 - Settings, high scores, trophy room, credits and the port's own IMPROVEMENTS dialog (window modes, a
   Super-xBR upscaler, side bars on wide screens).
-- Android port (0.5.0): the same C++ build inside a Gradle app, with a ZIP importer for the player's own
+- Android port (0.6.0): the same C++ build inside a Gradle app, with a ZIP importer for the player's own
   install. CI builds the AppImage, the Windows zip and a signed APK.
 - The open dictionaries (`data/open-*.tree`, ENABLE2k) now keep slurs and vulgar words out of the
   racks and answer slots, while still accepting them as typed guesses (`docs/dictionary-sources.md`).
