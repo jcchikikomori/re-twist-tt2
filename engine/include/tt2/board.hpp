@@ -10,10 +10,11 @@
 // slots. The two-letter and one-letter words are never used because
 // the cap starts at 3.
 
+#include <algorithm>
 #include <array>
-#include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "tt2/word_tree.hpp"
@@ -30,19 +31,20 @@ public:
 
     // Build the board for `rack` using the common-list sub-anagrams.
     // CONFIRMED: 0x43dcb0 (collect) → 0x432330 (cap) → 0x432b20 (place).
-    // `per_length_cap` is an extra hard cap applied to every length
-    // bucket (WOTD uses 5; Classic leaves it 0).
+    // `per_length_cap` keeps only the first N words of each length 3..8
+    // (WOTD uses 5; Classic leaves it 0). It runs **before** the 48-slot
+    // quota, the way round start calls 0x4262b0 before the AnagramTable
+    // ctor reaches 0x432330 (game-scene.md §8.3), so a crowded rack
+    // still gets 5 words of every length it has.
     static Board build(const std::string& rack, const WordTree& common,
                        std::size_t per_length_cap = 0) {
         Board b;
         b.rack_ = rack;
         b.all_  = common.sub_anagrams(rack);
-        b.cap(b.slots_);
         if (per_length_cap > 0) {
-            for (std::size_t l = 3; l <= 8; ++l) {
-                auto& s = b.mutable_slots(l);
-                if (s.size() > per_length_cap) s.resize(per_length_cap);
-            }
+            b.cap(b.slots_, first_per_length(b.all_, per_length_cap));
+        } else {
+            b.cap(b.slots_, b.all_);
         }
         return b;
     }
@@ -56,12 +58,6 @@ public:
     // is empty.
     const std::vector<std::string>& slots(std::size_t length) const {
         return length < slots_.size() ? slots_[length] : empty_;
-    }
-
-    // Mutable slot list. Used by the round state to apply the WOTD
-    // 5-per-length cap after `build`.
-    std::vector<std::string>& mutable_slots(std::size_t length) {
-        return length < slots_.size() ? slots_[length] : empty_mutable();
     }
 
     const std::string& rack() const noexcept { return rack_; }
@@ -84,14 +80,20 @@ public:
         return word.size() == rack_.size() && is_anagram_of_rack(word);
     }
 
-    bool is_anagram_of_rack(std::string word) const {
-        if (word.size() > rack_.size()) return false;
-        std::array<int, 26> need{};
-        for (char c : rack_) ++need[static_cast<std::uint8_t>(c - 'a')];
-        for (char c : word) {
-            if (--need[static_cast<std::uint8_t>(c - 'a')] < 0) return false;
-        }
-        return true;
+    // True when `word` is one of the board's words (the slot list after
+    // the per-length cap and the 48-slot quota). 0x432330 rebuilds the
+    // AnagramTable list at +0x180 (count +0x184 = the slot count) from
+    // exactly these words, and 0x432850 flags a guess "uncommon" when a
+    // find over that list misses.
+    bool on_board(const std::string& word) const {
+        if (word.size() >= slots_.size()) return false;
+        const auto& bucket = slots_[word.size()];
+        return std::find(bucket.begin(), bucket.end(), word) != bucket.end();
+    }
+
+    // True when the rack's letters spell `word` (see tt2::spellable_from).
+    bool is_anagram_of_rack(std::string_view word) const noexcept {
+        return spellable_from(word, rack_);
     }
 
 private:
@@ -99,14 +101,28 @@ private:
     std::vector<std::string> all_;
     Slots slots_{};
     static inline const std::vector<std::string> empty_{};
-    static std::vector<std::string>& empty_mutable() {
-        static std::vector<std::string> e;
-        return e;
+
+    // 0x4262b0: one counter per length, [0, 0, 0, N, N, N, N, N, N] for
+    // lengths 0..8; walk the list in order and drop every word whose
+    // counter is already 0. Lengths 1..2 (counter 0) are dropped too.
+    static std::vector<std::string> first_per_length(const std::vector<std::string>& words,
+                                                     std::size_t per_length) {
+        std::array<std::size_t, 9> left{};
+        for (std::size_t l = 3; l <= 8; ++l) left[l] = per_length;
+        std::vector<std::string> kept;
+        for (const auto& w : words) {
+            const std::size_t l = w.size();
+            if (l >= left.size() || left[l] == 0) continue;
+            --left[l];
+            kept.push_back(w);
+        }
+        return kept;
     }
 
-    void cap(Slots& slots) {
+    // 0x432330: the 48-slot quota over `words` (in DFS order).
+    static void cap(Slots& slots, const std::vector<std::string>& words) {
         std::array<std::size_t, 9> count{};
-        for (const auto& w : all_) {
+        for (const auto& w : words) {
             if (w.size() >= 1 && w.size() <= 8) ++count[w.size()];
         }
         std::size_t total = 0;
@@ -124,7 +140,7 @@ private:
         }
 
         std::array<std::size_t, 9> placed{};
-        for (const auto& w : all_) {
+        for (const auto& w : words) {
             const std::size_t l = w.size();
             if (l < 3 || l > 8) continue;
             if (placed[l] >= quota[l]) continue;
@@ -142,7 +158,9 @@ private:
 //                       table+0x190 misses)
 //   1 = Duplicate      (already sitting in a filled slot)
 //   2 = NoRoom         (valid, but no free slot of that length)
-//   3 = Uncommon       (placed in a free slot, but not in the common list)
+//   3 = Uncommon       (placed in a free slot, but not one of the board's
+//                       words: a full-only word, or a common word the
+//                       48-slot quota or the WOTD cap left out)
 //   4 = Accepted       (placed in a free slot of the same length)
 enum class GuessStatus {
     NotAWord   = 0,
@@ -257,9 +275,12 @@ inline std::vector<std::string> reveal_words(const std::vector<std::string>& boa
 
 class GuessProcessor {
 public:
-    GuessProcessor(FilledBoard& board, const WordTree& common,
+    // The common list is not read here: "uncommon" is decided by
+    // the board's own words (0x432850), which the board already holds.
+    // The parameter stays so callers keep one signature.
+    GuessProcessor(FilledBoard& board, const WordTree& /*common*/,
                    const WordTree& full)
-        : board_(board), common_(&common), full_(&full) {}
+        : board_(board), full_(&full) {}
 
     const FilledBoard& board() const noexcept { return board_; }
 
@@ -314,13 +335,18 @@ public:
             return o;
         }
 
-        // Not in the common list → the out-flag "uncommon".
-        const bool is_common = common_->contains(word);
-        o.newly_uncommon = !is_common;
+        // 0x432850: the out-flag "uncommon" is set when a find over the
+        // table's list at +0x180 (count +0x184) misses, and 0x432330
+        // fills that list with the board's words only, not the whole
+        // common list. So a common word the slot quota (or the WOTD cap
+        // of 5 per length) left off the board counts as uncommon too
+        // (wotd-gaps.md #5; it feeds the Human Dictionary counter).
+        const bool on_board = board_.board().on_board(word);
+        o.newly_uncommon = !on_board;
         o.slot_index     = flat;
         o.placed_word    = word;
-        o.status         = is_common ? GuessStatus::Accepted
-                                     : GuessStatus::Uncommon;
+        o.status         = on_board ? GuessStatus::Accepted
+                                    : GuessStatus::Uncommon;
         o.points = 10 * static_cast<int>(word.size())
                       * static_cast<int>(word.size());
         o.bingo = board_.board().is_bingo(word);
@@ -351,7 +377,6 @@ private:
     }
 
     FilledBoard& board_;
-    const WordTree* common_;
     const WordTree* full_;
 };
 

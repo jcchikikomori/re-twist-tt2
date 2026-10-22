@@ -156,10 +156,34 @@ window object is the "fullscreen supported" flag. The fullscreen setter is the w
   renderer loads `d3d9.dll` (the only `ddraw.dll` use is the audio library's DirectX version probe,
   `0x508f70`; see `display-and-timing.md`), and neither adds Alt+Enter. A scan of the whole
   executable found no other caller of the setter through `[0x5fdea0]`.
+- **Esc is global and never quits.** The translator runs for every key down, whatever the scene or dialog, and
+  calls the setter at `0x484833`-`0x48483e` before the key goes on to the game. The translator itself sends no
+  quit message `0x402` (`welcome-flow.md` §3, "QUIT confirm").
+- **The switch is saved (CONFIRMED for the code; who registers the listener was not traced).**
+  - The setter `0x483c30` returns at once when the value is unchanged (@`0x483c58`-`0x483c62`), so Esc in a
+    window does nothing.
+  - Otherwise it rebuilds the window, then broadcasts message `0x202` with the new flag to the window's
+    listeners (`0x46cab0` on `+0x40`, @`0x483cd2`-`0x483ce8`).
+  - `SettingsManager`'s handler `0x466570` (its only reference is the vtable entry at `0x595af0`, next to the
+    `"GameSettngs"` group name) takes `0x202`. It passes the flag through its `+0x10` object's vtable `+0x24`
+    (the callee was not read) and calls `0x4668c0`, the save that Settings OK uses.
+  - So Esc and maximize both write `fullscreen` to the registry.
 - **Port deviation:** Alt+Enter switches between a window and the last fullscreen mode picked in IMPROVEMENTS
   (Borderless by default, or Native; `fullscreen_mode=` in `improvements.txt`, UX-5) and saves both files,
-  `settings.txt` keeping its fullscreen flag for older builds (the user's choice on 2026-10-14). The original
-  Esc and maximize shortcuts are not ported: Esc keeps opening the pause menu.
+  `settings.txt` keeping its fullscreen flag for older builds (the user's choice on 2026-10-14).
+- **Port, Esc on the menu (the user's choice on 2026-10-22).** With no dialog open, Esc leaves fullscreen as the
+  original does, and never quits. QUIT (with its confirm) and the window's close button are the ways out.
+  - Borderless and Native both count as the original's fullscreen. Either one goes to Windowed through the
+    Alt+Enter path, so both files are saved, as the original saves, and Alt+Enter brings the same mode back.
+  - In a window, Esc does nothing.
+  - Android has no window modes: Back arrives as Esc and still puts the app in the background.
+  - `tt2ui::menu_escape` (`ui/include/tt2ui/display.hpp`) makes the choice; `ui/tests/test_display.cpp` covers
+    each platform and mode.
+- **Not ported:** in a round Esc only opens the pause menu, and in a dialog it only closes the dialog; neither
+  leaves fullscreen. Maximize does not switch to fullscreen.
+
+Local-listing evidence (no REA id, `objdump` on the same SHA-256 file): `0x484833`-`0x48483e`, `0x483c30`, the
+vtable `0x597bd4`, `0x466570` and its reference at `0x595af0`.
 
 Evidence: `ev_3aba74211b0566c537bff5aa1bb483e505f8ed72805ff11b5181f2b0d452a913` (window ctor),
 `ev_f68b85a9df92a2795e664a20cce08b6e0f3f81cdf40322e8ce67bac27dfcd071` (WndProc entry bytes; the body was read
@@ -277,4 +301,3 @@ CMake project version) and OK, over three pages.
   parentheses; a test measures every line against the placeholder fonts.
 
 INFERRED: a child sprite's offset scales with its parent, and the logo parts show frame 0.
-

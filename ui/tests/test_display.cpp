@@ -110,6 +110,40 @@ TEST(display_for_desktop_keeps_the_saved_mode) {
     ASSERT_TRUE(window_modes_offered(Platform::Desktop));
 }
 
+// Esc on the menu (help-and-settings.md §3.4): the exe's 0x484770 only sends
+// the window to windowed mode; it never quits.
+TEST(menu_escape_on_desktop_leaves_borderless_for_a_window) {
+    ASSERT_TRUE(menu_escape(Platform::Desktop, tt2::WindowMode::Borderless) == MenuEscape::LeaveFullscreen);
+}
+
+TEST(menu_escape_on_desktop_leaves_native_for_a_window) {
+    ASSERT_TRUE(menu_escape(Platform::Desktop, tt2::WindowMode::Native) == MenuEscape::LeaveFullscreen);
+}
+
+TEST(menu_escape_on_a_desktop_window_does_nothing) {
+    // 0x483c30 returns early when the mode is unchanged: no quit, no switch.
+    ASSERT_TRUE(menu_escape(Platform::Desktop, tt2::WindowMode::Windowed) == MenuEscape::Nothing);
+}
+
+TEST(menu_escape_on_android_goes_to_the_background) {
+    // Back arrives as Esc; the game is always full screen there, whatever the file says.
+    ASSERT_TRUE(menu_escape(Platform::Android, tt2::WindowMode::Borderless) == MenuEscape::Background);
+    ASSERT_TRUE(menu_escape(Platform::Android, tt2::WindowMode::Windowed) == MenuEscape::Background);
+    ASSERT_TRUE(menu_escape(Platform::Android, tt2::WindowMode::Native) == MenuEscape::Background);
+}
+
+TEST(menu_escape_then_alt_enter_brings_the_same_fullscreen_back) {
+    // The host applies LeaveFullscreen as set_window(Windowed), which keeps
+    // the last fullscreen mode for Alt+Enter (UX-5).
+    tt2::Improvements imp;
+    imp.set_window(tt2::WindowMode::Native);
+    ASSERT_TRUE(menu_escape(Platform::Desktop, imp.window) == MenuEscape::LeaveFullscreen);
+    imp.set_window(tt2::WindowMode::Windowed);
+    ASSERT_TRUE(!imp.legacy_fullscreen());   // settings.txt's fullscreen=0
+    ASSERT_TRUE(menu_escape(Platform::Desktop, imp.window) == MenuEscape::Nothing);
+    ASSERT_TRUE(imp.toggled_window() == tt2::WindowMode::Native);
+}
+
 // Phones and tablets (T2.3): the worked examples from the Android plan. In
 // landscape a phone's camera cutout sits on a short edge, inside a pillar
 // bar: any phone wider than 4:3 has bars of at least 1/8 of its width, far

@@ -71,6 +71,68 @@ TEST(profile_wod_today_and_day_number) {
     ASSERT_TRUE(!p.played_wod_today(6));
 }
 
+TEST(wotd_day_from_unix_floors_before_1970) {
+    // Floor division (wotd_day.hpp): one second before the epoch is the
+    // previous day, not the same one.
+    ASSERT_EQ(wotd_day_from_unix(0), -14125);
+    ASSERT_EQ(wotd_day_from_unix(-1), -14126);
+}
+
+// ---------------------------------------------------------------------------
+// wotd_button_enabled (0x42f1a0, game-scene.md §8.1 / §8.6; AC-W4)
+// ---------------------------------------------------------------------------
+
+namespace {
+PlayerProfile played_on(std::int32_t day) {
+    PlayerProfile p = PlayerProfile::create("Ann", 1);
+    p.wod_day = day;
+    return p;
+}
+WallClock clock_at(std::int64_t unix_s, std::int32_t tz_west, std::int32_t utc_offset) {
+    return WallClock{unix_s * 1000, tz_west, utc_offset};
+}
+}  // namespace
+
+TEST(wotd_button_enabled_for_a_new_player) {
+    const PlayerProfile p = PlayerProfile::create("Ann", 1);   // WOD = -1
+    ASSERT_TRUE(wotd_button_enabled(p, clock_at(1792711800, -480, 480)));
+}
+
+TEST(wotd_button_flips_at_local_midnight_in_manila) {
+    // Played on 2026-10-22 (scene day 6623). 23:59 Manila = 15:59 UTC.
+    const PlayerProfile p = played_on(6623);
+    ASSERT_TRUE(!wotd_button_enabled(p, clock_at(1792684740, -480, 480)));
+    // 00:00 Manila on 10-23 (16:00 UTC, still UTC 10-22): open again.
+    ASSERT_TRUE(wotd_button_enabled(p, clock_at(1792684800, -480, 480)));
+    // Played yesterday (6622): open all day.
+    ASSERT_TRUE(wotd_button_enabled(played_on(6622), clock_at(1792684740, -480, 480)));
+}
+
+TEST(wotd_button_flips_at_local_midnight_in_new_york) {
+    // Played on 2026-01-15 (scene day 6343). 23:59 EST = 04:59 UTC on 01-16.
+    const PlayerProfile p = played_on(6343);
+    ASSERT_TRUE(!wotd_button_enabled(p, clock_at(1768539540, 300, -300)));
+    ASSERT_TRUE(wotd_button_enabled(p, clock_at(1768539600, 300, -300)));
+}
+
+TEST(wotd_button_original_rule_ignores_dst) {
+    // Berlin in July, played on 2026-07-14 (day 6523). At 00:30 CEST
+    // the exe's standard-time day is still 07-14, so the gate stays shut
+    // until 01:00 CEST.
+    const PlayerProfile p = played_on(6523);
+    ASSERT_TRUE(!wotd_button_enabled(p, clock_at(1784068200, -60, 120)));
+    ASSERT_TRUE(!wotd_button_enabled(p, clock_at(1784068200, -60, 120), WotdDayRule::Original));
+    ASSERT_TRUE(wotd_button_enabled(p, clock_at(1784070000, -60, 120)));
+}
+
+TEST(wotd_button_local_rule_flips_at_local_midnight_with_dst) {
+    // Local day (UX-12): the gate opens at 00:00 CEST.
+    const PlayerProfile p = played_on(6523);
+    ASSERT_TRUE(!wotd_button_enabled(p, clock_at(1784066340, -60, 120), WotdDayRule::Local));  // 23:59 CEST
+    ASSERT_TRUE(wotd_button_enabled(p, clock_at(1784066400, -60, 120), WotdDayRule::Local));   // 00:00 CEST
+    ASSERT_TRUE(wotd_button_enabled(p, clock_at(1784068200, -60, 120), WotdDayRule::Local));   // 00:30 CEST
+}
+
 TEST(utf8_length_counts_code_points) {
     ASSERT_EQ(utf8_length(""), 0u);
     ASSERT_EQ(utf8_length("abc"), 3u);
@@ -377,8 +439,8 @@ TEST(profiles_text_rejects_garbage) {
         "format=re-twist-tt2 profiles\nversion=1\n[player]\nname=A\ntrophies=1,2\n",
         "format=re-twist-tt2 profiles\nversion=1\n[player]\nname=A\nno equals sign\n",
         "format=re-twist-tt2 profiles\nversion=1\n[player]\nname=A\n[player]\nname=A\n",  // duplicate
-        "format=re-twist-tt2 profiles\nversion=1\n[player]\nname=A\n[player]\nname=B\n[player]\nname=C\n"
-        "[player]\nname=D\n[player]\nname=E\n[player]\nname=F\n",                     // six players
+        ("format=re-twist-tt2 profiles\nversion=1\n[player]\nname=A\n[player]\nname=B\n[player]\nname=C\n"
+         "[player]\nname=D\n[player]\nname=E\n[player]\nname=F\n"),                   // six players: one string
     };
     for (const char* text : bad) {
         ASSERT_TRUE(!parse(text, pm));

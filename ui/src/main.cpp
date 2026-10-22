@@ -38,10 +38,12 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -62,6 +64,7 @@
 #include "tt2ui/bitmap_font.hpp"
 #include "tt2ui/blitz_scene.hpp"
 #include "tt2ui/boot_preload.hpp"
+#include "tt2ui/crossword_scene.hpp"
 #include "tt2ui/asset_import.hpp"
 #include "tt2ui/data_paths.hpp"
 #include "tt2ui/dialog_fade.hpp"
@@ -71,6 +74,7 @@
 #include "tt2ui/highscore_dialog.hpp"
 #include "tt2ui/import_prompt.hpp"
 #include "tt2ui/improvements_dialog.hpp"
+#include "tt2ui/quit_dialog.hpp"
 #include "tt2ui/render_options.hpp"
 #include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/side_fill.hpp"
@@ -149,6 +153,7 @@ const std::map<std::string, std::string> kImageFiles = {
     // Game scene (resources.xml section "gamescene").
     {"gamescene/BACKGROUND", "images/gamescene/background.png"},
     {"gamescene/BACKGROUND_TIMED", "images/gamescene/background_timed.png"},
+    {"gamescene/BACKGROUND_WOTD", "images/gamescene/background_wotd.png"},
     {"IMAGE_UI_BAR", "images/gamescene/ui_bar.png"},
     {"BUTTON_MENU", "images/gamescene/button_menu.png"},
     {"BUTTON_Twist", "images/gamescene/button_twist.png"},
@@ -157,6 +162,7 @@ const std::map<std::string, std::string> kImageFiles = {
     {"BUTTON_Clear", "images/gamescene/button_clear.png"},
     {"BUTTON_NextRound", "images/gamescene/button_nextround.png"},
     {"BUTTON_GiveUp", "images/gamescene/button_giveup.png"},
+    {"BUTTON_Done", "images/gamescene/button_done.png"},
     {"BUTTON_Pass", "images/gamescene/button_pass.png"},
     {"BUTTON_PASS2", "images/gamescene/button_pass2.png"},
     {"IMAGE_IMAGE_POPUP_0", "images/gamescene/image_popup_0.png"},
@@ -164,6 +170,7 @@ const std::map<std::string, std::string> kImageFiles = {
     {"IMAGE_IMAGE_POPUP_5", "images/gamescene/image_popup_5.png"},
     {"IMAGE_IMAGE_POPUP_8", "images/gamescene/image_popup_8.png"},
     {"IMAGE_IMAGE_POPUP_10", "images/gamescene/image_popup_10.png"},
+    {"IMAGE_IMAGE_POPUP_11", "images/gamescene/image_popup_11.png"},
     {"IMAGE_POPUP_BINGO", "images/gamescene/popup_bingo.png"},
     {"IMAGE_POPUP_ALLWORDS", "images/gamescene/popup_allwords.png"},
     {"ANAGRAM_TILE", "images/gamescene/anagramTile.png"},
@@ -195,6 +202,25 @@ const std::map<std::string, std::string> kImageFiles = {
     {"blitzscene/IMAGE_PANEL_SIDER", "images/blitzscene/panel_sideR.png"},
     {"blitzscene/IMAGE_PANEL_CORNERR", "images/blitzscene/panel_cornerR.png"},
     {"blitzscene/IMAGE_PANEL_CORNERTOPR", "images/blitzscene/panel_cornertopR.png"},
+    // SCENE_CRISSCROSS (resources.xml section "crosswordscene"). BACKGROUND
+    // and LetterBox are also gamescene ids, so they carry the section
+    // (crossword.md §1.3).
+    {"crosswordscene/BACKGROUND", "images/crosswordscene/background.png"},
+    {"crosswordscene/LetterBox", "images/crosswordscene/letterBox.png"},
+    {"IMAGE_OVERLAY", "images/crosswordscene/overlay.png"},
+    {"IMAGE_BTN_ARROW_NEXT", "images/crosswordscene/btn_arrow_next.png"},
+    {"IMAGE_BTN_ARROW_PREV", "images/crosswordscene/btn_arrow_prev.png"},
+    {"BUTTON_ZOOM", "images/gamescene/button_zoom.png"},
+    // The grid, the rack, the highlight and the sheen (crossword_scene.hpp;
+    // resources.xml section gamescene).
+    {"XwordBox", "images/gamescene/XwordBox.png"},
+    {"IMAGE_XWORD_OVERLAY", "images/gamescene/letterBox_cwordhole.png"},
+    {"IMAGE_CROSSWORDHIGHLIGHT", "images/gamescene/crosswordHighlight.png"},
+    {"IMAGE_CHICKLET_SHEEN", "images/gamescene/chicklet_sheen.png"},
+    // Crossword's popups 4, 7 and 9 (scene_popups.hpp, crossword.md §8).
+    {"IMAGE_IMAGE_POPUP_4", "images/gamescene/image_popup_4.png"},
+    {"IMAGE_IMAGE_POPUP_7", "images/gamescene/image_popup_7.png"},
+    {"IMAGE_IMAGE_POPUP_9", "images/gamescene/image_popup_9.png"},
     {"BUTTON_OK", "images/gui/button_ok.png"},
     {"BUTTON_CANCEL", "images/gui/button_cancel.png"},
     {"BUTTON_ADD", "images/gui/button_add.png"},
@@ -318,6 +344,9 @@ const std::map<SoundId, std::string> kSoundFiles = {
     {SoundId::LightningTimeLow, "sound/lightning_time_low.ogg"},
     {SoundId::LightningHint, "sound/lightning_hint.ogg"},
     {SoundId::LightningSkip, "sound/lightning_skip.ogg"},
+    // resources.xml:37 spells its gain `volue`, so it plays at full volume.
+    {SoundId::CrosswordRotateWord, "sound/crossword_rotate_word.ogg"},
+    {SoundId::LetterSheen, "sound/letter_sheen.ogg"},   // resources.xml:50, `volue` too
 };
 // The few resources.xml sounds whose attribute is spelled `volume` (the
 // `volue` ones are never read; help-and-settings.md §3.3).
@@ -694,15 +723,24 @@ public:
     // are decoded on worker threads; poll_preload() makes their textures and
     // clips between frames. Anything drawn or played before its turn loads on
     // the spot, as without a preload.
+    // A group can be queued again (PRELOAD_CROSSWORD, each time the scene
+    // starts): what is loaded or already queued is skipped, so no file is
+    // decoded twice.
     void preload(int group, const tt2ui::PreloadSet& set) {
         tt2ui::PreloadCount& c = preload_counts_[group];
+        if (c.finished()) preload_started_ns_[group] = SDL_GetTicksNS();
         auto queue = [&](PreloadJob j) {
             j.group = group;
             preload_jobs_.push_back(std::move(j));
             ++c.total;
         };
+        auto queued = [&](const std::string& id) {
+            return std::any_of(preload_jobs_.begin(), preload_jobs_.end(), [&](const PreloadJob& j) {
+                return j.kind == PreloadJob::Kind::Image && j.spec.image_id == id;
+            });
+        };
         for (const SheetSpec& spec : set.images)
-            if (!images_.count(spec.image_id)) {
+            if (!images_.count(spec.image_id) && !queued(spec.image_id)) {
                 PreloadJob j;
                 j.kind = PreloadJob::Kind::Image;
                 j.spec = spec;
@@ -729,7 +767,6 @@ public:
                 j.font = id;
                 queue(std::move(j));
             }
-        if (preload_started_ns_ == 0) preload_started_ns_ = SDL_GetTicksNS();
     }
     tt2ui::PreloadCount preload_count(int group) const {
         auto it = preload_counts_.find(group);
@@ -787,7 +824,7 @@ public:
             ++c.done;
             if (c.finished())
                 std::printf("preload: group %d, %zu files in %llu ms\n", j.group, c.total,
-                            static_cast<unsigned long long>((SDL_GetTicksNS() - preload_started_ns_) / 1000000));
+                            static_cast<unsigned long long>((SDL_GetTicksNS() - preload_started_ns_[j.group]) / 1000000));
             it = preload_jobs_.erase(it);
         }
     }
@@ -1139,7 +1176,7 @@ private:
     };
     std::deque<PreloadJob> preload_jobs_;
     std::map<int, tt2ui::PreloadCount> preload_counts_;
-    std::uint64_t preload_started_ns_ = 0;
+    std::map<int, std::uint64_t> preload_started_ns_;   // when each group was last queued from finished
 };
 
 // Alpha of the pixel under (px, py) for the button's current frame.
@@ -1202,7 +1239,13 @@ void draw_sprite(SDL_Renderer* ren, Assets& assets, const SpriteState& s, float 
     SDL_SetTextureBlendMode(img.texture, s.additive ? SDL_BLENDMODE_ADD : SDL_BLENDMODE_BLEND);
     const float d = img.density;   // source in texture pixels, destination in canvas pixels
     const SDL_FRect srcf{src.x * d, src.y * d, src.w * d, src.h * d};
-    SDL_RenderTextureRotated(ren, img.texture, &srcf, &dst, 0.0, nullptr, static_cast<SDL_FlipMode>(flip));
+    // A turned sprite (the Crossword highlight) turns about its anchor
+    // point; SDL takes degrees, clockwise, and the centre relative to dst.
+    const bool turned = s.rotation != 0.0f && !s.has_clip;
+    const SDL_FPoint pivot{s.x + ox - dst.x, s.y + oy - dst.y};
+    const double degrees = turned ? static_cast<double>(s.rotation) * 180.0 / 3.14159265358979323846 : 0.0;
+    SDL_RenderTextureRotated(ren, img.texture, &srcf, &dst, degrees, turned ? &pivot : nullptr,
+                             static_cast<SDL_FlipMode>(flip));
     SDL_SetTextureColorMod(img.texture, 255, 255, 255);
     SDL_SetTextureBlendMode(img.texture, SDL_BLENDMODE_BLEND);
 }
@@ -1445,10 +1488,14 @@ const char* popup_placeholder_text(PopupKind k) {
         case PopupKind::AllWords: return "ALL WORDS!";
         case PopupKind::Bingo: return "BINGO!\nNEXT ROUND!";
         case PopupKind::AlreadyGuessed: return "ALREADY\nFOUND";
+        case PopupKind::CrosswordIntersection: return "THAT LETTER\nDOESN'T FIT\nTHE CROSSING";
+        case PopupKind::LockedLetter: return "THAT LETTER\nIS TAKEN";
+        case PopupKind::DeadEnd: return "NO WORD\nFITS HERE";
         case PopupKind::EnoughOfLength: return "THAT LENGTH\nIS FULL";
         case PopupKind::ExtraTime: return "+8 SECONDS";
         case PopupKind::NoneOfLength: return "NO WORDS OF\nTHAT LENGTH";
         case PopupKind::Definitions: return "CLICK A FOUND\nWORD TO LOOK\nIT UP";
+        case PopupKind::WordOfTheDay: return "YOU FOUND THE\nWORD OF THE DAY!";
     }
     return "";
 }
@@ -1556,6 +1603,37 @@ void draw_help(SDL_Renderer* ren, Assets& assets, const Dialog& d) {
     }
 }
 
+// A play scene's buttons; the placeholder build writes each one's name on it.
+void draw_scene_buttons(SDL_Renderer* ren, Assets& assets, const std::vector<MenuButton>& buttons) {
+    for (const MenuButton& b : buttons) {
+        draw_sprite(ren, assets, b.sprite);
+        if (b.sprite.visible && assets.image(b.sprite.sheet).placeholder) {
+            std::string label = b.sprite.name.substr(7);
+            for (auto& c : label) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            draw_text(ren, assets, "PLACEHOLDER_2", label, b.sprite.left() + b.sprite.sheet.frame_w * 0.5f,
+                      b.sprite.top() + b.sprite.sheet.frame_h * 0.5f, TextAlign::Center, Anchor::Center, -1);
+        }
+    }
+}
+
+// The two popups every play scene shares (scene_popups.hpp).
+template <class Scene>
+void draw_scene_popups(SDL_Renderer* ren, Assets& assets, const Scene& g) {
+    // 0x428ec0: one popup at a time; the label waits until it has grown.
+    if (g.popup_kind()) {
+        const SpriteState& p = g.popup();
+        draw_sprite_or_label(ren, assets, p, p.scale >= 0.9f ? popup_placeholder_text(*g.popup_kind()) : "",
+                             "PLACEHOLDER_3", 20);
+    }
+    // 0x429510: the trophy and its FONT_TROPHYNAMES title, bottom right.
+    if (g.trophy_popup_id() >= 0) {
+        const SpriteState& t = g.trophy_popup();
+        if (t.visible) draw_sprite(ren, assets, t);
+        const SpriteState& l = g.trophy_label();
+        if (l.visible) draw_text_scaled(ren, assets, "FONT_TROPHYNAMES", l.name, l.x, l.y, l.scale, l.alpha);
+    }
+}
+
 void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
     draw_sprite(ren, assets, sprite("BACKGROUND", sheet(g.background_id(), SCREEN_W, SCREEN_H), 0, 0));
 
@@ -1606,37 +1684,18 @@ void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
     draw_sprite(ren, assets, sprite("UI_BAR", sheet("IMAGE_UI_BAR", 800, 54), 0, 547));
     draw_text(ren, assets, "FONT_UI_LABELS", "SCORE:", 244, 574, TextAlign::Right, Anchor::Center, -1);
     draw_text(ren, assets, "FONT_UI_NUMBERS", g.score_text(), 251, 574, TextAlign::Left, Anchor::Center, -1);
-    draw_text(ren, assets, "FONT_UI_LABELS", "ROUND:", 537, 574, TextAlign::Right, Anchor::Center, -1);
-    draw_text(ren, assets, "FONT_UI_NUMBERS", g.round_text(), 541, 574, TextAlign::Left, Anchor::Center, -1);
-    if (g.timed()) {   // INFERRED: the clock is hidden in Untimed
+    if (g.round_visible()) {   // DEVIATION (D6): hidden in WOTD; the exe shows "ROUND: 1"
+        draw_text(ren, assets, "FONT_UI_LABELS", "ROUND:", 537, 574, TextAlign::Right, Anchor::Center, -1);
+        draw_text(ren, assets, "FONT_UI_NUMBERS", g.round_text(), 541, 574, TextAlign::Left, Anchor::Center, -1);
+    }
+    if (g.timed()) {   // 0x426360 @0x426535: only Untimed hides the clock
         draw_text(ren, assets, "FONT_UI_LABELS", "TIME:", 707, 574, TextAlign::Right, Anchor::Center, -1);
         draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_minutes_text(), 749, 574, TextAlign::Right, Anchor::Center, -1);
         draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_seconds_text(), 752, 574, TextAlign::Left, Anchor::Center, -1);
     }
 
-    for (const MenuButton& b : g.buttons()) {
-        draw_sprite(ren, assets, b.sprite);
-        if (b.sprite.visible && assets.image(b.sprite.sheet).placeholder) {
-            std::string label = b.sprite.name.substr(7);
-            for (auto& c : label) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            draw_text(ren, assets, "PLACEHOLDER_2", label, b.sprite.left() + b.sprite.sheet.frame_w * 0.5f,
-                      b.sprite.top() + b.sprite.sheet.frame_h * 0.5f, TextAlign::Center, Anchor::Center, -1);
-        }
-    }
-
-    // 0x428ec0: one popup at a time; the label waits until it has grown.
-    if (g.popup_kind()) {
-        const SpriteState& p = g.popup();
-        draw_sprite_or_label(ren, assets, p, p.scale >= 0.9f ? popup_placeholder_text(*g.popup_kind()) : "",
-                             "PLACEHOLDER_3", 20);
-    }
-    // 0x429510: the trophy and its FONT_TROPHYNAMES title, bottom right.
-    if (g.trophy_popup_id() >= 0) {
-        const SpriteState& t = g.trophy_popup();
-        if (t.visible) draw_sprite(ren, assets, t);
-        const SpriteState& l = g.trophy_label();
-        if (l.visible) draw_text_scaled(ren, assets, "FONT_TROPHYNAMES", l.name, l.x, l.y, l.scale, l.alpha);
-    }
+    draw_scene_buttons(ren, assets, g.buttons());
+    draw_scene_popups(ren, assets, g);
 }
 
 // SCENE_BLITZ (dialogs.xml order): background, the list panel, the time
@@ -1680,28 +1739,28 @@ void draw_blitz(SDL_Renderer* ren, Assets& assets, const BlitzScene& g) {
     draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_minutes_text(), 749, 574, TextAlign::Right, Anchor::Center, -1);
     draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_seconds_text(), 752, 574, TextAlign::Left, Anchor::Center, -1);
 
-    for (const MenuButton& b : g.buttons()) {
-        draw_sprite(ren, assets, b.sprite);
-        if (b.sprite.visible && assets.image(b.sprite.sheet).placeholder) {
-            std::string label = b.sprite.name.substr(7);
-            for (auto& c : label) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            draw_text(ren, assets, "PLACEHOLDER_2", label, b.sprite.left() + b.sprite.sheet.frame_w * 0.5f,
-                      b.sprite.top() + b.sprite.sheet.frame_h * 0.5f, TextAlign::Center, Anchor::Center, -1);
-        }
-    }
+    draw_scene_buttons(ren, assets, g.buttons());
     if (g.pause_veil()) draw_sprite(ren, assets, sprite("PAUSE_VEIL", sheet("IMAGE_PAUSEVEIL", 220, 545), 0, 0));
+    draw_scene_popups(ren, assets, g);
+}
 
-    if (g.popup_kind()) {
-        const SpriteState& p = g.popup();
-        draw_sprite_or_label(ren, assets, p, p.scale >= 0.9f ? popup_placeholder_text(*g.popup_kind()) : "",
-                             "PLACEHOLDER_3", 20);
-    }
-    if (g.trophy_popup_id() >= 0) {
-        const SpriteState& t = g.trophy_popup();
-        if (t.visible) draw_sprite(ren, assets, t);
-        const SpriteState& l = g.trophy_label();
-        if (l.visible) draw_text_scaled(ren, assets, "FONT_TROPHYNAMES", l.name, l.x, l.y, l.scale, l.alpha);
-    }
+// SCENE_CRISSCROSS (D-7; the sprites come from crossword_scene.hpp): the
+// background, the grid view (every cell's XwordBox and hole, the letters
+// upright, the sheen) with the highlight over it, then OVERLAY, which
+// 0x44b370 re-adds above the grid, so the zoomed grid is clipped at the
+// panel's edge (EV-2); then UI_BAR and its labels, the selected word's rack,
+// the buttons and the two popups. Imported art only (A6): without a
+// verified import the launch prompt asks for one before the menu.
+void draw_crossword(SDL_Renderer* ren, Assets& assets, const CrosswordScene& g) {
+    draw_sprite(ren, assets, sprite("BACKGROUND", sheet(g.background_id(), SCREEN_W, SCREEN_H), 0, 0));
+    for (const SpriteState& s : g.grid_sprites()) draw_sprite(ren, assets, s);
+    draw_sprite(ren, assets, g.highlight_sprite());
+    for (const SpriteState& s : g.sprites()) draw_sprite(ren, assets, s);   // hidden ones skip themselves
+    for (const TextLabel& l : g.labels())
+        if (l.visible) draw_text(ren, assets, l.font_id, l.text, l.x, l.y, l.align, l.anchor, l.char_spacing);
+    for (const SpriteState& s : g.rack_sprites()) draw_sprite(ren, assets, s);
+    draw_scene_buttons(ren, assets, g.buttons());
+    draw_scene_popups(ren, assets, g);
 }
 
 // SCENE_TROPHY (dialogs.xml): background, ribbons, the header, the
@@ -1769,6 +1828,33 @@ bool load_tree(const std::string& dir, const char* original, const char* open, t
         }
     }
     return false;
+}
+
+// The OS wall clock for Word of the Day (D-3). The menu gate and the game
+// scene both read it, so they can never disagree. The standard offset comes
+// from `_get_timezone` on Windows and the POSIX / bionic `timezone` after
+// `tzset()` elsewhere, in seconds west, as the exe's `_ftime64_s` sees it
+// (game-scene.md §8.1); the offset with DST is localtime minus gmtime of
+// the same second (tt2::wall_clock_from). Worked example: Manila,
+// `timezone` = -28800 s -> tz_minutes_west -480, utc_offset_minutes +480.
+tt2::WallClock wall_clock() {
+    const auto since_epoch = std::chrono::system_clock::now().time_since_epoch();
+    const std::int64_t unix_ms = std::chrono::duration_cast<std::chrono::milliseconds>(since_epoch).count();
+    const std::time_t t = static_cast<std::time_t>(tt2::floor_div(unix_ms, 1000));
+    long tz_seconds_west = 0;
+    std::tm local{}, utc{};
+#ifdef _WIN32
+    _tzset();
+    _get_timezone(&tz_seconds_west);
+    localtime_s(&local, &t);
+    gmtime_s(&utc, &t);
+#else
+    tzset();
+    tz_seconds_west = timezone;
+    localtime_r(&t, &local);
+    gmtime_r(&t, &utc);
+#endif
+    return tt2::wall_clock_from(unix_ms, tz_seconds_west, local, utc);
 }
 
 // CTEXT_HIGHSCORE_NAMES (commontext.xml): the default-table fill names.
@@ -1990,7 +2076,7 @@ int main(int argc, char** argv) {
     std::string debug_player;
     std::string data_dir = TT2_DATA_DIR;
     bool data_dir_given = false;
-    std::string auto_play;     // --play untimed|timed|lightning: start a game as soon as the menu is up
+    std::string auto_play;     // --play untimed|timed|lightning|wotd|crossword: start a game as soon as the menu is up
     bool hover_set = false;    // --hover X,Y: the cursor parked on one point (smoke tests)
     float hover_x = 0, hover_y = 0;
     std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
@@ -1999,14 +2085,17 @@ int main(int argc, char** argv) {
                                // '#' SETTINGS, '@' its INFO (credits), '6'..'8' max length,
                                // '=' the main menu's IMPROVEMENTS (then '<' / '>' its display mode,
                                //     '(' / ')' its resolution, '[' / ']' its texture filter, '*' its upscaler,
-                               //     '{' its renderer),
+                               //     '{' its renderer, '%' its WORD OF THE DAY),
                                // '!' fullscreen switch, '^' Alt+Enter,
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND;
+                               // Lightning and Crossword: '[' / ']' the previous / next word,
+                               // Crossword: '/' ZOOM;
                                // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
                                // '&' the main menu SETTINGS' IMPORT (re-import, deviation OP-7),
                                // '"' the main menu's CHANGE NAME, then '-' its REMOVE,
                                // '+' the main menu's TROPHIES, then '~' its MENU,
-                               // '$' the main menu's HIGH SCORES, then '1'..'5' its tabs, '~' OK
+                               // '$' the main menu's HIGH SCORES, then '1'..'5' its tabs, '~' OK,
+                               // '.' the main menu's QUIT, then '|' YES, '~' NO ('.' again: refused)
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     std::vector<std::string> probe_files;   // --probe-media FILE (repeatable): decode, report, exit
     std::string renderer_flag;              // --renderer auto|vulkan|opengl|software: this run only
@@ -2033,7 +2122,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--renderer") && i + 1 < argc) renderer_flag = argv[++i];
         else if (!std::strcmp(argv[i], "--help")) {
             std::printf("usage: tt2 [--assets DIR] [--data-dir DIR] [--save-dir DIR] [--player NAME]\n"
-                        "           [--play untimed|timed|lightning] [--speed N] [--exit-after MS]\n"
+                        "           [--play untimed|timed|lightning|wotd|crossword] [--speed N] [--exit-after MS]\n"
                         "           [--import DIR] [--asset-dir DIR] [--asset-manifest FILE]\n"
                         "           [--renderer auto|vulkan|opengl|software]\n"
                         "\n"
@@ -2069,6 +2158,14 @@ int main(int argc, char** argv) {
     auto seed_ticks = [&]() -> std::uint32_t {
         return fixed_dt > 0 ? static_cast<std::uint32_t>(1000 + simulated_ms) : static_cast<std::uint32_t>(SDL_GetTicks());
     };
+    // The CRT rand() state (D-11, crossword.md §9): the rack deal and TWIST
+    // of every mode (0x43c370, game-scene.md §4.2) and the Crossword grid
+    // shuffles. One per process, seeded once at start-up from the clock, as
+    // the exe's srand((uint)_time64(NULL)) at 0x482b04, so a second game in
+    // the same run continues the sequence. Every scene borrows it; it
+    // outlives them all. Under --fixed-dt it takes the simulated clock, so a
+    // run repeats.
+    tt2::CrtRandom crt_random(fixed_dt > 0 ? seed_ticks() : static_cast<std::uint32_t>(std::time(nullptr)));
 
     // The data folder (dictionaries, asset manifest). Packaged builds
     // (AppImage, Windows zip) carry it next to the executable; a source
@@ -2286,14 +2383,15 @@ int main(int argc, char** argv) {
     std::printf("display: %s\n", check_presentation(ren).c_str());
     // One fading dialog slot per dialog source, drawn in this order.
     SideFillTextures side_fill;
-    DialogLayer game_under_layer, game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
-        menu_highscores_layer, menu_credits_layer, menu_improvements_layer, menu_notice_layer, profile_layer, import_layer;
+    DialogLayer game_under_layer, game_layer, game_credits_layer, menu_layer, menu_quit_layer, menu_help_layer,
+        menu_settings_layer, menu_highscores_layer, menu_credits_layer, menu_improvements_layer, menu_notice_layer,
+        profile_layer, import_layer;
     // The player dialogs under the top one (deepest: select, name input, message).
     std::array<DialogLayer, 2> profile_under_layers;
     // At shutdown, and after a render device reset (T2.4).
     const auto release_layers = [&] {
-        for (DialogLayer* l : {&game_under_layer, &game_layer, &game_credits_layer, &menu_layer, &menu_help_layer,
-                               &menu_settings_layer, &menu_highscores_layer, &menu_credits_layer,
+        for (DialogLayer* l : {&game_under_layer, &game_layer, &game_credits_layer, &menu_layer, &menu_quit_layer,
+                               &menu_help_layer, &menu_settings_layer, &menu_highscores_layer, &menu_credits_layer,
                                &menu_improvements_layer, &menu_notice_layer, &profile_layer, &import_layer})
             l->release();
         for (DialogLayer& l : profile_under_layers) l.release();
@@ -2371,7 +2469,16 @@ int main(int argc, char** argv) {
     pservices.wrap = [&assets](const std::string& text, int max_width) {
         return wrap_text(assets.font("FONT_SETTINGSTEXT").font, text, max_width);
     };
-    ProfileFlow profile(players, pservices);
+    // 0x42f1a0 refreshes the menu's name label and its Word of the Day button
+    // together, so a player change (select, add, remove) reopens or closes
+    // the gate for the new player. Set once the menu flow exists.
+    std::function<void()> refresh_wotd_gate;
+    ProfileFlow::Services profile_services = pservices;
+    profile_services.on_change = [&] {
+        pservices.on_change();
+        if (refresh_wotd_gate) refresh_wotd_gate();
+    };
+    ProfileFlow profile(players, profile_services);
 
     bool running = true;
     WelcomeFlow::Services services;
@@ -2387,13 +2494,19 @@ int main(int argc, char** argv) {
     // (TRANSITION_DEFAULT: 500 ms to black, then 500 ms back; each half
     // uses FadeBlackTransition's full `time`, 0x46c362 / 0x46c78f).
     std::unique_ptr<GameScene> game;
-    std::unique_ptr<BlitzScene> blitz;   // SCENE_BLITZ (Lightning) instead of `game`
-    // The scene being played, Classic or Lightning: most of the front end
-    // talks to both through the same member names.
+    std::unique_ptr<BlitzScene> blitz;           // SCENE_BLITZ (Lightning) instead of `game`
+    std::unique_ptr<CrosswordScene> crossword;   // SCENE_CRISSCROSS instead of `game`
+    // Crossword's zoom-in flag (+0x3c9) outlives each CrosswordScene: the
+    // exe's scene object lives for the whole run (crossword.md §3.1, §3.7).
+    bool crossword_zoom_in = false;
+    // The scene being played, Classic, Lightning or Crossword: most of the
+    // front end talks to all three through the same member names.
     auto with_play = [&](auto&& fn) {
         if (game) fn(*game);
         else if (blitz) fn(*blitz);
+        else if (crossword) fn(*crossword);
     };
+    auto in_play = [&] { return game || blitz || crossword; };
     // SCENE_TROPHY: opened from the menu (0x42e390) and left by its MENU
     // button (0x42fcb0), both through TRANSITION_DEFAULT like the game.
     std::unique_ptr<TrophyRoom> trophy_room;
@@ -2405,11 +2518,7 @@ int main(int argc, char** argv) {
     // Saved game to continue in the next start_game (0x4242a0 / 0x42a460).
     std::unique_ptr<tt2::SavedGame> pending_resume;
     auto mode_name = [](tt2::GameMode m) { return tt2::save_mode_name(m); };
-    // 0x5fdea8: the mode last chosen on the menu, Timed at launch; the high
-    // scores open on its tab (0x4063f0).
-    tt2::GameMode last_mode = tt2::GameMode::Timed;
     auto begin_game = [&](tt2::GameMode m) {
-        last_mode = m;
         pending_start = true;
         pending_mode = m;
         game_fade_out = GAME_FADE_HALF_MS;
@@ -2420,7 +2529,8 @@ int main(int argc, char** argv) {
     };
     // The main menu's HOW TO PLAY (0x42ee90 -> DIALOG_HELP).
     std::optional<HelpDialog> menu_help;
-    // The main menu's HIGH SCORES (0x42f0d0 -> DIALOG_HIGHSCORES, OK only).
+    // The main menu's HIGH SCORES (0x42f0d0 -> DIALOG_HIGHSCORES, OK only),
+    // always on TIMED like the exe (HighScoreDialog::from_menu).
     std::optional<HighScoreDialog> menu_highscores;
     auto menu_highscores_result = [&](HighScoreDialog::Result r) {
         if (r != HighScoreDialog::Result::None) menu_highscores.reset();
@@ -2473,10 +2583,12 @@ int main(int argc, char** argv) {
         if (imp.window != improvements.window || imp.resolution != improvements.resolution) apply_window(imp);
         if (imp.vsync != improvements.vsync) apply_vsync(imp.vsync);
         if (imp.filter != improvements.filter || imp.upscaler != improvements.upscaler) apply_render_options(imp);
+        const bool wotd_rule_changed = imp.wotd_day != improvements.wotd_day;
         improvements = imp;
-        std::printf("improvements: window %s, resolution %s, vsync %s, frame limit %d\n",
+        if (wotd_rule_changed && refresh_wotd_gate) refresh_wotd_gate();   // another rule, another "today"
+        std::printf("improvements: window %s, resolution %s, vsync %s, frame limit %d, word of the day %s\n",
                     tt2::to_string(improvements.window), tt2::to_string(improvements.resolution).c_str(),
-                    improvements.vsync ? "on" : "off", improvements.frame_limit);
+                    improvements.vsync ? "on" : "off", improvements.frame_limit, tt2::to_string(improvements.wotd_day));
         if (!save_dir.empty() && !store.save(improvements))
             std::fprintf(stderr, "warning: could not write %s\n", store.improvements_path().string().c_str());
         settings_host.commit(settings);   // settings.txt's fullscreen follows (UX-4)
@@ -2486,17 +2598,30 @@ int main(int argc, char** argv) {
         if (r == ImprovementsDialog::Result::Ok) commit_improvements(menu_improvements->values());
         menu_improvements.reset();
     };
-    // Alt+Enter (deviation, see is_fullscreen_shortcut): flip between a
-    // window and borderless, save both files, and keep open dialogs in step.
-    auto toggle_fullscreen = [&] {
-        if (!tt2ui::window_modes_offered(tt2ui::THIS_PLATFORM)) return;   // always full screen
+    // A window mode from a key: save both files and keep open dialogs and
+    // the round in step, as IMPROVEMENTS' OK would.
+    auto switch_window = [&](tt2::WindowMode m) {
         tt2::Improvements imp = improvements;
-        imp.set_window(imp.toggled_window());   // back to the last fullscreen mode picked (UX-5)
+        imp.set_window(m);   // Windowed keeps the last fullscreen mode for Alt+Enter (UX-5)
         commit_improvements(imp);
         const bool fullscreen = improvements.legacy_fullscreen();
         if (menu_settings) menu_settings->sync_fullscreen(fullscreen);
         if (menu_improvements) menu_improvements->sync_window(improvements.window);
         with_play([&](auto& g) { g.window_mode_changed(fullscreen); });
+    };
+    // Alt+Enter (deviation, see is_fullscreen_shortcut): flip between a
+    // window and the last fullscreen mode picked.
+    auto toggle_fullscreen = [&] {
+        if (!tt2ui::window_modes_offered(tt2ui::THIS_PLATFORM)) return;   // always full screen
+        switch_window(improvements.toggled_window());
+    };
+    // Esc on the menu with no dialog open (tt2ui::menu_escape): never a quit.
+    auto menu_escape_key = [&] {
+        switch (tt2ui::menu_escape(tt2ui::THIS_PLATFORM, improvements.window)) {
+            case tt2ui::MenuEscape::LeaveFullscreen: switch_window(tt2::WindowMode::Windowed); break;
+            case tt2ui::MenuEscape::Background: SDL_MinimizeWindow(win); break;   // SDL calls moveTaskToBack
+            case tt2ui::MenuEscape::Nothing: break;
+        }
     };
     // "Continue the game?" (CTEXT_START_SAVEGAME, 0x42dc80) on the menu. Port
     // improvement: the original never shows it in play (a save just resumes,
@@ -2512,9 +2637,36 @@ int main(int argc, char** argv) {
         if (store.load_saved_game(player, mode_name(m), *g)) pending_resume = std::move(g);
         else std::fprintf(stderr, "warning: saved game for %s is unreadable; starting again\n", player.c_str());
     };
+    // 0x42f1a0 (AC-W4): the Word of the Day button is enabled only while the
+    // current player has not finished today's game. One result serves the
+    // button and request_game; refresh_wotd_gate recomputes it on every menu
+    // entry, after a player change and after IMPROVEMENTS changes the rule.
+    bool wotd_open = true;
+    // 0x42a460's day check, run before "Continue the game?" (AC-W7): another
+    // day's Word of the Day save is deleted, and the new day's game starts
+    // with no prompt. An unreadable save goes on to the prompt as before.
+    auto discard_stale_save = [&](tt2::GameMode m) {
+        const std::string player = players.current()->name;
+        tt2::SavedGame g;
+        if (!store.load_saved_game(player, mode_name(m), g)) return false;
+        if (!menu_discards_saved_game(m, g, wall_clock(), improvements.wotd_day)) return false;
+        store.remove_saved_game(player, mode_name(m));
+        std::printf("menu: the word of the day save is from another day (%d); starting today's game\n", g.day);
+        return true;
+    };
     auto request_game = [&](tt2::GameMode m) {
         if (!players.current()) { profile.open_player_select(); return; }
+        if (m == tt2::GameMode::WordOfTheDay && !wotd_open) {
+            // A closed gate does what a click on the disabled button does.
+            assets.play_sound(SoundId::ButtonWordOfTheDay);
+            std::printf("menu: word of the day already played today\n");
+            return;
+        }
         if (!save_dir.empty() && store.has_saved_game(players.current()->name, mode_name(m))) {
+            if (discard_stale_save(m)) {
+                begin_game(m);
+                return;
+            }
             if (!improvements.resume_prompt) {   // the original: resume without asking
                 load_resume(m);
                 begin_game(m);
@@ -2531,8 +2683,11 @@ int main(int argc, char** argv) {
     // Entering the menu: the profile check (0x42d9b0), then --play.
     auto menu_entered = [&] {
         profile.on_menu_entered();
+        if (refresh_wotd_gate) refresh_wotd_gate();
         if (auto_play == "timed") request_game(tt2::GameMode::Timed);
         else if (auto_play == "lightning") request_game(tt2::GameMode::Blitz);
+        else if (auto_play == "wotd") request_game(tt2::GameMode::WordOfTheDay);
+        else if (auto_play == "crossword") request_game(tt2::GameMode::Crossword);
         else if (!auto_play.empty()) request_game(tt2::GameMode::Untimed);
     };
 
@@ -2613,6 +2768,9 @@ int main(int argc, char** argv) {
         if (name.empty() || !menu_dialog_open) return;
         assets.play_sound(SoundId::Button);
         menu_dialog_open = false;
+        // The start-failed notice has only OK: Return and --type's '|' / '~'
+        // (sent as YES / NO) close it like a click on OK.
+        if (menu_dialog.kind == DialogKind::Message) return;
         const std::string player = players.current() ? players.current()->name : std::string();
         const char* mode = mode_name(menu_dialog_mode);
         if (name == "BUTTON_YES") {
@@ -2624,16 +2782,32 @@ int main(int argc, char** argv) {
         }
         begin_game(menu_dialog_mode);
     };
+    // BUTTON_QUIT asks first (0x40ec20, quit_dialog.hpp); YES quits at once.
+    // Closing the window still quits without asking (SDL_EVENT_QUIT below).
+    QuitConfirm menu_quit([&](SoundId id) { assets.play_sound(id); }, wrap_message);
+    auto menu_quit_result = [&](QuitConfirm::Result r) {
+        if (r == QuitConfirm::Result::Quit) {
+            std::printf("menu: quit\n");
+            running = false;
+        } else if (r == QuitConfirm::Result::Stay) {
+            std::printf("menu: quit cancelled\n");
+        }
+    };
     services.menu_action = [&](const std::string& name) {
-        if (name == "BUTTON_QUIT") running = false;
+        if (name == "BUTTON_QUIT") {
+            if (menu_quit.request()) std::printf("menu: quit asked\n");
+            else std::printf("menu: quit already asked\n");   // 0x40ec20: no second confirm
+        }
         else if (name == "BUTTON_CHANGENAME") profile.open_player_select();
         else if (name == "BUTTON_PLAY_UNTIMED") request_game(tt2::GameMode::Untimed);
         else if (name == "BUTTON_PLAY") request_game(tt2::GameMode::Timed);
         else if (name == "BUTTON_BLITZ") request_game(tt2::GameMode::Blitz);
+        else if (name == "BUTTON_PLAY_WOD") request_game(tt2::GameMode::WordOfTheDay);
+        else if (name == "BUTTON_CRISSCROSS") request_game(tt2::GameMode::Crossword);
         else if (name == "BUTTON_HOWTOPLAY") menu_help.emplace();
         else if (name == "BUTTON_HIGHSCORES")
-            menu_highscores.emplace(highscores, HighScoreDialog::Opener::Menu, last_mode,
-                                    [&](SoundId id) { assets.play_sound(id); });
+            menu_highscores.emplace(
+                HighScoreDialog::from_menu(highscores, [&](SoundId id) { assets.play_sound(id); }));
         else if (name == "BUTTON_TROPHY" && players.current()) {
             pending_trophies = true;
             game_fade_out = GAME_FADE_HALF_MS;
@@ -2649,6 +2823,12 @@ int main(int argc, char** argv) {
         else std::printf("menu: %s (not implemented yet)\n", name.c_str());
     };
     WelcomeFlow flow(services, seed_ticks() + 1);
+    refresh_wotd_gate = [&] {
+        // No player yet: the click opens the player select, as for every mode.
+        wotd_open = !players.current() ||
+                    tt2::wotd_button_enabled(*players.current(), wall_clock(), improvements.wotd_day);
+        flow.set_button_enabled("BUTTON_PLAY_WOD", wotd_open);
+    };
     if (asset_choice.prompt) {
 #ifdef __ANDROID__
         open_android_import(true);
@@ -2678,6 +2858,8 @@ int main(int argc, char** argv) {
         gs.wrap_text = wrap_message;
         gs.settings = settings_host;
         gs.on_exit = [&] { pending_exit = true; game_fade_out = GAME_FADE_HALF_MS; };
+        gs.now = wall_clock;                    // the same clock as the menu gate (D-3)
+        gs.wotd_rule = improvements.wotd_day;   // IMPROVEMENTS -> WORD OF THE DAY (UX-12)
         const std::string player = players.current()->name;
         const std::string mode = mode_name(pending_mode);
         gs.save_game = [&store, player, mode, &save_dir](const tt2::SavedGame& g) {
@@ -2689,19 +2871,58 @@ int main(int argc, char** argv) {
         gs.discard_save = [&store, player, mode, &save_dir] {
             if (!save_dir.empty()) store.remove_saved_game(player, mode);
         };
-        if (pending_mode == tt2::GameMode::Blitz) {
-            // 0x415a70: MUSIC_in-game_1 (at 0.7; the port has no per-stream gain).
-            blitz = std::make_unique<BlitzScene>(common_tree, full_tree, *players.current(), &highscores, gs,
-                                                 static_cast<std::int64_t>(seed_ticks()), pending_resume.get());
-            std::string racks;
-            for (const auto& w : blitz->words()) racks += (racks.empty() ? "" : " ") + w.answer;
-            std::printf("game: lightning round %d, words %s\n", blitz->round_number(), racks.c_str());
-        } else {
-            const bool timed = pending_mode == tt2::GameMode::Timed;
-            game = std::make_unique<GameScene>(common_tree, full_tree, *players.current(), &highscores, timed,
-                                               gs, static_cast<std::int64_t>(seed_ticks()), pending_resume.get());
-            std::printf("game: %s, rack %s, %zu slots\n", timed ? "timed" : "untimed", game->rack().c_str(),
-                        game->slots().size());
+        // Error handling (design wotd-crossword.md): a scene that cannot start
+        // (tt2::NoRackError: no Word of the Day rack in the dictionary;
+        // std::invalid_argument: a mode GameScene does not play) would escape
+        // the frame loop. The details go to stderr; the player gets one generic
+        // message on the menu and stays there.
+        try {
+            if (pending_mode == tt2::GameMode::Blitz) {
+                // 0x415a70: MUSIC_in-game_1 (at 0.7; the port has no per-stream gain).
+                // Every scene deals its racks from the process-wide CRT (D-11, 0x43c370).
+                blitz = std::make_unique<BlitzScene>(common_tree, full_tree, *players.current(), &highscores, gs,
+                                                     static_cast<std::int64_t>(seed_ticks()), crt_random,
+                                                     pending_resume.get());
+                std::string racks;
+                for (const auto& w : blitz->words()) racks += (racks.empty() ? "" : " ") + w.answer;
+                std::printf("game: lightning round %d, words %s\n", blitz->round_number(), racks.c_str());
+            } else if (pending_mode == tt2::GameMode::Crossword) {
+                // 0x41ef40: MUSIC_in-game_1 at 0.7, as Lightning. The scene
+                // borrows the process-wide CRT generator (D-11).
+                crossword = std::make_unique<CrosswordScene>(common_tree, full_tree, *players.current(), &highscores,
+                                                             gs, static_cast<std::int64_t>(seed_ticks()), crt_random,
+                                                             pending_resume.get());
+                crossword->set_zoom_in_flag(crossword_zoom_in);   // before the opening select reads it
+                if (crossword->resume_failed()) {
+                    std::fprintf(stderr, "warning: saved crossword game for %s could not be restored; starting again\n",
+                                 players.current()->name.c_str());
+                    pending_resume.reset();   // the save stays on disk; this is a new game
+                }
+                std::string words;
+                for (const auto& p : crossword->round().placements()) words += (words.empty() ? "" : " ") + p.word;
+                std::printf("game: crossword round %d, root %s, %zu words: %s\n", crossword->round_number(),
+                            crossword->round().root().c_str(), crossword->round().placements().size(), words.c_str());
+                // Its art decodes on the workers (boot_preload.hpp); the
+                // first frame takes what it needs at once.
+                assets.preload(tt2ui::PRELOAD_CROSSWORD, tt2ui::preload_scene_art(crossword->art()));
+            } else {
+                game = std::make_unique<GameScene>(common_tree, full_tree, *players.current(), &highscores,
+                                                   pending_mode, gs, static_cast<std::int64_t>(seed_ticks()),
+                                                   crt_random, pending_resume.get());
+                std::printf("game: %s, rack %s, %zu slots\n", tt2::mode_key(pending_mode), game->rack().c_str(),
+                            game->slots().size());
+            }
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "game: %s could not start: %s\n", tt2::mode_key(pending_mode), e.what());
+            game.reset();
+            blitz.reset();
+            crossword.reset();
+            pending_resume.reset();
+            menu_dialog = build_yes_no(game_strings::START_FAILED_HEADER, game_strings::START_FAILED_BODY, true,
+                                       wrap_message);
+            menu_dialog.kind = DialogKind::Message;
+            menu_dialog_open = true;
+            return;
         }
         if (pending_resume) std::printf("game: resumed round %d\n", pending_resume->round);
         pending_resume.reset();
@@ -2780,11 +3001,13 @@ int main(int argc, char** argv) {
                 pick(profile.dialog().buttons, TooltipSurface::PlayerSelect, "players");
             return;
         }
-        if (game || blitz) {
+        if (in_play()) {
             with_play([&](auto& g) {
                 if (const SettingsDialog* sd = g.settings_dialog()) { pick_settings(*sd, "game-settings"); return; }
                 switch (g.dialog_kind()) {
-                    case GameDialog::None: pick(g.buttons(), TooltipSurface::Game, "game"); break;
+                    case GameDialog::None:
+                        pick(g.buttons(), crossword ? TooltipSurface::Crossword : TooltipSurface::Game, "game");
+                        break;
                     case GameDialog::PauseMenu: pick(g.dialog().buttons, TooltipSurface::PauseMenu, "pause"); break;
                     case GameDialog::Tutorial:
                     case GameDialog::NextRound:
@@ -2796,7 +3019,7 @@ int main(int argc, char** argv) {
             });
             return;
         }
-        if (menu_dialog_open || menu_improvements || menu_help || menu_highscores) return;
+        if (menu_dialog_open || menu_quit.open() || menu_improvements || menu_help || menu_highscores) return;
         if (menu_settings) { pick_settings(*menu_settings, "settings"); return; }
         if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             pick(flow.selection()->buttons(), TooltipSurface::Selection, "menu");
@@ -2921,7 +3144,7 @@ int main(int argc, char** argv) {
                     profile.mouse_up(e.button.x, e.button.y);
                 continue;
             }
-            if (game || blitz) {
+            if (in_play()) {
                 with_play([&](auto& g) {
                     if (e.type == SDL_EVENT_KEY_DOWN) {
                         if (const char c = letter_for_key(e.key.key, (e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT |
@@ -2955,6 +3178,18 @@ int main(int argc, char** argv) {
                         default: break;
                     }
                 }
+                // 0x41f120 (crossword.md §3.6): Tab and Right NEXT, Left PREV,
+                // Up and Down ZOOM (INFERRED key codes 0x14..0x17).
+                if (crossword && e.type == SDL_EVENT_KEY_DOWN) {
+                    switch (e.key.key) {
+                        case SDLK_TAB:
+                        case SDLK_RIGHT: crossword->key_word(true); break;
+                        case SDLK_LEFT: crossword->key_word(false); break;
+                        case SDLK_UP:
+                        case SDLK_DOWN: crossword->key_zoom(); break;
+                        default: break;
+                    }
+                }
                 continue;
             }
             if (trophy_room) {
@@ -2977,6 +3212,20 @@ int main(int argc, char** argv) {
                     dialog_mouse_down(menu_dialog, e.button.x, e.button.y);
                 if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
                     menu_dialog_press(dialog_mouse_up(menu_dialog, e.button.x, e.button.y));
+                continue;
+            }
+            if (menu_quit.open()) {
+                // Deviation: Return is YES, Esc is NO (the original dialog takes no keys).
+                if (e.type == SDL_EVENT_KEY_DOWN) {
+                    const auto k = e.key.key;
+                    if (k == SDLK_RETURN || k == SDLK_KP_ENTER) menu_quit_result(menu_quit.key_return());
+                    else if (k == SDLK_ESCAPE) menu_quit_result(menu_quit.key_escape());
+                }
+                if (e.type == SDL_EVENT_MOUSE_MOTION) menu_quit.mouse_move(e.motion.x, e.motion.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
+                    menu_quit.mouse_down(e.button.x, e.button.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
+                    menu_quit_result(menu_quit.mouse_up(e.button.x, e.button.y));
                 continue;
             }
             if (menu_settings) {
@@ -3030,15 +3279,9 @@ int main(int argc, char** argv) {
                     menu_help_press(dialog_mouse_up(menu_help->dialog(), e.button.x, e.button.y));
                 continue;
             }
-            if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) {
-#ifdef __ANDROID__
-                // Back on the menu: put the app in the background (SDL calls
-                // moveTaskToBack) instead of quitting, as Android apps do.
-                SDL_MinimizeWindow(win);
-#else
-                running = false;
-#endif
-            }
+            // Desktop: leave fullscreen, like the exe (help-and-settings.md §3.4).
+            // Android: Back puts the app in the background.
+            if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) menu_escape_key();
             if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0) {
                 auto* menu = flow.selection();
                 if (e.type == SDL_EVENT_MOUSE_MOTION) menu->mouse_move(e.motion.x, e.motion.y, hit);
@@ -3055,11 +3298,12 @@ int main(int argc, char** argv) {
         if (import_prompt) hot = dialog_pointer_hot(import_prompt->dialog());
         else if (profile.open()) hot = profile.pointer_over_clickable();
         else if (menu_dialog_open) hot = dialog_pointer_hot(menu_dialog);
+        else if (menu_quit.open()) hot = menu_quit.pointer_hot();
         else if (menu_help) hot = dialog_pointer_hot(menu_help->dialog());
         else if (menu_highscores) hot = dialog_pointer_hot(menu_highscores->dialog());
         else if (menu_settings) hot = menu_settings->pointer_hot();
         else if (menu_improvements) hot = menu_improvements->pointer_hot();
-        else if (game || blitz) with_play([&](auto& g) { hot = g.pointer_over_clickable(); });
+        else if (in_play()) with_play([&](auto& g) { hot = g.pointer_over_clickable(); });
         else if (trophy_room) hot = trophy_room->pointer_over_clickable();
         else if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             hot = flow.selection()->pointer_over_clickable();
@@ -3098,6 +3342,7 @@ int main(int argc, char** argv) {
                 else if (pending_trophy_exit) {
                     pending_trophy_exit = false;
                     trophy_room.reset();
+                    refresh_wotd_gate();   // a menu entry (0x42f1a0)
                     assets.play_stream(SoundId::MusicMenu);
                     std::printf("t=%ld ms: back to the menu\n", simulated_ms);
                 }
@@ -3105,6 +3350,9 @@ int main(int argc, char** argv) {
                     pending_exit = false;
                     game.reset();
                     blitz.reset();
+                    if (crossword) crossword_zoom_in = crossword->zoom_in_flag();
+                    crossword.reset();
+                    refresh_wotd_gate();   // a menu entry: a finished WOTD game closes the gate
                     assets.play_stream(SoundId::MusicMenu);
                     std::printf("t=%ld ms: back to the menu\n", simulated_ms);
                 }
@@ -3137,6 +3385,19 @@ int main(int argc, char** argv) {
                 menu_dialog_press(c == '|' ? "BUTTON_YES" : "BUTTON_NO");
             }
         }
+        // --type answers the main menu's QUIT confirm: '|' YES, '~' NO; '.' clicks QUIT
+        // again, which 0x40ec20's guard refuses (no second confirm).
+        if (menu_quit.open() && !auto_type.empty() &&
+            (auto_type.front() == '|' || auto_type.front() == '~' || auto_type.front() == '.')) {
+            auto_type_ms += dt;
+            if (auto_type_ms >= 300) {
+                auto_type_ms = 0;
+                const char c = auto_type.front();
+                auto_type.erase(0, 1);
+                if (c == '.') services.menu_action("BUTTON_QUIT");
+                else menu_quit_result(c == '|' ? menu_quit.key_return() : menu_quit.key_escape());
+            }
+        }
         // --type with a player dialog up: '-' REMOVE, '|' Return, '~' Esc.
         if (profile.open() && !auto_type.empty() && flow.current() == SceneId::Selection) {
             auto_type_ms += dt;
@@ -3149,13 +3410,15 @@ int main(int argc, char** argv) {
                 else if (c == '~') profile.key_escape();
             }
         }
-        // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL;
+        // --type on the main menu (no --play): '?' HOW TO PLAY, '<' / '>' turn, '~' OK / CANCEL
+        // (Esc with no dialog open);
         // '"' CHANGE NAME (player select);
         // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter;
         // '=' IMPROVEMENTS, then '<' / '>' its display mode, '(' / ')' its resolution, '[' / ']' its filter,
-        // '*' its upscaler, '{' its renderer, '|' OK (then OK on "Restart needed"), '~' CANCEL.
-        if (!game && !blitz && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
-            flow.current() == SceneId::Selection && game_fade_out == 0) {
+        // '*' its upscaler, '{' its renderer, '%' its WORD OF THE DAY, '|' OK (then OK on "Restart needed"),
+        // '~' CANCEL; '.' QUIT.
+        if (!in_play() && auto_play.empty() && !import_prompt && !menu_dialog_open && !menu_quit.open() && !profile.open() &&
+            !auto_type.empty() && flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
             if (auto_type_ms >= 300) {
                 auto_type_ms = 0;
@@ -3173,6 +3436,7 @@ int main(int argc, char** argv) {
                     menu_improvements->press(c == '[' ? "BUTTON_FILTER_PREV" : "BUTTON_FILTER_NEXT");
                 else if (menu_improvements && c == '*') menu_improvements->press("BUTTON_UPSCALER_NEXT");
                 else if (menu_improvements && c == '{') menu_improvements->press("BUTTON_RENDERER_NEXT");
+                else if (menu_improvements && c == '%') menu_improvements->press("BUTTON_WOTD_DAY_NEXT");
                 else if (menu_improvements && c == '|') menu_improvements_result(menu_improvements->press("BUTTON_OK"));
                 else if (menu_improvements && c == '~')
                     menu_improvements_result(menu_improvements->press("BUTTON_CANCEL"));
@@ -3184,6 +3448,8 @@ int main(int argc, char** argv) {
                 else if (c == '$') services.menu_action("BUTTON_HIGHSCORES");
                 else if (c == '#') services.menu_action("BUTTON_SETTINGS");
                 else if (c == '=') services.menu_action("BUTTON_IMPROVEMENTS");
+                else if (c == '.' && !menu_improvements && !menu_settings && !menu_help && !menu_highscores)
+                    services.menu_action("BUTTON_QUIT");
                 else if (c == '^') toggle_fullscreen();
                 else if (menu_settings && c == '~') menu_settings_result(menu_settings->press("BUTTON_CANCEL"));
                 else if (menu_settings && c == '|') menu_settings_result(menu_settings->press("BUTTON_OK"));
@@ -3196,11 +3462,12 @@ int main(int argc, char** argv) {
                 else if (menu_settings && c == '>') menu_settings->press("BUTTON_NEXT");
                 else if (c == '<') menu_help_press("BUTTON_PREV");
                 else if (c == '>') menu_help_press("BUTTON_NEXT");
-                else if (c == '~') menu_help_press("BUTTON_OK");
+                else if (c == '~' && menu_help) menu_help_press("BUTTON_OK");
+                else if (c == '~') menu_escape_key();
             }
         }
         if (trophy_room) trophy_room->update(dt);
-        if (game || blitz) {
+        if (in_play()) {
             with_play([&](auto& g) { g.update(dt); });
             // --type: one key every 300 ms while a round is being played.
             auto_type_ms += dt;
@@ -3210,6 +3477,9 @@ int main(int argc, char** argv) {
                 auto_type.erase(0, 1);
                 // Lightning: '[' / ']' the previous / next word (Up / Tab).
                 if (blitz && (c == '[' || c == ']')) { blitz->key_word(c == ']'); continue; }
+                // Crossword: '[' / ']' PREV / NEXT (Left / Tab), '/' ZOOM (Up).
+                if (crossword && (c == '[' || c == ']')) { crossword->key_word(c == ']'); continue; }
+                if (crossword && c == '/') { crossword->key_zoom(); continue; }
                 with_play([&](auto& g) {
                     if (c == '\n' || c == '|') g.key_return();
                     else if (c == ' ') g.key_space();
@@ -3260,6 +3530,7 @@ int main(int argc, char** argv) {
             }
         }
         if (menu_dialog_open) dialog_tick(menu_dialog, dt);
+        menu_quit.tick(dt);
         if (menu_help) menu_help->tick(dt);
         if (menu_highscores) menu_highscores->tick(dt);
         if (menu_settings) menu_settings->tick(dt);
@@ -3294,6 +3565,8 @@ int main(int argc, char** argv) {
             draw_game(ren, assets, *game);
         } else if (blitz) {
             draw_blitz(ren, assets, *blitz);
+        } else if (crossword) {
+            draw_crossword(ren, assets, *crossword);
         } else if (trophy_room) {
             draw_trophy_room(ren, assets, *trophy_room);
         } else if (!boot_prompt_open()) {   // black behind the boot prompt
@@ -3348,6 +3621,8 @@ int main(int argc, char** argv) {
                           [&] { draw_dialog(ren, assets, *game_credits); });
         draw_dialog_layer(ren, layer_px, menu_layer, menu_dialog_open ? 1 + static_cast<int>(menu_dialog.kind) : 0, dt,
                           [&] { draw_dialog(ren, assets, menu_dialog); });
+        draw_dialog_layer(ren, layer_px, menu_quit_layer, menu_quit.open() ? 1 : 0, dt,
+                          [&] { draw_dialog(ren, assets, menu_quit.dialog()); });
         draw_dialog_layer(ren, layer_px, menu_help_layer, menu_help ? 1 : 0, dt,
                           [&] { draw_help(ren, assets, menu_help->dialog()); });
         draw_dialog_layer(ren, layer_px, menu_highscores_layer, menu_highscores ? 1 : 0, dt,

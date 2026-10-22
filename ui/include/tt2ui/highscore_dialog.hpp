@@ -4,9 +4,10 @@
 //   - Two openers: the main menu's HIGH SCORES (0x42f0d0, flag +0x1dc = 1:
 //     OK shows, MAIN MENU is hidden) and DIALOG_CONGRATS' OK (0x428540,
 //     flag 0: MAIN MENU shows, OK is hidden). Both sit at (302, 409).
-//   - Show 0x4063f0 picks the tab of the game mode last chosen (global
-//     0x5fdea8, Timed at launch), checks its switch, sets TAB_PAGE01's
-//     frame and fills the table (0x4068d0).
+//   - Show 0x4063f0 picks the tab of the game-mode global 0x5fdea8
+//     (@0x406424), checks its switch, sets TAB_PAGE01's frame and fills
+//     the table (0x4068d0). So the game's copy opens on the mode being
+//     played and the menu's copy on TIMED (from_menu below).
 //   - 0x4068d0: ten rows from the "panel" template at (216, 107), each one
 //     30 px under the last (INFERRED: the panel height); name, score
 //     ("%d", no separators) and the stored extra (round, or the date for
@@ -76,6 +77,22 @@ public:
         : scores_(scores), opener_(opener), play_sound_(std::move(play_sound)) {
         build();
         select(mode);
+    }
+
+    // The main menu's copy (0x42f0d0) opens on TIMED, whatever was played
+    // last. CONFIRMED by a file read of TextTwist2.exe, which has seven
+    // writes to 0x5fdea8 and no others: the menu ctor stores 0 = Timed
+    // (@0x42d1b9), the menu's enter 0x42d9b0 stores 0 on every path through
+    // it (@0x42dc27), and each mode button stores its mode on the click, then
+    // switches to "gamescene" (BUTTON_PLAY_WOD 0x42e830: 4 @0x42e866;
+    // BUTTON_CRISSCROSS 0x42eba0: 3 @0x42ebdd; the rest in profiles.md §4.4).
+    // So the global is 0 whenever the menu's HIGH SCORES can be clicked, and
+    // it holds the mode being played until then: the game's copy (Opener::
+    // Game, after DIALOG_CONGRATS) gets that mode from its scene. INFERRED
+    // only: the framework runs the enter on each return to the menu (a
+    // re-created menu would get 0 from the ctor all the same).
+    static HighScoreDialog from_menu(tt2::HighScoreManager& scores, std::function<void(SoundId)> play_sound = {}) {
+        return HighScoreDialog(scores, Opener::Menu, tt2::GameMode::Timed, std::move(play_sound));
     }
 
     const Dialog& dialog() const { return dialog_; }

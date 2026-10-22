@@ -49,7 +49,7 @@ class ZipImporter(
         const val IMPORT_STAMP_FILE = "import-stamp.txt"   // tt2ui::IMPORT_STAMP_FILE
         const val ERROR_PATHS = 5                          // tt2ui::IMPORT_ERROR_PATHS
 
-        // The real install is 323 files, 19.3 MB, the largest 1.9 MB. The
+        // The real install is 329 files, 20.0 MB, the largest 1.9 MB. The
         // caps leave room for other versions and stop a ZIP bomb early.
         const val MAX_ENTRY_BYTES = 16L shl 20
         const val MAX_TOTAL_BYTES = 256L shl 20

@@ -1,6 +1,7 @@
 // IMPROVEMENTS, headless: the port's own display options
 // (docs/design/improve-ui-ux.md), plus ASK TO RESUME (the "Continue the
-// game?" prompt; Off is the original's silent resume). Nothing here exists in the original
+// game?" prompt; Off is the original's silent resume) and WORD OF THE DAY
+// (which day the mode uses, UX-12). Nothing here exists in the original
 // game; the dialog is deviation UX-2, its file improvements.txt UX-4.
 //
 // It reuses the DIALOG_SETTINGS building blocks (Dialog, MenuButton,
@@ -55,13 +56,16 @@ inline constexpr const char* PIXEL_ART = "Pixel art";
 inline constexpr const char* UPSCALER = "UPSCALER";
 inline constexpr const char* SUPER_XBR = "Super-xBR";
 inline constexpr const char* RESUME_PROMPT = "ASK TO RESUME";
+inline constexpr const char* WOTD_DAY = "DAILY WORD CLOCK";
+inline constexpr const char* WOTD_ORIGINAL = "Original";
+inline constexpr const char* WOTD_LOCAL = "Local time";
 }  // namespace improvements_strings
 
 // Layout, dialog-local. Rows start under the header; OK / CANCEL sit 83 px
 // above the bottom edge like SETTINGS (y 357 of 440).
 constexpr int IMPROVEMENTS_W = 520;
 constexpr float IMPROVEMENTS_ROWS_TOP = 96.0f;
-constexpr int IMPROVEMENTS_ROW_H = 42;   // 9 rows fit in 600 px (578)
+constexpr int IMPROVEMENTS_ROW_H = 38;   // 10 rows fit in 600 px (580); the 36 px arrows keep a 2 px gap
 constexpr int IMPROVEMENTS_FOOTER_H = 104;   // the gap, the buttons and the frame's bottom edge
 constexpr int IMPROVEMENTS_ARROW = 36;       // button_arrow_*.png: 36x36 frames, 4 rows
 constexpr float IMPROVEMENTS_LABEL_X = 45.0f;
@@ -196,6 +200,13 @@ private:
     Dialog& top() { return notice_ ? *notice_ : dialog_; }
 
     void build() {
+        // Game rows first, then the graphics rows.
+        rows_.push_back(Row{"RESUME_PROMPT", improvements_strings::RESUME_PROMPT,
+                            {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}});
+        // Deviation (UX-12): Original copies the exe's day clocks, Local time
+        // uses the local calendar day (tt2/wotd_day.hpp). Every platform.
+        rows_.push_back(Row{"WOTD_DAY", improvements_strings::WOTD_DAY,
+                            {improvements_strings::WOTD_ORIGINAL, improvements_strings::WOTD_LOCAL}, 0, true, {}});
         if (window_modes_offered(context_.platform)) {   // always full screen on Android (display.hpp)
             rows_.push_back(Row{"WINDOW", improvements_strings::WINDOW,
                                 {improvements_strings::WINDOWED, improvements_strings::BORDERLESS,
@@ -222,8 +233,6 @@ private:
             limits.push_back(fps == 0 ? std::string(improvements_strings::UNLIMITED)
                                       : std::to_string(fps) + improvements_strings::FPS);
         rows_.push_back(Row{"FRAME_LIMIT", improvements_strings::FRAME_LIMIT, std::move(limits), 0, true, {}});
-        rows_.push_back(Row{"RESUME_PROMPT", improvements_strings::RESUME_PROMPT,
-                            {improvements_strings::ON, improvements_strings::OFF}, 0, true, {}});
         Dialog d;
         d.w = IMPROVEMENTS_W;
         d.h = improvements_dialog_height(static_cast<int>(rows_.size()));
@@ -291,6 +300,7 @@ private:
             if (r.id == "VSYNC") r.index = values_.vsync ? 0 : 1;
             if (r.id == "WIDESCREEN_FILL") r.index = values_.widescreen_fill ? 0 : 1;
             if (r.id == "RESUME_PROMPT") r.index = values_.resume_prompt ? 0 : 1;
+            if (r.id == "WOTD_DAY") r.index = values_.wotd_day == tt2::WotdDayRule::Local ? 1 : 0;
             if (r.id == "UPSCALER") {
                 r.enabled = context_.active != Backend::Software;   // off there (render_options.hpp)
                 r.index = r.enabled && values_.upscaler ? 1 : 0;
@@ -344,6 +354,7 @@ private:
         if (r.id == "VSYNC") values_.vsync = r.index == 0;
         if (r.id == "WIDESCREEN_FILL") values_.widescreen_fill = r.index == 0;
         if (r.id == "RESUME_PROMPT") values_.resume_prompt = r.index == 0;
+        if (r.id == "WOTD_DAY") values_.wotd_day = r.index == 1 ? tt2::WotdDayRule::Local : tt2::WotdDayRule::Original;
         if (r.id == "FILTER") values_.filter = kFilterOrder[r.index];
         if (r.id == "UPSCALER") values_.upscaler = r.index == 1;
         if (r.id == "FRAME_LIMIT") values_.frame_limit = tt2::FRAME_LIMITS[r.index];

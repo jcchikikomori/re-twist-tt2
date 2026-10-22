@@ -1,4 +1,5 @@
-# Unit tests on every push to main and every pull request.
+# Unit tests on every push to main, feature/** and hotfix/**, and every pull
+# request.
 #
 # - Linux: GCC with warnings as errors, plus an AddressSanitizer /
 #   UndefinedBehaviorSanitizer run of the tests (the engine stores
@@ -13,7 +14,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/**", "hotfix/**"]
   pull_request:
   workflow_dispatch:
 

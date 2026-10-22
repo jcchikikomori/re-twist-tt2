@@ -49,9 +49,9 @@ The pre-order walk enumerates the words in alphabetical order; the count of
 For Text Twist 2:
 
 | File | Words | Length range | Role |
-|---|---:|---|---|
+| --- | ---: | --- | --- |
 | `data/TextTwist2Words.tree` | 25,004 | 3–15 | **common** — supplies the rack/root word and the on-screen word slots. Rack candidates are 5–8 letters; the board shows 3–8 letter sub-anagrams of the rack. |
-| `data/DamBeaversWords.tree` | 116,757 | 2–16 | **full** — used **only to validate guesses**. A word that is in the full list but not in the common list is accepted as an "uncommon" word (Human Dictionary trophy). |
+| `data/DamBeaversWords.tree` | 116,757 | 2–16 | **full** — used **only to validate guesses**. A word that is in the full list but not on the board (not common, or common but cut by the slot quota or the WOTD cap) is accepted as an "uncommon" word (Human Dictionary trophy; game-scene.md §8.3). |
 
 The two files are linked: `TextTwist2Words` is a strict subset of
 `DamBeaversWords`. Round-tripping either file through the canonical encoder
@@ -158,8 +158,10 @@ If the count exceeds 48, each length bucket gets the quota
 alphabetical for a canonical trie.
 
 The full DamBeavers list is the **guess validator**; a guess that is in
-DamBeavers but not in TextTwist2Words is accepted as an "uncommon" word
-(Human Dictionary trophy). Two-letter DamBeavers words validate but have
+DamBeavers but not one of the board's words is accepted as an "uncommon"
+word (Human Dictionary trophy). That covers a common word the 48-slot
+quota or the WOTD cap left off the board (0x432850 / 0x432330,
+game-scene.md §8.3). Two-letter DamBeavers words validate but have
 no slot to land in, so they score nothing.
 
 ### 5.3 Scoring (CONFIRMED at 0x4247fe)
@@ -210,7 +212,8 @@ are shared with Classic, but the rules differ:
 ## 7. Crossword mode
 
 `CrisscrossScene` builds a single crossword grid per round and the player
-fills it in.
+fills it in. The full trace (layout, input, zoom, save, trophies) is in
+[crossword.md](crossword.md).
 
 - Grid: **18 × 11** cells, each cell 8 bytes (`int letter; byte blocked`),
   stride 11. The blocked cells come from standard crossword "no-touch"
@@ -226,7 +229,11 @@ fills it in.
 - Placement: pick a random already-placed word, list every letter-pair
   match, shuffle, place perpendicular at the first pair that passes the
   fit check. Up to **10 000 attempts** per new word.
-- Guesses validate against the full DamBeavers list.
+- A guess fills **only the selected slot**. A row of another length than
+  the slot is ignored; otherwise the word must be a sub-anagram of the
+  root in the full DamBeavers list, and not a word already in the grid.
+  Any such word fills the slot, even when it is not the builder's answer
+  ([crossword.md](crossword.md) §3.5).
 - Scoring: each newly filled word `+10 * len²` once. Completing the puzzle
   adds `+1000`.
 
@@ -238,25 +245,33 @@ Reuses the same `TextTwist2Scene` class with a different bag:
 seed   = 1337;                                  // fixed, 0x539
 dayIdx = (time(NULL) / 86400) - 14125;          // days since 2008-09-03
 shuffled = shuffle(commonPool5to8, seed);
-word = shuffled[dayIdx % poolSize];             // first entry with ≥15 sub-anagrams
+word = shuffled[dayIdx];   // no modulo, no bounds check, no 15-sub-anagram test (game-scene.md §8.2)
 ```
 
-After picking, `+0x18c` caps the board at **5 slots per length** (3..8).
+After picking, `0x4262b0` keeps the first **5 common sub-anagrams per length** (3..8), before the
+48-slot quota. Rules, round end and day numbers: `game-scene.md` §8.
 
 ## 9. Persistence
 
 Three places store state:
 
-1. **HKCU\Software\...\Text Twist 2\\** — current player, settings, high
-   scores. The strings in the binary are the exact subkey names:
-   `currentplayer`, `highscoremanager`, `playermanager`,
-   `highscoretables`.
+1. **Registry and save files** — only the settings are in the registry
+   (`HKCU\Software\GameHouse\<game id>`, read at `0x466f70`). Players and
+   high scores are GF2 property files in the app-data save folder: one
+   index file plus one file per player, and one file that holds every high-score
+   table. The binary's `currentplayer`, `highscoremanager`,
+   `playermanager` and `highscoretables` strings belong to those managers.
+   Details: [profiles.md](profiles.md) §0.1.
 2. **Bag state** — saved with the player profile as `seed` and `index`.
    This is the cross-session continuity that lets a player resume exactly
    where they were.
-3. **Trophies** — flags stored in the same registry, one bit per trophy
-   (Speed Speller, Human Dictionary, Word of the Day streak, etc.).
-   The image names `trophy01.png` through `trophy17.png` enumerate them.
+3. **Trophies** — **24** slots in the player profile, `player+0x40 + 4·i`
+   for i = 0..23 in `TEXT_TROPHY_DESCRIPTIONS` order (Quick Draw …
+   Human Dictionary). Each slot is tri-state: 0 = not won, 1 = won but
+   not yet seen in the trophy room, 2 = won and revealed. None of them
+   is a Word of the Day trophy. The trophy room shows them as
+   `TROPHY_0..23` with images `IMAGE_TROPHY1..24`. Rules and the full
+   list: [trophies.md](trophies.md) §0, §2, §3.
 
 ## 10. What the reconstruction has to preserve
 

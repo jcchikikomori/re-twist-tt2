@@ -42,6 +42,25 @@ void put(const fs::path& file, const std::string& bytes) {
     out << bytes;
 }
 
+std::string read_file(const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+// ui/tests/import-contract/import-roots.txt, one root per line. The Kotlin
+// importer's AssetManifestTest reads the same file, so the C++ and Kotlin
+// IMPORT_ROOTS can't drift apart. A blank line is kept (and fails), like
+// Kotlin's readLines().
+std::vector<std::string> shared_import_roots() {
+    std::ifstream in(fs::path(TT2_IMPORT_CONTRACT_DIR) / "import-roots.txt", std::ios::binary);
+    std::vector<std::string> roots;
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        roots.push_back(line);
+    }
+    return roots;
+}
+
 // A fake install made of synthetic bytes, plus files that must never be
 // opened: DRM / licensing files at the root and inside images/gui.
 fs::path fake_install(const char* tag) {
@@ -71,14 +90,32 @@ bool rejects(const std::string& text) {
 }
 }  // namespace
 
-TEST(manifest_roots_match_the_import_script) {
+TEST(manifest_roots_match_the_shared_list) {
     const std::vector<std::string> roots(std::begin(IMPORT_ROOTS), std::end(IMPORT_ROOTS));
-    const std::vector<std::string> script = {"images/splash", "images/loadscene", "images/selectionscene",
-                                             "images/gui",    "images/gamescene", "images/trophyscene",
-                                             "images/blitzscene", "fonts",        "music",
-                                             "sound"};
-    ASSERT_TRUE(roots == script);
+    const std::vector<std::string> shared = shared_import_roots();
+    ASSERT_EQ(shared.size(), std::size_t{11});   // the import script's 10 folders, plus images/crosswordscene
+    ASSERT_TRUE(roots == shared);                // same folders, same order
     ASSERT_EQ(std::string(INSTALL_PROBE), std::string("properties/resources.xml"));
+}
+
+TEST(manifest_accepts_an_entry_under_every_shared_root) {
+    const std::vector<std::string> shared = shared_import_roots();
+    ASSERT_EQ(shared.size(), std::size_t{11});
+    for (const std::string& root : shared) {
+        AssetManifest m;
+        ASSERT_TRUE(AssetManifest::parse(HEAD + HASH_A + "  " + root + "/a.png\n", m));
+        ASSERT_EQ(m.entries.size(), std::size_t{1});
+        ASSERT_EQ(m.entries[0].path, root + "/a.png");
+    }
+}
+
+TEST(manifest_rejects_an_entry_under_an_unknown_root) {
+    // Near misses of the Crossword scene's folder: only images/crosswordscene/ itself is a root.
+    ASSERT_TRUE(!rejects(HEAD + HASH_A + "  images/crosswordscene/background.png\n"));
+    for (const char* p : {"images/crosswordscene", "images/crosswordscenes/background.png",
+                          "images/crossword/background.png", "crosswordscene/background.png",
+                          "images/creditsscene/background.png"})
+        ASSERT_TRUE(rejects(HEAD + HASH_A + "  " + p + "\n"));
 }
 
 TEST(manifest_serialize_is_sha256sum_format) {
@@ -301,4 +338,19 @@ TEST(shipped_manifest_parses_sorted_and_covers_the_roots) {
         ASSERT_TRUE(found);
     }
     ASSERT_EQ(m.serialize(), text);   // byte-for-byte what tt2-assets prints
+}
+
+TEST(shipped_manifest_lists_the_crossword_scene_art) {
+    AssetManifest m;
+    ASSERT_TRUE(AssetManifest::parse(read_file(fs::path(TT2_SOURCE_DATA_DIR) / "original-assets.sha256"), m));
+    ASSERT_EQ(m.entries.size(), std::size_t{329});   // 323 before the Crossword scene, plus its 6 files
+    const std::string folder = "images/crosswordscene/";
+    std::vector<std::string> crossword;
+    for (const auto& e : m.entries)
+        if (e.path.compare(0, folder.size(), folder) == 0) crossword.push_back(e.path);
+    const std::vector<std::string> want = {
+        "images/crosswordscene/background.png", "images/crosswordscene/btn_arrow_next.png",
+        "images/crosswordscene/btn_arrow_prev.png", "images/crosswordscene/letterBar.png",
+        "images/crosswordscene/letterBox.png", "images/crosswordscene/overlay.png"};
+    ASSERT_TRUE(crossword == want);
 }

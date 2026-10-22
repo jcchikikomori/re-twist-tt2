@@ -126,10 +126,12 @@ TEST(improvements_dialog_sync_window_survives_cancel) {
 }
 
 TEST(improvements_dialog_fits_the_screen_with_every_planned_row) {
-    // Later phases add rows (resolution, renderer, frame rate, ...): at
-    // least 9 of them must fit inside 800x600; a 10th would not.
-    ASSERT_TRUE(improvements_dialog_height(9) <= SCREEN_H);
-    ASSERT_EQ(improvements_dialog_height(9), 578);                      // 96 + 9 * 42 + 104
+    // 10 desktop rows (WORD OF THE DAY is the 10th, UX-12) fit inside
+    // 800x600 at 38 px a row; an 11th would not.
+    ASSERT_TRUE(improvements_dialog_height(10) <= SCREEN_H);
+    ASSERT_EQ(improvements_dialog_height(10), 580);                     // 96 + 10 * 38 + 104
+    ASSERT_EQ(improvements_dialog_height(8), 504);                      // Android: 96 + 8 * 38 + 104
+    ASSERT_TRUE(improvements_dialog_height(11) > SCREEN_H);             // 618
     Rig r;
     const ImprovementsDialog d(windowed(), r.services());
     ASSERT_TRUE(d.dialog().w <= SCREEN_W && d.dialog().h <= SCREEN_H);
@@ -515,6 +517,14 @@ ImprovementsDialog::Context on(Backend b) {
     c.active = b;
     return c;
 }
+// Android (T1.4, docs/plans/android-support.md): always full screen, so no
+// DISPLAY MODE or RESOLUTION rows; the renderer row names OpenGL ES.
+ImprovementsDialog::Context on_android(Backend active) {
+    ImprovementsDialog::Context c;
+    c.active = active;
+    c.platform = Platform::Android;
+    return c;
+}
 }  // namespace
 
 TEST(improvements_filter_row_cycles_on_a_gpu) {
@@ -545,11 +555,32 @@ TEST(improvements_filter_row_is_greyed_out_on_software) {
     ASSERT_TRUE(d.values().filter == tt2::TextureFilter::Smooth);      // kept, not overwritten
 }
 
-TEST(improvements_dialog_fits_with_nine_rows) {
+TEST(improvements_dialog_fits_with_ten_rows) {
     Rig r;
     const ImprovementsDialog d(windowed(), r.services(), on(Backend::OpenGL));
-    ASSERT_EQ(d.rows().size(), std::size_t{9});
+    ASSERT_EQ(d.rows().size(), std::size_t{10});
+    ASSERT_EQ(d.dialog().h, 580);
     ASSERT_TRUE(d.dialog().h <= SCREEN_H);
+}
+
+TEST(improvements_dialog_arrows_of_neighbouring_rows_never_overlap) {
+    // Risk R10: the 36 px arrows in 38 px rows keep a 2 px gap, on desktop
+    // and on Android (a different row set).
+    ASSERT_TRUE(IMPROVEMENTS_ARROW <= IMPROVEMENTS_ROW_H);
+    Rig r;
+    for (const ImprovementsDialog::Context& c : {on(Backend::OpenGL), on_android(Backend::OpenGLES)}) {
+        const ImprovementsDialog d(windowed(), r.services(), c);
+        float last_bottom = -1.0f;
+        for (const auto& row : d.rows()) {
+            const MenuButton* prev = d.dialog().button("BUTTON_" + row.id + "_PREV");
+            const MenuButton* next = d.dialog().button("BUTTON_" + row.id + "_NEXT");
+            ASSERT_TRUE(prev != nullptr && next != nullptr);
+            ASSERT_EQ(prev->sprite.top(), next->sprite.top());           // both arrows on one line
+            ASSERT_TRUE(next->sprite.top() >= last_bottom + 2.0f);
+            last_bottom = next->sprite.top() + IMPROVEMENTS_ARROW;
+        }
+        ASSERT_TRUE(last_bottom <= d.dialog().button("BUTTON_OK")->sprite.top());   // above OK / CANCEL
+    }
 }
 
 // ---- UPSCALER (P9, deviation UX-9) -----------------------------------------
@@ -606,15 +637,9 @@ TEST(improvements_resume_prompt_row_works_on_software_and_never_needs_a_restart)
     ASSERT_TRUE(d.values().resume_prompt);
 }
 
-// Android (T1.4, docs/plans/android-support.md): always full screen, so no
-// DISPLAY MODE or RESOLUTION rows; the renderer row names OpenGL ES.
+// ---- Android (T1.4): no DISPLAY MODE or RESOLUTION rows (on_android above) --
+
 namespace {
-ImprovementsDialog::Context on_android(Backend active) {
-    ImprovementsDialog::Context c;
-    c.active = active;
-    c.platform = Platform::Android;
-    return c;
-}
 std::vector<std::string> row_ids(const ImprovementsDialog& d) {
     std::vector<std::string> ids;
     for (const auto& r : d.rows()) ids.push_back(r.id);
@@ -625,23 +650,23 @@ std::vector<std::string> row_ids(const ImprovementsDialog& d) {
 TEST(improvements_android_has_no_display_mode_or_resolution_rows) {
     Rig r;
     const ImprovementsDialog d(windowed(), r.services(), on_android(Backend::OpenGLES));
-    const std::vector<std::string> want = {"WIDESCREEN_FILL", "FILTER", "UPSCALER", "RENDERER",
-                                           "VSYNC", "FRAME_LIMIT", "RESUME_PROMPT"};
+    const std::vector<std::string> want = {"RESUME_PROMPT", "WOTD_DAY", "WIDESCREEN_FILL", "FILTER",
+                                           "UPSCALER", "RENDERER", "VSYNC", "FRAME_LIMIT"};
     ASSERT_TRUE(row_ids(d) == want);
     ASSERT_TRUE(d.row("WINDOW") == nullptr && d.row("RESOLUTION") == nullptr);
     ASSERT_TRUE(d.dialog().label("LABEL_WINDOW") == nullptr);
     ASSERT_TRUE(d.dialog().button("BUTTON_RESOLUTION_NEXT") == nullptr);
-    ASSERT_EQ(d.dialog().h, improvements_dialog_height(7));
+    ASSERT_EQ(d.dialog().h, improvements_dialog_height(8));
     ASSERT_TRUE(d.dialog().h <= SCREEN_H);
 }
 
-TEST(improvements_desktop_rows_are_unchanged) {
+TEST(improvements_desktop_rows_put_game_options_before_graphics) {
     Rig r;
     const ImprovementsDialog d(windowed(), r.services());
-    const std::vector<std::string> want = {"WINDOW", "RESOLUTION", "WIDESCREEN_FILL", "FILTER", "UPSCALER",
-                                           "RENDERER", "VSYNC", "FRAME_LIMIT", "RESUME_PROMPT"};
+    const std::vector<std::string> want = {"RESUME_PROMPT", "WOTD_DAY", "WINDOW", "RESOLUTION", "WIDESCREEN_FILL",
+                                           "FILTER", "UPSCALER", "RENDERER", "VSYNC", "FRAME_LIMIT"};
     ASSERT_TRUE(row_ids(d) == want);
-    ASSERT_EQ(d.dialog().h, improvements_dialog_height(9));
+    ASSERT_EQ(d.dialog().h, improvements_dialog_height(10));
 }
 
 TEST(improvements_android_window_buttons_do_nothing) {
@@ -670,4 +695,82 @@ TEST(improvements_android_renderer_row_names_opengl_es) {
     // Desktop keeps plain OpenGL.
     const ImprovementsDialog desk(windowed(), r.services());
     ASSERT_EQ(desk.row("RENDERER")->choices[2], std::string("OpenGL"));
+}
+
+// ---- WORD OF THE DAY (deviation UX-12, AC-W11) ------------------------------
+
+TEST(improvements_wotd_day_row_starts_on_original) {
+    Rig r;
+    const ImprovementsDialog d(windowed(), r.services(), on(Backend::OpenGL));
+    ASSERT_EQ(d.dialog().label("LABEL_WOTD_DAY")->text, std::string("DAILY WORD CLOCK"));
+    ASSERT_EQ(value(d, "WOTD_DAY"), std::string("Original"));
+    ASSERT_TRUE(d.row("WOTD_DAY")->choices == (std::vector<std::string>{"Original", "Local time"}));
+    ASSERT_TRUE(d.row("WOTD_DAY")->enabled);
+}
+
+TEST(improvements_wotd_day_row_starts_from_the_saved_value) {
+    Rig r;
+    tt2::Improvements saved = windowed();
+    saved.wotd_day = tt2::WotdDayRule::Local;
+    const ImprovementsDialog d(saved, r.services(), on(Backend::OpenGL));
+    ASSERT_EQ(value(d, "WOTD_DAY"), std::string("Local time"));
+    ASSERT_EQ(d.row("WOTD_DAY")->index, 1);
+}
+
+TEST(improvements_wotd_day_row_cycles_both_ways_and_ok_keeps) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), on(Backend::OpenGL));
+    d.press("BUTTON_WOTD_DAY_NEXT");
+    ASSERT_EQ(value(d, "WOTD_DAY"), std::string("Local time"));
+    ASSERT_TRUE(d.values().wotd_day == tt2::WotdDayRule::Local);
+    d.press("BUTTON_WOTD_DAY_NEXT");                                       // wraps round
+    ASSERT_TRUE(d.values().wotd_day == tt2::WotdDayRule::Original);
+    d.press("BUTTON_WOTD_DAY_PREV");                                       // and backwards
+    ASSERT_TRUE(d.values().wotd_day == tt2::WotdDayRule::Local);
+    ASSERT_EQ(r.sounds.size(), std::size_t{3});
+    ASSERT_TRUE(d.values().vsync && d.values().resume_prompt);           // other rows untouched
+    ASSERT_TRUE(d.press("BUTTON_OK") == ImprovementsDialog::Result::Ok);  // no "Restart needed"
+    ASSERT_TRUE(d.notice() == nullptr);
+    ASSERT_TRUE(d.values().wotd_day == tt2::WotdDayRule::Local);
+}
+
+TEST(improvements_wotd_day_row_cancel_restores_the_saved_value) {
+    Rig r;
+    tt2::Improvements saved = windowed();
+    saved.wotd_day = tt2::WotdDayRule::Local;
+    ImprovementsDialog d(saved, r.services(), on(Backend::OpenGL));
+    d.press("BUTTON_WOTD_DAY_PREV");
+    ASSERT_TRUE(d.values().wotd_day == tt2::WotdDayRule::Original);
+    ASSERT_TRUE(d.press("BUTTON_CANCEL") == ImprovementsDialog::Result::Cancel);
+    ASSERT_TRUE(d.values().wotd_day == tt2::WotdDayRule::Local);
+    ASSERT_EQ(value(d, "WOTD_DAY"), std::string("Local time"));
+}
+
+TEST(improvements_wotd_day_row_works_on_software) {
+    // Not a display option: software greys out FILTER and UPSCALER, not this.
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services());
+    ASSERT_TRUE(d.row("WOTD_DAY")->enabled);
+    ASSERT_TRUE(d.dialog().button("BUTTON_WOTD_DAY_NEXT")->enabled);
+    d.press("BUTTON_WOTD_DAY_NEXT");
+    ASSERT_TRUE(d.values().wotd_day == tt2::WotdDayRule::Local);
+}
+
+TEST(improvements_wotd_day_row_disabled_ignores_its_arrows) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), on(Backend::OpenGL));
+    d.set_row_enabled("WOTD_DAY", false);
+    ASSERT_TRUE(d.press("BUTTON_WOTD_DAY_NEXT") == ImprovementsDialog::Result::None);
+    ASSERT_TRUE(d.values().wotd_day == tt2::WotdDayRule::Original);
+    ASSERT_TRUE(r.sounds.empty());
+}
+
+TEST(improvements_wotd_day_row_on_android) {
+    Rig r;
+    ImprovementsDialog d(windowed(), r.services(), on_android(Backend::OpenGLES));
+    ASSERT_EQ(d.dialog().label("LABEL_WOTD_DAY")->text, std::string("DAILY WORD CLOCK"));
+    d.press("BUTTON_WOTD_DAY_NEXT");
+    ASSERT_EQ(value(d, "WOTD_DAY"), std::string("Local time"));
+    ASSERT_TRUE(d.press("BUTTON_OK") == ImprovementsDialog::Result::Ok);
+    ASSERT_TRUE(d.values().wotd_day == tt2::WotdDayRule::Local);
 }

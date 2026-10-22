@@ -44,6 +44,9 @@ struct Fixture {
     std::vector<std::string> urls;
     std::vector<tt2::SavedGame> saved;
     int exits = 0, discards = 0;
+    // The process-wide CRT the deal and TWIST draw from (0x43c370, D-11);
+    // it outlives the scene.
+    tt2::CrtRandom crt{1};
     std::unique_ptr<BlitzScene> scene;
 
     // Without `words` a fresh game is dealt; with them the round comes
@@ -63,7 +66,7 @@ struct Fixture {
         g.time_ms = time_ms;
         g.score = score;
         g.blitz_words = words;
-        scene = std::make_unique<BlitzScene>(com, ful, profile, &hs, s, 5, words.empty() ? nullptr : &g);
+        scene = std::make_unique<BlitzScene>(com, ful, profile, &hs, s, 5, crt, words.empty() ? nullptr : &g);
     }
     BlitzScene& b() { return *scene; }
     void type(const std::string& w) { for (char c : w) scene->type_letter(c); }
@@ -74,6 +77,16 @@ struct Fixture {
 };
 
 std::vector<tt2::SavedGame::BlitzWord> two() { return {{"crate", false}, {"trace", false}}; }
+
+// A word's rack row, left to right: the balls still in it, by cell.
+std::string rack_order(const BlitzWordView& w) {
+    std::vector<const LetterBall*> row;
+    for (const auto& b : w.balls) if (!b.played) row.push_back(&b);
+    std::sort(row.begin(), row.end(), [](const LetterBall* a, const LetterBall* b) { return a->slot < b->slot; });
+    std::string out;
+    for (const auto* b : row) out.push_back(b->letter);
+    return out;
+}
 
 }  // namespace
 
@@ -246,6 +259,39 @@ TEST(blitz_twist_marks_the_round) {
     ASSERT_EQ(f.profile.twists, 1);
 }
 
+// 0x414340 builds each word and deals it through 0x43c370 (game-scene.md
+// §4.2): every rack, in word order, from the shared CRT, never in the
+// word's own order. A resumed round is dealt afresh the same way.
+TEST(blitz_deals_every_word_with_the_crt_like_0x43c370) {
+    Fixture f;   // a new game on f.crt, seeded 1
+    tt2::CrtRandom expect(1);
+    for (const auto& w : f.b().words()) {
+        ASSERT_EQ(rack_order(w), tt2::deal_order(w.answer, w.answer, expect));
+        ASSERT_TRUE(rack_order(w) != w.answer);
+    }
+    ASSERT_EQ(f.crt.state(), expect.state());
+    // From a save: "crate" and "trace" with srand(1) (0x4174c0 -> 0x414340).
+    Fixture g(two());
+    ASSERT_EQ(rack_order(g.b().words()[0]), std::string("ertac"));
+    ASSERT_EQ(rack_order(g.b().words()[1]), std::string("tacer"));
+}
+
+// TWIST (0x413090 -> 0x43c370): the current word's row is dealt again,
+// compared with the order before and with the word.
+TEST(blitz_twist_deals_the_current_rack_with_the_crt) {
+    Fixture f(two());
+    for (int i = 0; i < 6; ++i) {
+        const BlitzWordView& w = f.b().words()[f.b().current()];
+        const std::string before = rack_order(w);
+        tt2::CrtRandom expect = f.crt;
+        const std::string want = tt2::deal_order(before, w.answer, expect);
+        f.b().key_space();
+        ASSERT_EQ(rack_order(f.b().words()[f.b().current()]), want);
+        ASSERT_EQ(f.crt.state(), expect.state());
+        f.run(BALL_RELAYOUT_MS + 10);
+    }
+}
+
 TEST(blitz_time_out_reveals_then_ends_the_game) {
     Fixture f(two(), 100, 5000);   // 5000 makes the prefilled table (1000..10000)
     f.type("cr");
@@ -305,7 +351,7 @@ TEST(blitz_rejects_a_classic_save) {
     g.word = "crate";
     g.round = 3;
     BlitzScene::Services s;
-    BlitzScene b(f.com, f.ful, f.profile, nullptr, s, 1, &g);
+    BlitzScene b(f.com, f.ful, f.profile, nullptr, s, 1, f.crt, &g);
     ASSERT_EQ(b.round_number(), 1);
     ASSERT_EQ(b.words().size(), std::size_t{5});
 }

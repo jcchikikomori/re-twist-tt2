@@ -65,6 +65,81 @@ TEST(word_of_the_day_is_deterministic) {
     (void)c;  // No assertion; just shouldn't crash.
 }
 
+namespace {
+// Word of the Day fixture: eight pool words, three of them ("quack",
+// "fjord", "nymph") with no sub-anagram but themselves. Shuffled with
+// seed 1337 the pool reads
+//   0 crate, 1 caret, 2 quack, 3 nymph, 4 fjord, 5 cater, 6 react, 7 trace.
+WordTree wotd_dict() {
+    return WordTree::from_words({
+        "caret", "crate", "trace", "react", "cater", "quack", "fjord", "nymph",
+        "ace", "act", "arc", "are", "art", "ate", "car", "cat", "ear", "eat",
+        "era", "eta", "rat", "tar", "tea", "tae",
+        "acre", "care", "race", "rate", "tare", "tear", "cart",
+    });
+}
+}  // namespace
+
+// AC-W3 (D-14): pool[day mod n] of the 1337-shuffled pool, no walk.
+TEST(word_of_the_day_for_day_reads_the_shuffled_pool) {
+    auto t = wotd_dict();
+    std::vector<std::string> deck = Bag::make_pool(t);
+    Random(tt2::WOTD_SEED).shuffle(deck);
+    ASSERT_TRUE(deck == (std::vector<std::string>{"crate", "caret", "quack", "nymph",
+                                                  "fjord", "cater", "react", "trace"}));
+    ASSERT_EQ(Bag::word_of_the_day_for_day(t, 0), std::string("crate"));
+    ASSERT_EQ(Bag::word_of_the_day_for_day(t, 1), std::string("caret"));
+    ASSERT_EQ(Bag::word_of_the_day_for_day(t, 7), std::string("trace"));
+}
+
+TEST(word_of_the_day_for_day_next_day_is_the_next_entry) {
+    auto t = wotd_dict();
+    ASSERT_EQ(Bag::word_of_the_day_for_day(t, 5), std::string("cater"));
+    ASSERT_EQ(Bag::word_of_the_day_for_day(t, 6), std::string("react"));
+    ASSERT_NE(Bag::word_of_the_day_for_day(t, 5), Bag::word_of_the_day_for_day(t, 6));
+}
+
+TEST(word_of_the_day_for_day_does_not_skip_unplayable_words) {
+    // Day 2 is "quack", which has 1 sub-anagram (< 15). The old
+    // walk-forward would have skipped quack, nymph and fjord and
+    // returned "cater"; the exe (0x43d690) takes pool[day] as it is.
+    auto t = wotd_dict();
+    Bag b(t);
+    ASSERT_TRUE(!b.is_playable("quack"));
+    ASSERT_EQ(Bag::word_of_the_day_for_day(t, 2), std::string("quack"));
+    ASSERT_EQ(Bag::word_of_the_day_for_day(t, 3), std::string("nymph"));
+}
+
+TEST(word_of_the_day_for_day_wraps_out_of_range_days) {
+    // Deviation D4: the port wraps where the exe would read out of range.
+    auto t = wotd_dict();
+    ASSERT_EQ(Bag::word_of_the_day_for_day(t, 8), std::string("crate"));       // day == n
+    ASSERT_EQ(Bag::word_of_the_day_for_day(t, 6623), std::string("trace"));    // 6623 % 8 = 7
+    ASSERT_EQ(Bag::word_of_the_day_for_day(t, -1), std::string("trace"));      // before 2008-09-03
+    ASSERT_EQ(Bag::word_of_the_day_for_day(t, -14125), std::string("nymph"));  // 1970-01-01: -14125 mod 8 = 3
+}
+
+TEST(word_of_the_day_for_day_empty_pool_throws) {
+    // No 5..8 letter word at all.
+    auto t = WordTree::from_words({"ace", "act", "care", "race"});
+    bool threw = false;
+    try {
+        (void)Bag::word_of_the_day_for_day(t, 0);
+    } catch (const tt2::NoRackError&) {
+        threw = true;
+    }
+    ASSERT_TRUE(threw);
+}
+
+TEST(word_of_the_day_uses_the_utc_word_day) {
+    // 2026-10-22 23:30 UTC is word day 6623; one ms before midnight
+    // UTC is still 6623, midnight is 6624.
+    auto t = wotd_dict();
+    ASSERT_EQ(Bag::word_of_the_day(t, 1792711800LL * 1000), std::string("trace"));
+    ASSERT_EQ(Bag::word_of_the_day(t, 1792713600LL * 1000 - 1), std::string("trace"));
+    ASSERT_EQ(Bag::word_of_the_day(t, 1792713600LL * 1000), std::string("crate"));
+}
+
 TEST(pick_classic_skips_longer_words) {
     // A pool of 5-letter words whose sub-anagrams live in the same
     // list, so the bag's "≥15 sub-anagrams" filter never disqualifies
@@ -117,6 +192,52 @@ TEST(next_word_walks_the_shuffled_deck) {
     std::vector<std::string> seq;
     for (int i = 0; i < 10; ++i) seq.push_back(other.next_word());
     ASSERT_TRUE(seq != expected);
+}
+
+namespace {
+// Five 5-letter anagrams of "caret" and their 3-4 letter sub-anagrams:
+// every pool word has 28 common sub-anagrams, so next_word() takes the
+// first word it reads and the index moves by exactly one.
+WordTree caret_dict() {
+    return WordTree::from_words({
+        "caret", "crate", "trace", "react", "cater",
+        "ace", "act", "arc", "are", "art", "ate", "car", "cat", "ear", "eat",
+        "era", "eta", "rat", "tar", "tea", "tae",
+        "acre", "care", "race", "rate", "tare", "tear", "cart",
+    });
+}
+}  // namespace
+
+// A profile's SEED / INDEX were saved against the common list of that
+// day. When the list shrinks (the open pool went from 19,256 to 19,181
+// words with data-src/blocklist.words), INDEX can sit at or past the end
+// of today's pool: the bag reseeds and deals a new deck from its start,
+// as when the index walks off the end in play.
+TEST(next_word_reseeds_when_a_saved_index_is_past_a_shrunk_pool) {
+    auto t = caret_dict();
+    const auto n = static_cast<std::uint32_t>(Bag::make_pool(t).size());
+    ASSERT_EQ(n, std::uint32_t(5));
+    for (const std::uint32_t index : {n, n + 74, std::uint32_t(0xFFFFFFFFu)}) {
+        Bag b(t, BagState{42, index});
+        ASSERT_TRUE(b.is_playable("caret"));
+        const std::string word = b.next_word();
+        std::vector<std::string> deck = b.pool();
+        Random(static_cast<std::int64_t>(b.state().seed)).shuffle(deck);
+        ASSERT_EQ(word, deck[0]);                        // the new deck's first word
+        ASSERT_EQ(b.state().index, std::uint32_t(1));    // not index + 1
+    }
+}
+
+TEST(next_word_keeps_the_saved_deck_for_an_index_inside_the_pool) {
+    // The last entry of the saved deck is still read with the saved seed;
+    // only the next call reseeds.
+    auto t = caret_dict();
+    Bag b(t, BagState{42, 4});
+    std::vector<std::string> deck = b.pool();
+    Random(42).shuffle(deck);
+    ASSERT_EQ(b.next_word(), deck[4]);
+    ASSERT_EQ(b.state().seed, std::uint32_t(42));
+    ASSERT_EQ(b.state().index, std::uint32_t(5));
 }
 
 TEST(pick_classic_longer_words_do_not_use_up_attempts) {

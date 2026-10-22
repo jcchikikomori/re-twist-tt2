@@ -51,12 +51,27 @@ struct Fixture {
     tt2::GameSettings settings;
     std::vector<float> fx_applied, music_applied;
     int settings_commits = 0;
+    // The process-wide CRT the deal and TWIST draw from (0x43c370, D-11),
+    // seeded with the fixture's `seed`; it outlives the scene.
+    tt2::CrtRandom crt;
     std::unique_ptr<GameScene> scene;
+    // The wall clock Services::now reads (WOTD); tests move it.
+    tt2::WallClock clock{};
+    tt2::WotdDayRule rule = tt2::WotdDayRule::Original;
 
     // `tutorial_seen`: the player has had DIALOG_TUTORIAL for every mode,
-    // so most tests start straight at the rack.
-    explicit Fixture(bool timed, bool with_hs = true, std::int64_t seed = 0, bool tutorial_seen = true) {
+    // so most tests start straight at the rack. The bool overload keeps
+    // the Classic tests as they were (true = Timed, false = Untimed).
+    explicit Fixture(bool timed, bool with_hs = true, std::int64_t seed = 0, bool tutorial_seen = true)
+        : Fixture(timed ? tt2::GameMode::Timed : tt2::GameMode::Untimed, with_hs, seed, tutorial_seen) {}
+    explicit Fixture(tt2::GameMode mode, bool with_hs = true, std::int64_t seed = 0, bool tutorial_seen = true,
+                     tt2::WallClock now = tt2::WallClock{}, tt2::WotdDayRule wotd_rule = tt2::WotdDayRule::Original)
+        : crt(static_cast<std::uint32_t>(seed)), clock(now), rule(wotd_rule) {
         profile.mode_flags.fill(tutorial_seen);
+        scene = std::make_unique<GameScene>(com, ful, profile, with_hs ? &hs : nullptr, mode, services(), seed, crt);
+    }
+    // The fixture's hooks, for a second scene built by a test.
+    GameScene::Services services() {
         GameScene::Services s;
         s.play_sound = [this](SoundId id) { sounds.push_back(id); };
         s.on_profile_change = [this] { ++saves; };
@@ -68,7 +83,9 @@ struct Fixture {
         s.settings.apply_sound_volume = [this](float v) { fx_applied.push_back(v); };
         s.settings.apply_music_volume = [this](float v) { music_applied.push_back(v); };
         s.settings.commit = [this](const tt2::GameSettings& g) { settings = g; ++settings_commits; };
-        scene = std::make_unique<GameScene>(com, ful, profile, with_hs ? &hs : nullptr, timed, s, seed);
+        s.now = [this] { return clock; };
+        s.wotd_rule = rule;
+        return s;
     }
     // The skip button the scene shows right now (PASS x2, PASS or GIVE UP).
     std::string skip_button() const {
@@ -221,6 +238,28 @@ TEST(scene_deals_the_rack_scrambled) {
         std::sort(b.begin(), b.end());
         ASSERT_EQ(a, b);                                   // same letters, new order
     }
+}
+
+// 0x425c50 -> 0x43c370 (game-scene.md §4.1, DL1-DL10): the balls start in
+// word order and are dealt with the process CRT, shuffled again while they
+// still spell the rack word. The deal is the round start's only CRT draw;
+// the bag and the target length stay on the game LCG.
+TEST(scene_deals_the_rack_with_the_crt_like_0x43c370) {
+    for (std::int64_t seed : {0, 1, 5, 195, 12345}) {
+        Fixture f(false, true, seed);
+        tt2::CrtRandom expect(static_cast<std::uint32_t>(seed));
+        ASSERT_EQ(ball_order(*f.scene), tt2::deal_order(f.scene->rack(), f.scene->rack(), expect));
+        ASSERT_EQ(f.crt.state(), expect.state());
+    }
+}
+
+// A fixed seed gives a literal order: the LCG seed 1 draws "cater" from the
+// bag, and srand(1)'s first pass (41, 18467, 6334, 26500; j = 1, 2, 2, 0)
+// deals cater -> cater -> cater -> caetr -> raetc.
+TEST(scene_deal_is_literal_for_a_fixed_seed) {
+    Fixture f(false, true, 1);
+    ASSERT_EQ(f.scene->rack(), std::string("cater"));
+    ASSERT_EQ(ball_order(*f.scene), std::string("raetc"));
 }
 
 TEST(scene_starts_round_one_with_rack_and_board) {
@@ -484,6 +523,62 @@ TEST(twist_needs_two_letters_in_the_row) {
     s.key_space();
     ASSERT_EQ(f.profile.twists, twists);
     ASSERT_TRUE(!f.played(SoundId::WordTwist));            // a refused press is silent
+}
+
+// TWIST (0x425240 -> 0x43c370, game-scene.md §4.2): the row is dealt again
+// from the shared CRT, compared with the order before and the rack word,
+// and the generator moves on by exactly that deal's draws.
+TEST(twist_deals_the_row_with_the_crt) {
+    Fixture f(false, true, 195);
+    auto& s = *f.scene;
+    for (int i = 0; i < 10; ++i) {
+        const std::string before = rack_row(s);
+        tt2::CrtRandom expect = f.crt;
+        const std::string want = tt2::deal_order(before, s.rack(), expect);
+        s.key_space();
+        ASSERT_EQ(rack_row(s), want);
+        ASSERT_EQ(f.crt.state(), expect.state());
+        s.update(BALL_RELAYOUT_MS);
+    }
+}
+
+// With letters typed, only the balls left in the row are dealt; the cells
+// the typed balls left stay empty. INFERRED port choice: 0x43c370 shuffles
+// all n cells, so the exe may move the gaps too (game-scene.md §4.2).
+TEST(twist_with_letters_typed_deals_only_the_balls_in_the_row) {
+    Fixture f(false, true, 5);
+    auto& s = *f.scene;
+    const std::string typed = s.rack().substr(0, 2);
+    f.type(typed);
+    s.update(BALL_MOVE_MS);
+    auto free_cells = [&s] {
+        std::vector<int> cells;
+        for (const auto& b : s.balls()) if (!b.played) cells.push_back(b.slot);
+        std::sort(cells.begin(), cells.end());
+        return cells;
+    };
+    const std::vector<int> cells = free_cells();
+    const std::string before = rack_row(s);
+    tt2::CrtRandom expect = f.crt;
+    const std::string want = tt2::deal_order(before, s.rack(), expect);
+    s.key_space();
+    ASSERT_EQ(rack_row(s), want);
+    ASSERT_TRUE(rack_row(s) != before);
+    ASSERT_TRUE(free_cells() == cells);                    // the gaps stay where they were
+    ASSERT_EQ(s.typed(), typed);                           // the played row is untouched
+    ASSERT_EQ(f.crt.state(), expect.state());
+}
+
+// 0x43c280's refusal draws nothing: the CRT stays where it was.
+TEST(refused_twist_draws_nothing_from_the_crt) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type(s.rack().substr(0, s.rack().size() - 1));      // one letter left in the row
+    s.update(BALL_MOVE_MS);
+    const std::uint32_t before = f.crt.state();
+    s.key_space();
+    s.press("BUTTON_Twist");
+    ASSERT_EQ(f.crt.state(), before);
 }
 
 // LetterBall::tick reports the start of the flip once, and a ball that is
@@ -919,17 +1014,20 @@ TEST(all_words_ends_round_and_next_round_starts) {
     // wait behind it (one at a time).
     ASSERT_TRUE(f.shown() == PopupKind::Definitions);
     ASSERT_EQ(s.popups_waiting(), std::size_t{2});
-    ASSERT_EQ(f.profile.rounds_completed[static_cast<std::size_t>(tt2::GameMode::Untimed)], 1);
+    // Counted as DIALOG_NEXTROUND opens (the original: on its OK, 0x425190).
+    ASSERT_EQ(f.profile.rounds_completed[static_cast<std::size_t>(tt2::GameMode::Untimed)], 0);
     const std::int32_t score = s.score();
     ASSERT_TRUE(score >= 1000 + 100 * static_cast<std::int32_t>(words.size()));
     s.type_letter('c');                                    // input ignored now
     ASSERT_TRUE(s.typed().empty());
-    s.update(16);
-    ASSERT_TRUE(s.phase() == GamePhase::Reveal);           // 0x428840: always 3 s
-    s.update(REVEAL_MS);
+    s.update(ALL_WORDS_REVEAL_MS - 10);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);           // 0x424730 -> 0x428840(1000)
+    ASSERT_TRUE(!s.dialog_open());
+    s.update(20);
     ASSERT_TRUE(s.phase() == GamePhase::AwaitNext);
     ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
     ASSERT_TRUE(f.played(SoundId::NextRoundAchieved));
+    ASSERT_EQ(f.profile.rounds_completed[static_cast<std::size_t>(tt2::GameMode::Untimed)], 1);
     s.dialog_press("BUTTON_OK");
     ASSERT_EQ(s.round_number(), 2);
     ASSERT_TRUE(s.phase() == GamePhase::Playing);
@@ -1200,6 +1298,11 @@ TEST(timed_round_with_bingo_advances_on_time_up) {
     s.update(ROUND_MS + 10);
     ASSERT_TRUE(s.last_round_end() == RoundEnd::TimeUpQualified);
     ASSERT_EQ(s.misses(), 0);
+    // Counted as DIALOG_NEXTROUND opens, after the 3000 ms reveal (the
+    // original counts it on that dialog's OK, 0x425190).
+    ASSERT_EQ(f.profile.rounds_completed[static_cast<std::size_t>(tt2::GameMode::Timed)], 0);
+    s.update(REVEAL_MS + 20);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
     ASSERT_EQ(f.profile.rounds_completed[static_cast<std::size_t>(tt2::GameMode::Timed)], 1);
 }
 
@@ -1264,7 +1367,10 @@ TEST(pass_asks_then_costs_a_miss_and_moves_on) {
     ASSERT_TRUE(f.played(SoundId::LoseLife));
     ASSERT_TRUE(f.played(SoundId::WordPassReveal));
     ASSERT_TRUE(s.phase() == GamePhase::Reveal);
-    ASSERT_EQ(f.skip_button(), std::string(""));           // hidden during the reveal
+    // 0x425710 while +0x2f9 is set: setEnabled(0) only, so PASS x2 stays
+    // on screen, greyed, through the reveal.
+    ASSERT_EQ(f.skip_button(), std::string("BUTTON_Pass_2"));
+    ASSERT_TRUE(!s.button("BUTTON_Pass_2")->enabled);
     ASSERT_EQ(f.discards, 0);                              // the game goes on
     s.update(REVEAL_MS + 20);                              // 0x425190: next round by itself
     ASSERT_TRUE(s.phase() == GamePhase::Playing);
@@ -1314,7 +1420,7 @@ TEST(resumed_misses_pick_the_skip_button) {
     g.fail_count = 1;
     Fixture r(false, false);
     GameScene::Services sv;
-    GameScene s(r.com, r.ful, r.profile, nullptr, false, sv, 0, &g);
+    GameScene s(r.com, r.ful, r.profile, nullptr, tt2::GameMode::Untimed, sv, 0, r.crt, &g);
     ASSERT_EQ(s.misses(), 1);
     ASSERT_TRUE(s.button("BUTTON_Pass")->sprite.visible);
     ASSERT_TRUE(!s.button("BUTTON_Pass_2")->sprite.visible);
@@ -1732,7 +1838,8 @@ TEST(scene_yes_no_dialogs_use_the_wrap_service) {
         ASSERT_EQ(w, YESNO_MESSAGE_W);
         return t + "\nX";
     };
-    GameScene s(com, ful, profile, nullptr, false, sv, 0);
+    tt2::CrtRandom crt;
+    GameScene s(com, ful, profile, nullptr, tt2::GameMode::Untimed, sv, 0, crt);
     s.press("BUTTON_Pass_2");                              // "PASS?" has two own lines too
     ASSERT_EQ(calls, 1);
     ASSERT_EQ(text_line_count(s.dialog().label("MESSAGE")->text), 3);   // 2 own lines + 1 added
@@ -1968,6 +2075,19 @@ TEST(nothing_is_saved_once_the_round_is_over) {
     ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
 }
 
+// 0x42a460 passes WORD back to 0x425c50 (W36): a resumed rack is dealt
+// afresh by 0x43c370 from wherever the shared CRT stands.
+TEST(saved_game_rack_is_dealt_afresh_with_the_crt) {
+    Fixture f(true);
+    const tt2::SavedGame g = f.scene->snapshot();
+    tt2::CrtRandom expect = f.crt;                         // after the first scene's deal
+    GameScene::Services sv;
+    GameScene resumed(f.com, f.ful, f.profile, nullptr, tt2::GameMode::Timed, sv, 0, f.crt, &g);
+    ASSERT_EQ(resumed.rack(), g.word);
+    ASSERT_EQ(ball_order(resumed), tt2::deal_order(g.word, g.word, expect));
+    ASSERT_EQ(f.crt.state(), expect.state());
+}
+
 TEST(saved_game_resumes_where_it_left_off) {
     Fixture f(true);
     f.type(f.scene->rack());
@@ -1986,7 +2106,7 @@ TEST(saved_game_resumes_where_it_left_off) {
     tt2::SavedGame later = g;
     later.round = 4;
     later.fail_count = 2;
-    GameScene resumed(r.com, r.ful, r.profile, nullptr, true, sv, 0, &later);
+    GameScene resumed(r.com, r.ful, r.profile, nullptr, tt2::GameMode::Timed, sv, 0, r.crt, &later);
     ASSERT_EQ(discards, 1);                                // 0x42a460 deletes the file
     ASSERT_EQ(resumed.rack(), g.word);
     ASSERT_TRUE(ball_order(resumed) != g.word);           // the resumed rack is scrambled too
@@ -2022,7 +2142,7 @@ TEST(unusable_save_starts_a_fresh_game) {
     sv.discard_save = [&] { ++discards; };
     tt2::SavedGame bad;
     bad.word = "x";                                        // invalid
-    GameScene s(f.com, f.ful, f.profile, nullptr, false, sv, 0, &bad);
+    GameScene s(f.com, f.ful, f.profile, nullptr, tt2::GameMode::Untimed, sv, 0, f.crt, &bad);
     ASSERT_EQ(discards, 0);
     ASSERT_EQ(s.round_number(), 1);
     ASSERT_EQ(s.rack().size(), std::size_t{5});
@@ -2174,7 +2294,7 @@ TEST(resumed_game_never_shows_the_tutorial) {
     g.round = 3;
     f.profile.mode_flags.fill(false);
     GameScene::Services sv;
-    GameScene s(f.com, f.ful, f.profile, nullptr, false, sv, 0, &g);
+    GameScene s(f.com, f.ful, f.profile, nullptr, tt2::GameMode::Untimed, sv, 0, f.crt, &g);
     ASSERT_TRUE(!s.dialog_open());                         // 0x42a460 skips 0x425c50
     ASSERT_TRUE(!f.profile.mode_flags[static_cast<std::size_t>(tt2::GameMode::Untimed)]);
 }
@@ -2383,4 +2503,1017 @@ TEST(key_letters_place_balls_like_typed_text) {
     const char first = s.rack()[0];
     s.type_letter(letter_for_key(static_cast<std::uint32_t>(first), false));
     ASSERT_EQ(s.typed(), std::string(1, first));
+}
+
+// ---- Word of the Day (game-scene.md §8; design wotd-crossword.md) -----
+
+namespace {
+
+constexpr tt2::GameMode WOTD = tt2::GameMode::WordOfTheDay;
+
+// Manila (UTC+8, no DST; `timezone` = -28800 s = -480 min west). 07:30
+// local on 2026-10-23 is 23:30 UTC on 2026-10-22 (unix day 20748):
+// Original rule -> word day 6623 (UTC), scene day 6624 (local standard),
+// date 2026-10-22; Local rule -> 6624 / 6624 / 2026-10-23.
+constexpr tt2::WallClock MANILA_1023_0730{1'792'711'800'000LL, -480, 480};
+// 08:30 local on 2026-10-23 (00:30 UTC): word day 6624, scene day 6624.
+constexpr tt2::WallClock MANILA_1023_0830{1'792'715'400'000LL, -480, 480};
+// Both sides of local midnight: 23:50 on 10-22 (15:50 UTC) and 00:10 on
+// 10-23 (16:10 UTC). Word day 6623 for both; scene day 6623, then 6624.
+constexpr tt2::WallClock MANILA_1022_2350{1'792'684'200'000LL, -480, 480};
+constexpr tt2::WallClock MANILA_1023_0010{1'792'685'400'000LL, -480, 480};
+// Berlin in July (CET -60 min west, CEST +120 min): 00:30 CEST on
+// 2026-07-15 is 22:30 UTC on 07-14. Original scene day 6523 (still
+// 23:30 standard time on 07-14), Local 6524.
+constexpr tt2::WallClock BERLIN_0715_0030{1'784'068'200'000LL, -60, 120};
+
+// The fixture dictionary's pool (crate, caret, trace, react, carte, cater)
+// shuffled with seed 1337: day 6622 -> crate, 6623 -> carte, 6624 -> cater.
+// The WOTD board keeps the first 5 per length in DFS order (0x4262b0).
+const std::vector<std::string> CARTE_BOARD = {
+    "car", "cat", "act", "ace", "arc",
+    "care", "acre", "race", "rate", "tare",
+    "carte", "caret", "cater", "crate", "react",
+};
+
+void bingo(Fixture& f) {
+    f.type(f.scene->rack());
+    f.scene->key_return();
+}
+
+// Every board word, typed in board order.
+void find_all(Fixture& f) {
+    std::vector<std::string> words;
+    for (const auto& v : f.scene->slots()) words.push_back(v.word);
+    for (const auto& w : words) {
+        f.type(w);
+        f.scene->key_return();
+    }
+}
+
+std::vector<std::string> board_of(const GameScene& s) {
+    std::vector<std::string> out;
+    for (const auto& v : s.slots()) out.push_back(v.word);
+    return out;
+}
+
+}  // namespace
+
+// The timings the WOTD flow uses (game-scene.md §8.5).
+TEST(wotd_timing_constants_match_the_exe) {
+    ASSERT_EQ(ROUND_MS, 120000);                  // 0x425c50: +0x2fc
+    ASSERT_EQ(REVEAL_MS, 3000);                   // 0x428840(3000), 0x428c80(.., 1)
+    ASSERT_EQ(ALL_WORDS_REVEAL_MS, 1000);         // 0x424730 -> 0x428840(1000), every mode
+    ASSERT_EQ(WOTD_GAME_OVER_DELAY_MS, 3000);     // state 3 -> 0x428c80(.., 0)
+    ASSERT_EQ(WOTD_BOARD_PER_LENGTH, std::size_t{5});   // 0x4262b0
+}
+
+// AC-W1: the rack is the day's word, the scene is timed from 2:00 on the
+// WOTD background, and the board is capped at 5 per length.
+TEST(wotd_starts_with_the_word_of_the_day) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    ASSERT_TRUE(s.mode() == WOTD);
+    ASSERT_TRUE(s.wotd());
+    ASSERT_TRUE(s.timed());
+    ASSERT_EQ(s.rack(), std::string("carte"));
+    ASSERT_EQ(s.rack(), tt2::Bag::word_of_the_day_for_day(f.com, 6623));
+    ASSERT_EQ(std::string(s.background_id()), std::string("gamescene/BACKGROUND_WOTD"));
+    ASSERT_TRUE(board_of(s) == CARTE_BOARD);
+    ASSERT_EQ(s.scene_day(), 6624);                        // local standard day, not the word day
+    ASSERT_EQ(s.time_left_ms(), 120000);                   // 2:00 (0x425c50: +0x2fc)
+    s.update(1000);
+    ASSERT_EQ(s.time_left_ms(), 119000);                   // 0x426d67: WOTD ticks like Timed
+    ASSERT_EQ(std::string(s.save_mode()), std::string("WORD_OF_THE_DAY"));
+}
+
+// Word of the Day deals through the same 0x425c50 -> 0x43c370 (game-scene.md
+// §4.2): "carte" with srand(7) is dealt as below. Its reseed of the game LCG
+// (§8.2) never reaches the CRT, so the deal is the CRT's only draw.
+TEST(wotd_deals_the_rack_with_the_crt_too) {
+    Fixture f(WOTD, false, 7, true, MANILA_1023_0730);
+    ASSERT_EQ(f.scene->rack(), std::string("carte"));
+    ASSERT_EQ(ball_order(*f.scene), std::string("eratc"));
+    tt2::CrtRandom expect(7);
+    ASSERT_EQ(ball_order(*f.scene), tt2::deal_order("carte", "carte", expect));
+    ASSERT_EQ(f.crt.state(), expect.state());
+}
+
+// AC-W1: MAX WORD LENGTH does not apply (0x426008-0x426104 skipped); a
+// player set to 6 still gets the day's 8-letter word.
+TEST(wotd_ignores_max_word_length) {
+    tt2::WordTree tri = tt2::WordTree::from_words({
+        "triangle", "integral", "relating", "altering",
+        "ant", "art", "ate", "ear", "eat", "era", "gel", "get", "gin", "lag", "lit", "net", "nil", "rag",
+        "ran", "rat", "tag", "tan", "tar", "tea", "ten", "tie", "tin",
+        "lane", "late", "rate", "rain", "tail", "tile", "gate", "grin", "ring", "line",
+    });
+    tt2::PlayerProfile p = tt2::PlayerProfile::create("Mugwump", 7u);
+    p.mode_flags.fill(true);
+    p.max_word_length = 6;
+    GameScene::Services sv;
+    sv.now = [] { return MANILA_1023_0730; };
+    tt2::CrtRandom crt;
+    GameScene s(tri, tri, p, nullptr, WOTD, sv, 0, crt);
+    ASSERT_EQ(s.rack(), std::string("triangle"));
+    // 21 three-letter sub-anagrams, 5 kept; no 5-7 letter words.
+    const std::vector<std::string> board = {"tin", "tie", "tar", "tan", "tag", "tile", "tail", "ring", "rate",
+                                            "rain", "triangle", "relating", "integral", "altering"};
+    ASSERT_TRUE(board_of(s) == board);
+}
+
+// D-1: the scene plays Timed, Untimed and WOTD; the other modes throw.
+TEST(game_scene_rejects_lightning_and_crossword) {
+    for (tt2::GameMode m : {tt2::GameMode::Blitz, tt2::GameMode::Crossword}) {
+        tt2::WordTree com = common();
+        tt2::PlayerProfile p = tt2::PlayerProfile::create("Mugwump", 7u);
+        bool invalid = false;
+        try {
+            tt2::CrtRandom crt;
+            GameScene s(com, com, p, nullptr, m, GameScene::Services{}, 0, crt);
+        } catch (const std::invalid_argument&) {
+            invalid = true;
+        }
+        ASSERT_TRUE(invalid);
+    }
+    Fixture timed(tt2::GameMode::Timed);
+    Fixture untimed(tt2::GameMode::Untimed);
+    ASSERT_TRUE(timed.scene->mode() == tt2::GameMode::Timed);
+    ASSERT_TRUE(untimed.scene->mode() == tt2::GameMode::Untimed);
+    ASSERT_TRUE(!untimed.scene->timed());
+    ASSERT_EQ(untimed.scene->scene_day(), -1);             // only WOTD keeps a day
+    ASSERT_EQ(untimed.scene->snapshot().day, -1);
+}
+
+// Error handling: a common list with no 5-8 letter word has no WOTD rack.
+TEST(wotd_start_throws_no_rack_on_an_empty_pool) {
+    tt2::WordTree small = tt2::WordTree::from_words({"act", "arc", "art", "car", "cat", "rat", "tar", "cart"});
+    tt2::PlayerProfile p = tt2::PlayerProfile::create("Mugwump", 7u);
+    p.mode_flags.fill(true);
+    bool no_rack = false;
+    try {
+        tt2::CrtRandom crt;
+        GameScene s(small, small, p, nullptr, WOTD, GameScene::Services{}, 0, crt);
+    } catch (const tt2::NoRackError&) {
+        no_rack = true;
+    }
+    ASSERT_TRUE(no_rack);
+}
+
+// AC-W5 (§8.4): the spot at (317, 473) shows GIVE UP until the first
+// bingo, then DONE; PASS, PASSES: 2 and NEXT ROUND never show.
+TEST(wotd_spot_shows_give_up_then_done) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    auto shown = [&](const char* n) { return s.button(n)->sprite.visible; };
+    ASSERT_TRUE(shown("BUTTON_GiveUp"));
+    ASSERT_TRUE(!shown("BUTTON_WOTD_DONE") && !shown("BUTTON_NextRound"));
+    ASSERT_TRUE(!shown("BUTTON_Pass") && !shown("BUTTON_Pass_2"));
+    const MenuButton& done = *s.button("BUTTON_WOTD_DONE");
+    ASSERT_EQ(done.sprite.sheet.image_id, std::string("BUTTON_Done"));
+    ASSERT_TRUE(done.sprite.x == 317.0f && done.sprite.y == 473.0f);
+    f.type("car");
+    s.key_return();
+    ASSERT_TRUE(shown("BUTTON_GiveUp"));                   // a plain word changes nothing
+    bingo(f);
+    ASSERT_TRUE(shown("BUTTON_WOTD_DONE"));
+    ASSERT_TRUE(!shown("BUTTON_GiveUp") && !shown("BUTTON_NextRound"));
+    ASSERT_TRUE(!shown("BUTTON_Pass") && !shown("BUTTON_Pass_2"));
+    // A click on it runs its command, BUTTON_NextRound (0x425b60).
+    s.mouse_move(327, 483);
+    s.mouse_down(327, 483);
+    s.mouse_up(327, 483);
+    ASSERT_TRUE(s.last_round_end() == RoundEnd::NextRound);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    // 0x428840 disables +0x224 and 0x425710 (+0x2f9 set) only disables:
+    // DONE stays on screen, greyed (wotd-gaps.md #1).
+    ASSERT_TRUE(shown("BUTTON_WOTD_DONE") && !s.button("BUTTON_WOTD_DONE")->enabled);
+    ASSERT_TRUE(!shown("BUTTON_GiveUp"));
+}
+
+// Negative: Classic never shows DONE; a qualified round shows NEXT ROUND.
+TEST(classic_never_shows_wotd_done) {
+    Fixture f(true);
+    auto& s = *f.scene;
+    ASSERT_TRUE(!s.button("BUTTON_WOTD_DONE")->sprite.visible);
+    ASSERT_TRUE(s.button("BUTTON_Pass_2")->sprite.visible);
+    bingo(f);
+    ASSERT_TRUE(s.button("BUTTON_NextRound")->sprite.visible);
+    ASSERT_TRUE(!s.button("BUTTON_WOTD_DONE")->sprite.visible);
+}
+
+// AC-W5 / AC-W10: DONE reveals for 3000 ms, then state 3 counts the round,
+// deletes the save and writes WOD; 3000 ms later the game is over. No
+// second round; the qualified, non-ranking card returns to the menu.
+TEST(wotd_done_ends_the_game_after_one_round) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    bingo(f);
+    ASSERT_EQ(s.score(), 1250);                            // 10 * 5^2 + 1000
+    s.press("BUTTON_WOTD_DONE");
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_TRUE(f.played(SoundId::WordPassReveal));
+    s.update(2999);                                        // 0x428840(3000)
+    ASSERT_EQ(f.profile.rounds_completed[4], 0);           // not before state 3
+    ASSERT_EQ(f.profile.wod_day, -1);
+    ASSERT_EQ(f.discards, 0);
+    s.update(10);
+    ASSERT_EQ(f.profile.rounds_completed[4], 1);           // mov eax, 4 @0x426b74
+    ASSERT_EQ(f.profile.wod_day, 6624);                    // the scene day, not word day 6623
+    ASSERT_EQ(f.discards, 1);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);           // 0x428c80(.., 0) still waits
+    s.update(2900);                                        // 2910 of its 3000 ms
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(200);
+    ASSERT_TRUE(s.phase() == GamePhase::GameOver);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+    ASSERT_EQ(s.dialog().label("BODY_TEXT")->text, std::string("Click to return\nto the main menu!"));
+    ASSERT_TRUE(f.played(SoundId::NextRoundAchieved));
+    ASSERT_EQ(s.round_number(), 1);
+    ASSERT_EQ(s.rack(), std::string("carte"));
+    s.dialog_press("BUTTON_OK");                           // 0x409a70 -> +0xdc = 0x427b20
+    ASSERT_EQ(f.exits, 1);
+    ASSERT_TRUE(f.saved.empty());                          // no save once the game is over
+    ASSERT_EQ(s.round_number(), 1);                        // never a second round
+    ASSERT_TRUE(!tt2::wotd_button_enabled(f.profile, MANILA_1023_0730));   // the gate is closed today
+    ASSERT_TRUE(tt2::wotd_button_enabled(f.profile, {MANILA_1023_0730.unix_ms + 86'400'000LL, -480, 480}));
+}
+
+// AC-W5: every slot found queues the ALL WORDS banner, reveals for only
+// 1000 ms (0x428840(1000)) and reaches state 3.
+TEST(wotd_all_words_reveal_for_one_second) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    find_all(f);
+    ASSERT_TRUE(s.last_round_end() == RoundEnd::AllWords);
+    ASSERT_TRUE(f.played(SoundId::AllWords));
+    s.update(999);                                         // 0x428840(1000)
+    ASSERT_EQ(f.profile.wod_day, -1);
+    ASSERT_EQ(f.profile.rounds_completed[4], 0);
+    s.update(10);
+    ASSERT_EQ(f.profile.wod_day, 6624);
+    ASSERT_EQ(f.profile.rounds_completed[4], 1);
+    s.update(2900);                                        // 2909 of the 3000 ms after state 3
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(200);
+    ASSERT_TRUE(s.phase() == GamePhase::GameOver);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+}
+
+// AC-W8: when the first bingo is also the guess that fills every slot, it
+// queues popup 1 (ALL WORDS) and not popup 11. The pool is {cabin} on any
+// day, and the board is its five 3-letter words plus "cabin".
+TEST(wotd_bingo_that_fills_the_board_queues_all_words_not_popup_11) {
+    tt2::WordTree cab = tt2::WordTree::from_words({"cabin", "ban", "bin", "cab", "can", "nab"});
+    tt2::PlayerProfile p = tt2::PlayerProfile::create("Mugwump", 7u);
+    p.mode_flags.fill(true);
+    std::vector<SoundId> sounds;
+    GameScene::Services sv;
+    sv.now = [] { return MANILA_1023_0730; };
+    sv.play_sound = [&sounds](SoundId id) { sounds.push_back(id); };
+    tt2::CrtRandom crt;
+    GameScene s(cab, cab, p, nullptr, WOTD, sv, 0, crt);
+    ASSERT_EQ(s.rack(), std::string("cabin"));
+    const std::vector<std::string> board = {"cab", "can", "ban", "bin", "nab", "cabin"};   // DFS on the rack
+    ASSERT_TRUE(board_of(s) == board);
+    for (const char* w : {"ban", "bin", "cab", "can", "nab"}) {
+        for (const char* c = w; *c; ++c) s.type_letter(*c);
+        s.key_return();
+    }
+    ASSERT_TRUE(!s.qualified());
+    s.update(0);
+    ASSERT_TRUE(s.popup_kind() == PopupKind::Definitions);    // popup 10 after the first plain word
+    for (int i = 0; i < 4 && (s.popup_kind() || s.popups_waiting() > 0); ++i) s.update(3000);
+    ASSERT_TRUE(!s.popup_kind());
+    for (char c : std::string("cabin")) s.type_letter(c);
+    s.key_return();
+    ASSERT_TRUE(s.last_round_end() == RoundEnd::AllWords);
+    ASSERT_EQ(s.popups_waiting(), std::size_t{1});            // one popup, not 1 and 11
+    s.update(0);
+    ASSERT_TRUE(s.popup_kind() == PopupKind::AllWords);
+    ASSERT_EQ(s.popups_waiting(), std::size_t{0});
+    // 5 * 10*3^2 + (10*5^2 + 1000 bingo + 100 * 6 slots) = 450 + 1850.
+    ASSERT_EQ(s.score(), 2300);
+    ASSERT_TRUE(std::find(sounds.begin(), sounds.end(), SoundId::AllWords) != sounds.end());
+}
+
+// AC-W5: time up after a bingo ends the round (3000 ms reveal), then the game.
+TEST(wotd_time_up_after_a_bingo_counts_the_round) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    bingo(f);
+    s.update(120000);
+    ASSERT_TRUE(s.last_round_end() == RoundEnd::TimeUpQualified);
+    ASSERT_TRUE(f.played(SoundId::ClockTimeUp));
+    ASSERT_EQ(f.profile.wod_day, -1);
+    s.update(2999);                                        // 0x428840(3000)
+    ASSERT_EQ(f.profile.rounds_completed[4], 0);
+    ASSERT_EQ(f.profile.wod_day, -1);
+    s.update(11);
+    ASSERT_EQ(f.profile.rounds_completed[4], 1);
+    ASSERT_EQ(f.profile.wod_day, 6624);
+    s.update(2900);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(200);
+    ASSERT_TRUE(s.phase() == GamePhase::GameOver);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+}
+
+// AC-W5 / AC-W10: time up without a bingo deletes the save and writes WOD
+// at once, reveals for 3000 ms and ends the game: no miss, no count, and
+// the end card has no REPLAY.
+TEST(wotd_time_up_without_a_bingo_ends_the_game) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    f.type("car");
+    s.key_return();
+    s.update(120000);
+    ASSERT_TRUE(s.last_round_end() == RoundEnd::TimeUpMissed);
+    ASSERT_EQ(f.profile.wod_day, 6624);                    // 0x427cc0 before the reveal
+    ASSERT_EQ(f.discards, 1);
+    ASSERT_EQ(s.misses(), 0);                              // 0x425420 is never called
+    ASSERT_TRUE(!f.played(SoundId::LoseLife));
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_TRUE(f.played(SoundId::WordPassReveal));
+    s.update(2999);                                        // 0x428c80(.., 1): reveal, 3000 ms
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(11);
+    ASSERT_TRUE(s.phase() == GamePhase::GameOver);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);
+    ASSERT_EQ(s.dialog().label("BODY_TEXT")->text, std::string("Sorry, you didn't find the\nWord of The Day."));
+    ASSERT_TRUE(!s.dialog().button("BUTTON_REPLAY")->sprite.visible);
+    ASSERT_TRUE(s.dialog().button("BUTTON_OK")->sprite.x == 192.0f);
+    ASSERT_EQ(f.profile.rounds_completed[4], 0);
+    s.dialog_press("BUTTON_REPLAY");                       // hidden and disabled: nothing
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);
+    ASSERT_EQ(f.exits, 0);
+    s.key_return();                                        // Return = MENU
+    ASSERT_EQ(f.exits, 1);
+}
+
+// AC-W5 / AC-W10: GIVE UP always asks "Give Up?" (no lives, never PASS),
+// and YES ends the game at once without counting the round.
+TEST(wotd_give_up_always_asks_give_up_and_ends_the_game) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    ASSERT_EQ(s.misses(), 0);
+    s.press("BUTTON_GiveUp");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::ConfirmGiveUp);
+    ASSERT_EQ(s.dialog().label("HEADER")->text, std::string("Give Up?"));
+    s.dialog_press("BUTTON_NO");
+    ASSERT_TRUE(s.phase() == GamePhase::Playing);
+    ASSERT_EQ(f.profile.wod_day, -1);
+    s.press("BUTTON_GiveUp");
+    s.dialog_press("BUTTON_YES");                          // 0x428610 -> 0x4253a0
+    ASSERT_TRUE(s.last_round_end() == RoundEnd::Passed);
+    ASSERT_EQ(f.profile.wod_day, 6624);
+    ASSERT_EQ(f.discards, 1);
+    ASSERT_EQ(s.misses(), 0);
+    ASSERT_TRUE(!f.played(SoundId::LoseLife));
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);           // 0x428c80(.., 1) reveals
+    ASSERT_TRUE(f.played(SoundId::WordPassReveal));
+    s.update(2999);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(11);
+    ASSERT_TRUE(s.phase() == GamePhase::GameOver);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);   // never DIALOG_PASSROUND
+    ASSERT_EQ(f.profile.rounds_completed[4], 0);
+}
+
+// AC-W5: PASS and PASSES: 2 are hidden in WOTD (0x425710), and pressing
+// them by name does nothing.
+TEST(wotd_pass_buttons_do_nothing) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    s.press("BUTTON_Pass_2");
+    s.press("BUTTON_Pass");
+    ASSERT_TRUE(!s.dialog_open());
+    ASSERT_TRUE(s.phase() == GamePhase::Playing);
+    ASSERT_EQ(s.misses(), 0);
+}
+
+// AC-W5 / AC-W6: a ranking score opens DIALOG_CONGRATS and stores the UTC
+// date at game over (07:30 on 10-23 in Manila -> 2026-10-22).
+TEST(wotd_high_score_stores_the_utc_date) {
+    Fixture f(WOTD, true, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    bingo(f);
+    s.press("BUTTON_WOTD_DONE");
+    s.update(3010);
+    s.update(3010);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::Congrats);
+    ASSERT_TRUE(f.played(SoundId::HighScoreAchieved));
+    const auto& table = f.hs.table(WOTD).entries;
+    int mine = 0;
+    for (const auto& e : table)
+        if (e.name == "Mugwump") {
+            ++mine;
+            ASSERT_EQ(e.score, 1250);
+            ASSERT_EQ(e.extra, std::string("2026-10-22"));
+        }
+    ASSERT_EQ(mine, 1);
+    s.dialog_press("BUTTON_OK");
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::HighScores);
+    ASSERT_TRUE(s.highscore_dialog()->mode() == WOTD);
+}
+
+// AC-W6: the date is read at game over, not at round start.
+TEST(wotd_high_score_date_is_taken_at_game_over) {
+    Fixture f(WOTD, true, 0, true, MANILA_1022_2350);      // 15:50 UTC on 10-22
+    auto& s = *f.scene;
+    bingo(f);
+    f.clock = MANILA_1023_0830;                            // 00:30 UTC on 10-23
+    s.press("BUTTON_WOTD_DONE");
+    s.update(3010);
+    s.update(3010);
+    std::string extra;
+    for (const auto& e : f.hs.table(WOTD).entries) if (e.name == "Mugwump") extra = e.extra;
+    ASSERT_EQ(extra, std::string("2026-10-23"));
+    ASSERT_EQ(f.profile.wod_day, 6623);                    // WOD keeps the start day (§8.6)
+}
+
+// AC-W6 negatives: a score of 0 is not submitted; a non-ranking score adds
+// no row and the qualified game gets the "back to the menu" card.
+TEST(wotd_high_score_negatives) {
+    Fixture zero(WOTD, true, 0, true, MANILA_1023_0730);
+    zero.scene->update(120000);
+    zero.scene->update(3010);
+    ASSERT_TRUE(zero.scene->dialog_kind() == GameDialog::EndGame);
+    for (const auto& e : zero.hs.table(WOTD).entries) ASSERT_TRUE(e.name != "Mugwump");
+
+    Fixture f(WOTD, true, 0, true, MANILA_1023_0730);
+    for (int i = 0; i < 10; ++i) f.hs.submit(WOTD, "Pro", 50000, "2026-10-21");
+    bingo(f);
+    f.scene->press("BUTTON_WOTD_DONE");
+    f.scene->update(3010);
+    f.scene->update(3010);
+    ASSERT_TRUE(f.scene->dialog_kind() == GameDialog::NextRound);
+    ASSERT_TRUE(!f.played(SoundId::HighScoreAchieved));
+    for (const auto& e : f.hs.table(WOTD).entries) ASSERT_TRUE(e.name != "Mugwump");
+}
+
+// AC-W7 / AC-W4: leaving mid-round saves WORD_OF_THE_DAY with DAY = the
+// scene day (not the word day) and writes no WOD, so the gate stays open.
+TEST(wotd_leave_saves_the_scene_day_without_wod) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    f.type("car");
+    s.key_return();
+    s.press("BUTTON_Menu");
+    s.dialog_press("BUTTON_STOP");
+    s.dialog_press("BUTTON_YES");
+    ASSERT_EQ(f.exits, 1);
+    ASSERT_EQ(f.saved.size(), std::size_t{1});
+    const tt2::SavedGame& g = f.saved[0];
+    ASSERT_EQ(g.mode, std::string("WORD_OF_THE_DAY"));
+    ASSERT_EQ(g.word, std::string("carte"));
+    ASSERT_EQ(g.day, 6624);
+    ASSERT_EQ(f.profile.wod_day, -1);
+    ASSERT_EQ(f.profile.rounds_completed[4], 0);
+    ASSERT_TRUE(tt2::wotd_button_enabled(f.profile, MANILA_1023_0730));
+}
+
+// AC-W7: a same-day save resumes its word, words, time and score, even when
+// the UTC word day has moved on (08:30 in Manila picks "cater").
+TEST(wotd_same_day_save_resumes_without_a_new_pick) {
+    Fixture f(WOTD, false, 0, false, MANILA_1023_0730);    // first WOTD game: tutorial
+    auto& first = *f.scene;
+    ASSERT_TRUE(first.dialog_kind() == GameDialog::Tutorial);
+    first.dialog_press("BUTTON_OK");                       // PLAY
+    f.type("car");
+    first.key_return();
+    first.update(15000);
+    first.press("BUTTON_Menu");
+    first.dialog_press("BUTTON_STOP");
+    first.dialog_press("BUTTON_YES");                      // 0x427b20: save and leave
+    ASSERT_EQ(f.saved.size(), std::size_t{1});
+    f.clock = MANILA_1023_0830;
+    ASSERT_EQ(tt2::Bag::word_of_the_day_for_day(f.com, 6624), std::string("cater"));
+    ASSERT_TRUE(!wotd_save_is_stale(f.saved[0], f.clock));
+    GameScene s(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt, &f.saved[0]);
+    ASSERT_TRUE(!s.dialog_open());                         // AC-W9: no tutorial on a resume
+    ASSERT_EQ(s.rack(), std::string("carte"));
+    ASSERT_EQ(s.scene_day(), 6624);
+    ASSERT_EQ(s.score(), 90);                              // "car": 10 * 3^2
+    ASSERT_EQ(s.time_left_ms(), 105000);
+    ASSERT_TRUE(s.slots()[0].found);
+    ASSERT_EQ(f.discards, 1);                              // 0x42a460 deletes the file
+}
+
+// AC-W7: across local midnight in UTC+8 the save is another day's: it is
+// deleted and a new game starts (same UTC word, but nothing carried over).
+TEST(wotd_other_day_save_starts_a_new_game) {
+    Fixture f(WOTD, false, 0, true, MANILA_1022_2350);
+    ASSERT_EQ(f.scene->scene_day(), 6623);
+    f.type("car");
+    f.scene->key_return();
+    f.scene->update(15000);
+    const tt2::SavedGame g = f.scene->snapshot();
+    ASSERT_EQ(g.day, 6623);
+    f.clock = MANILA_1023_0010;
+    ASSERT_TRUE(wotd_save_is_stale(g, f.clock));
+    ASSERT_TRUE(!wotd_save_is_stale(g, MANILA_1022_2350));
+    GameScene s(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt, &g);
+    ASSERT_EQ(f.discards, 1);
+    ASSERT_EQ(s.scene_day(), 6624);
+    ASSERT_EQ(s.rack(), std::string("carte"));             // word day 6623 until 08:00 local
+    ASSERT_EQ(s.score(), 0);
+    ASSERT_EQ(s.time_left_ms(), 120000);
+    for (const auto& v : s.slots()) ASSERT_TRUE(!v.found);
+    // The same save at 08:30 (00:30 UTC): stale too, and the new game
+    // takes the new UTC word day's word.
+    f.clock = MANILA_1023_0830;
+    ASSERT_TRUE(wotd_save_is_stale(g, f.clock));
+    GameScene later(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt, &g);
+    ASSERT_EQ(f.discards, 2);
+    ASSERT_EQ(later.rack(), std::string("cater"));
+    ASSERT_EQ(later.score(), 0);
+}
+
+// DEVIATION (D6, user decision 2026-10-22): the port hides the UI bar's
+// "ROUND:" caption and number in WOTD. The exe shows "ROUND: 1" there
+// (0x426360 sets LABEL_ROUND with no mode check, game-scene.md §8.10);
+// the round number itself is unchanged, only the label is hidden.
+TEST(wotd_hides_the_round_label) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    ASSERT_TRUE(!f.scene->round_visible());
+    ASSERT_EQ(f.scene->round_number(), 1);
+    ASSERT_EQ(f.scene->round_text(), std::string("1"));
+    ASSERT_TRUE(f.scene->timed());                         // SCORE and TIME still show
+}
+
+TEST(classic_modes_show_the_round_label) {
+    ASSERT_TRUE(Fixture(tt2::GameMode::Timed).scene->round_visible());
+    ASSERT_TRUE(Fixture(tt2::GameMode::Untimed).scene->round_visible());
+}
+
+// A resumed WOTD game hides it too; a resumed Classic game keeps it.
+TEST(resumed_wotd_hides_the_round_label) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    f.type("car");
+    f.scene->key_return();
+    const tt2::SavedGame g = f.scene->snapshot();
+    ASSERT_TRUE(!wotd_save_is_stale(g, f.clock));
+    GameScene resumed(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt, &g);
+    ASSERT_EQ(f.discards, 1);                              // it really resumed, no new pick
+    ASSERT_EQ(resumed.score(), 90);
+    ASSERT_TRUE(!resumed.round_visible());
+
+    Fixture c(tt2::GameMode::Untimed);
+    tt2::SavedGame classic = c.scene->snapshot();
+    classic.round = 3;
+    GameScene untimed(c.com, c.ful, c.profile, nullptr, tt2::GameMode::Untimed, c.services(), 0, c.crt, &classic);
+    ASSERT_EQ(untimed.round_number(), 3);
+    ASSERT_TRUE(untimed.round_visible());
+}
+
+// AC-W8: the first bingo queues popup 11 instead of the BINGO banner, with
+// the same +1000 and sound; a repeat bingo queues neither. Timed keeps 2.
+TEST(wotd_first_bingo_queues_popup_11) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    bingo(f);
+    ASSERT_EQ(s.score(), 1250);
+    ASSERT_TRUE(f.played(SoundId::WordBingo));
+    ASSERT_TRUE(f.shown() == PopupKind::WordOfTheDay);
+    ASSERT_EQ(s.popup().sheet.image_id, std::string("IMAGE_IMAGE_POPUP_11"));
+    ASSERT_EQ(s.popups_waiting(), std::size_t{0});         // 11 replaces 2, not both
+    f.drain_popups();
+    f.type("crate");                                       // a second bingo
+    s.key_return();
+    ASSERT_EQ(s.score(), 1500);
+    for (int i = 0; i < 4; ++i) {
+        const auto k = f.shown();
+        ASSERT_TRUE(k != PopupKind::WordOfTheDay && k != PopupKind::Bingo);
+        s.update(3000);
+    }
+    ASSERT_TRUE(!popup_is_banner(PopupKind::WordOfTheDay));
+    ASSERT_EQ(popup_duration_ms(PopupKind::WordOfTheDay), 1650);   // message timing (0x428ec0 @0x42934c)
+
+    Fixture t(true);
+    bingo(t);
+    ASSERT_TRUE(t.shown() == PopupKind::Bingo);
+    Fixture u(false);
+    bingo(u);
+    ASSERT_TRUE(u.shown() == PopupKind::Bingo);
+}
+
+// AC-W9: the first WOTD game shows the "Word of the Day" tutorial once.
+TEST(wotd_tutorial_shows_once) {
+    Fixture f(WOTD, false, 0, false, MANILA_1023_0730);
+    ASSERT_TRUE(f.scene->dialog_kind() == GameDialog::Tutorial);
+    ASSERT_EQ(f.scene->dialog().label("HEADER")->text, std::string("Word of the Day"));
+    ASSERT_TRUE(f.profile.mode_flags[4]);
+    ASSERT_TRUE(!f.profile.mode_flags[static_cast<std::size_t>(tt2::GameMode::Timed)]);
+    GameScene again(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt);
+    ASSERT_TRUE(!again.dialog_open());
+}
+
+// AC-W10: state 3 counts the round with count_round(.., WordOfTheDay) and
+// pushes its trophy; with the four other modes played once that is Well
+// Rounded. State 3 sets the block flag first, so the popup waits.
+TEST(wotd_round_end_counts_the_round_and_pushes_its_trophy) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    f.profile.rounds_completed = {1, 1, 1, 1, 0};
+    bingo(f);
+    f.scene->press("BUTTON_WOTD_DONE");
+    f.scene->update(0);                                    // Speed Speller shows during the reveal
+    f.scene->update(3010);
+    ASSERT_EQ(f.profile.rounds_completed[4], 1);
+    ASSERT_TRUE(f.profile.has_trophy(tt2::TROPHY_WELL_ROUNDED));
+    ASSERT_EQ(f.scene->trophies_waiting(), std::size_t{1});
+}
+
+// AC-W10 negatives: leaving during the reveal, before state 3, counts
+// nothing, saves nothing and writes no WOD (§8.6 INFERRED edge).
+TEST(wotd_leaving_before_state_3_counts_nothing) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    bingo(f);
+    s.press("BUTTON_WOTD_DONE");
+    s.update(1000);
+    s.press("BUTTON_Menu");
+    s.dialog_press("BUTTON_STOP");
+    s.dialog_press("BUTTON_YES");
+    ASSERT_EQ(f.exits, 1);
+    s.update(6000);
+    ASSERT_TRUE(f.saved.empty());
+    ASSERT_EQ(f.profile.wod_day, -1);
+    ASSERT_EQ(f.profile.rounds_completed[4], 0);
+}
+
+// AC-W11: the Local rule moves the word, the scene day and the date to the
+// local calendar day (Manila 07:30 on 10-23 -> word day 6624, 2026-10-23).
+TEST(wotd_local_rule_uses_the_local_calendar_day) {
+    Fixture f(WOTD, true, 0, true, MANILA_1023_0730, tt2::WotdDayRule::Local);
+    auto& s = *f.scene;
+    ASSERT_EQ(s.rack(), std::string("cater"));
+    ASSERT_EQ(s.scene_day(), 6624);
+    bingo(f);
+    s.press("BUTTON_WOTD_DONE");
+    s.update(3010);
+    s.update(3010);
+    std::string extra;
+    for (const auto& e : f.hs.table(WOTD).entries) if (e.name == "Mugwump") extra = e.extra;
+    ASSERT_EQ(extra, std::string("2026-10-23"));
+    ASSERT_EQ(f.profile.wod_day, 6624);
+}
+
+// AC-W11 known edge: switching the rule can turn a same-day save into
+// another day's (Berlin, 00:30 CEST: Original says 07-14, Local 07-15), and
+// it is then deleted on the next start.
+TEST(wotd_rule_switch_turns_a_same_day_save_stale) {
+    Fixture f(WOTD, false, 0, true, BERLIN_0715_0030);
+    ASSERT_EQ(f.scene->scene_day(), 6523);
+    f.type("car");
+    f.scene->key_return();
+    const tt2::SavedGame original = f.scene->snapshot();
+    GameScene same(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt, &original);
+    ASSERT_EQ(same.score(), 90);                           // same rule: resumed
+    ASSERT_EQ(f.discards, 1);
+    f.rule = tt2::WotdDayRule::Local;
+    ASSERT_TRUE(wotd_save_is_stale(original, BERLIN_0715_0030, tt2::WotdDayRule::Local));
+    GameScene local(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt, &original);
+    ASSERT_EQ(f.discards, 2);                              // deleted, new game
+    ASSERT_EQ(local.score(), 0);
+    ASSERT_EQ(local.scene_day(), 6524);
+    // And back: a Local save is another day's under Original.
+    const tt2::SavedGame from_local = local.snapshot();
+    ASSERT_TRUE(wotd_save_is_stale(from_local, BERLIN_0715_0030, tt2::WotdDayRule::Original));
+    ASSERT_TRUE(!wotd_save_is_stale(from_local, BERLIN_0715_0030, tt2::WotdDayRule::Local));
+    // The Local game ends on the Local day.
+    local.press("BUTTON_GiveUp");
+    local.dialog_press("BUTTON_YES");
+    ASSERT_EQ(f.profile.wod_day, 6524);
+}
+
+// The two WOTD end cards; the default cards keep their text and buttons.
+TEST(wotd_end_cards_differ_from_classic) {
+    const Dialog n = build_next_round(true);
+    ASSERT_EQ(n.label("BODY_TEXT")->text, std::string("Click to return\nto the main menu!"));
+    ASSERT_EQ(build_next_round().label("BODY_TEXT")->text, std::string("Click to continue\nto the next round!"));
+    const Dialog e = build_end_game(true);
+    ASSERT_EQ(e.label("BODY_TEXT")->text, std::string("Sorry, you didn't find the\nWord of The Day."));
+    ASSERT_TRUE(!e.button("BUTTON_REPLAY")->sprite.visible && !e.button("BUTTON_REPLAY")->enabled);
+    ASSERT_TRUE(e.button("BUTTON_OK")->sprite.x == END_GAME_WOTD_MENU_X);
+    const Dialog c = build_end_game();
+    ASSERT_EQ(c.label("BODY_TEXT")->text, std::string("Sorry, you didn't qualify\nfor the next round."));
+    ASSERT_TRUE(c.button("BUTTON_REPLAY")->sprite.visible && c.button("BUTTON_REPLAY")->enabled);
+    ASSERT_TRUE(c.button("BUTTON_OK")->sprite.x == 109.0f);
+}
+
+// ---- Main menu: start errors and the stale-day check (T2.4) ------------
+
+// Error handling (design wotd-crossword.md): a scene that cannot start shows
+// one generic, port-only message with a single OK; stderr has the cause.
+TEST(start_failed_message_is_generic_and_ok_only) {
+    ASSERT_EQ(std::string(game_strings::START_FAILED_HEADER), std::string("Sorry"));
+    ASSERT_EQ(std::string(game_strings::START_FAILED_BODY),
+              std::string("This game could not be started.\nPlease try again."));
+    const Dialog d = build_yes_no(game_strings::START_FAILED_HEADER, game_strings::START_FAILED_BODY, true);
+    ASSERT_EQ(d.label("HEADER")->text, std::string("Sorry"));
+    ASSERT_EQ(d.label("MESSAGE")->text, std::string("This game could not be started.\nPlease try again."));
+    ASSERT_EQ(d.buttons.size(), std::size_t{1});
+    ASSERT_TRUE(d.button("BUTTON_OK") != nullptr);
+    ASSERT_TRUE(d.button("BUTTON_YES") == nullptr && d.button("BUTTON_NO") == nullptr);
+}
+
+namespace {
+tt2::SavedGame saved(const char* mode, std::int32_t day) {
+    tt2::SavedGame g;
+    g.mode = mode;
+    g.word = "carte";
+    g.day = day;
+    return g;
+}
+}  // namespace
+
+// AC-W7: the menu runs 0x42a460's day check before "Continue the game?".
+// A same-day WOTD save goes on to the prompt; another day's is dropped.
+TEST(menu_discards_another_days_wotd_save_before_the_prompt) {
+    const tt2::SavedGame today = saved("WORD_OF_THE_DAY", 6624);
+    const tt2::SavedGame yesterday = saved("WORD_OF_THE_DAY", 6623);
+    ASSERT_TRUE(!menu_discards_saved_game(WOTD, today, MANILA_1023_0730));       // prompt path
+    ASSERT_TRUE(menu_discards_saved_game(WOTD, yesterday, MANILA_1023_0730));    // delete path
+    // Both sides of local midnight in UTC+8 (the UTC word day is 6623 for both).
+    ASSERT_TRUE(!menu_discards_saved_game(WOTD, yesterday, MANILA_1022_2350));
+    ASSERT_TRUE(menu_discards_saved_game(WOTD, yesterday, MANILA_1023_0010));
+}
+
+// AC-W11: the rule decides which day "today" is.
+TEST(menu_discards_wotd_save_by_the_chosen_day_rule) {
+    const tt2::SavedGame original_day = saved("WORD_OF_THE_DAY", 6523);
+    ASSERT_TRUE(!menu_discards_saved_game(WOTD, original_day, BERLIN_0715_0030, tt2::WotdDayRule::Original));
+    ASSERT_TRUE(menu_discards_saved_game(WOTD, original_day, BERLIN_0715_0030, tt2::WotdDayRule::Local));
+}
+
+// Negative: the other modes keep no day (DAY = -1), so their saves always
+// reach the prompt, at any clock.
+TEST(menu_never_discards_classic_or_lightning_saves) {
+    ASSERT_TRUE(!menu_discards_saved_game(tt2::GameMode::Timed, saved("TIMED", -1), MANILA_1023_0730));
+    ASSERT_TRUE(!menu_discards_saved_game(tt2::GameMode::Untimed, saved("UNTIMED", -1), MANILA_1023_0010));
+    ASSERT_TRUE(!menu_discards_saved_game(tt2::GameMode::Blitz, saved("BLITZ", -1), BERLIN_0715_0030,
+                                          tt2::WotdDayRule::Local));
+}
+
+// ---- W5 audit against the exe (docs/plans/wotd-gaps.md) --------------------
+
+// Gap 1, 0x425710: while +0x260 or +0x2f9 is set the refresh only calls
+// setEnabled(0) (vtable +0xb8) on +0x210..+0x230, never setVisible. NEXT
+// ROUND stays on screen with its disabled frame through the reveal and
+// behind DIALOG_NEXTROUND.
+TEST(next_round_stays_on_screen_greyed_through_the_reveal_and_the_dialog) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    bingo(f);
+    const MenuButton& next = *s.button("BUTTON_NextRound");
+    ASSERT_TRUE(next.sprite.visible && next.enabled);
+    s.press("BUTTON_NextRound");
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(16);
+    ASSERT_TRUE(next.sprite.visible && !next.enabled);
+    ASSERT_EQ(next.sprite.frame, 3);                       // MenuButton: disabled frame
+    ASSERT_EQ(f.skip_button(), std::string(""));           // PASS does not come back
+    s.press("BUTTON_NextRound");                           // greyed: nothing happens
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(REVEAL_MS);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+    ASSERT_TRUE(next.sprite.visible && !next.enabled);     // behind the dialog
+    s.dialog_press("BUTTON_OK");
+    // Negative: the new round's refresh (both flags clear) sets visibility
+    // again: not qualified, so PASS x2 and no NEXT ROUND.
+    ASSERT_EQ(s.round_number(), 2);
+    ASSERT_TRUE(!next.sprite.visible);
+    ASSERT_EQ(f.skip_button(), std::string("BUTTON_Pass_2"));
+    ASSERT_TRUE(s.button("BUTTON_Pass_2")->enabled);
+}
+
+// Gap 1 in WOTD: DONE stays on screen, greyed, through the reveal, state 3
+// and behind the end card (frames: the exe never hides +0x224 there).
+TEST(wotd_done_stays_greyed_behind_the_end_card) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    bingo(f);
+    s.press("BUTTON_WOTD_DONE");
+    s.update(REVEAL_MS + 10);
+    s.update(WOTD_GAME_OVER_DELAY_MS + 10);
+    ASSERT_TRUE(s.phase() == GamePhase::GameOver);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+    const MenuButton& done = *s.button("BUTTON_WOTD_DONE");
+    ASSERT_TRUE(done.sprite.visible && !done.enabled);
+    ASSERT_TRUE(!s.button("BUTTON_GiveUp")->sprite.visible);
+}
+
+// Gap 1, GIVE UP -> YES: GIVE UP stays, greyed; DONE never appears.
+TEST(wotd_give_up_stays_greyed_after_yes) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    s.press("BUTTON_GiveUp");
+    s.dialog_press("BUTTON_YES");
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    const MenuButton& give_up = *s.button("BUTTON_GiveUp");
+    ASSERT_TRUE(give_up.sprite.visible && !give_up.enabled);
+    ASSERT_TRUE(!s.button("BUTTON_WOTD_DONE")->sprite.visible);
+    s.update(REVEAL_MS + 10);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);
+    ASSERT_TRUE(give_up.sprite.visible && !give_up.enabled);
+}
+
+// Gap 2, 0x424730 @0x42493c: finding every word passes 1000 to 0x428840
+// with no mode test, so a Classic all-words reveal is 1 s too.
+TEST(classic_timed_all_words_reveal_for_one_second) {
+    Fixture f(true);
+    auto& s = *f.scene;
+    find_all(f);
+    ASSERT_TRUE(s.last_round_end() == RoundEnd::AllWords);
+    s.update(ALL_WORDS_REVEAL_MS - 10);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_TRUE(!s.dialog_open());
+    s.update(20);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+}
+
+// Gap 2 negative: NEXT ROUND passes 3000 (0x425b60 -> 0x428840(3000)).
+TEST(classic_next_round_reveal_holds_three_seconds) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    bingo(f);
+    s.press("BUTTON_NextRound");
+    s.update(ALL_WORDS_REVEAL_MS + 10);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(REVEAL_MS - ALL_WORDS_REVEAL_MS - 30);        // 2980 ms in
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    s.update(30);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+}
+
+// Gap 3, 0x428840 @0x42888b: every caller runs the Speed Speller check,
+// NEXT ROUND too.
+TEST(next_round_within_five_seconds_wins_speed_speller) {
+    Fixture f(false);
+    bingo(f);
+    f.scene->update(4900);
+    f.scene->press("BUTTON_NextRound");
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_SPEED_SPELLER], tt2::TROPHY_NEW);
+}
+
+TEST(next_round_after_five_seconds_wins_no_speed_speller) {
+    Fixture f(false);
+    bingo(f);
+    f.scene->update(5100);
+    f.scene->press("BUTTON_NextRound");
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_SPEED_SPELLER], tt2::TROPHY_NOT_WON);
+}
+
+TEST(wotd_done_within_five_seconds_wins_speed_speller) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    bingo(f);
+    f.scene->update(4900);
+    f.scene->press("BUTTON_WOTD_DONE");
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_SPEED_SPELLER], tt2::TROPHY_NEW);
+}
+
+TEST(wotd_done_after_five_seconds_wins_no_speed_speller) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    bingo(f);
+    f.scene->update(5100);
+    f.scene->press("BUTTON_WOTD_DONE");
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_SPEED_SPELLER], tt2::TROPHY_NOT_WON);
+}
+
+// Gap 4, 0x426860 @0x426cd9: trophies dequeue whenever +0x260 is 0, and
+// 0x428840 sets only +0x2f9 / +0x264. A trophy won as the round ends
+// (here Speed Speller, won by NEXT ROUND itself) shows during the reveal.
+TEST(trophy_shows_during_the_next_round_reveal) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    bingo(f);
+    s.press("BUTTON_NextRound");
+    s.update(0);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_EQ(s.trophy_popup_id(), static_cast<int>(tt2::TROPHY_SPEED_SPELLER));
+    ASSERT_TRUE(f.played(SoundId::TrophyWon));
+}
+
+// Gap 4: the time-up check runs only with +0x260 clear (0x426d24) and
+// 0x425420 keeps it clear while lives are left, so a trophy waiting at a
+// time-up miss shows during that reveal too.
+TEST(trophy_shows_during_a_time_up_miss_reveal) {
+    Fixture f(true);
+    auto& s = *f.scene;
+    f.profile.twists = 999;
+    f.profile.solved = 999;
+    s.update(ROUND_MS - 2000);
+    s.key_space();                                         // With a Twist
+    s.update(BALL_MOVE_MS);                                // its popup starts (3500 ms)
+    enter_word(f, short_words(f)[0]);                      // Word Nerd waits behind it
+    ASSERT_EQ(s.trophies_waiting(), std::size_t{1});
+    s.update(1400);                                        // time up, not qualified
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_TRUE(s.last_round_end() == RoundEnd::TimeUpMissed);
+    s.update(1600);                                        // With a Twist is done
+    s.update(0);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_EQ(s.trophy_popup_id(), static_cast<int>(tt2::TROPHY_WORD_NERD));
+}
+
+// Gap 4 negative: a pass comes from its YES (0x4253a0 leaves +0x260 at 1),
+// so a waiting trophy holds through the reveal and shows in the next round.
+TEST(trophy_waits_through_a_pass_reveal) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.profile.solved = 999;
+    f.type(short_words(f)[0]);
+    s.key_return();                                        // Word Nerd, not shown yet
+    s.press("BUTTON_Pass_2");
+    s.dialog_press("BUTTON_YES");
+    s.update(0);
+    ASSERT_TRUE(s.phase() == GamePhase::Reveal);
+    ASSERT_EQ(s.trophy_popup_id(), -1);
+    ASSERT_EQ(s.trophies_waiting(), std::size_t{1});
+    s.update(REVEAL_MS + 20);                              // 0x425190: the next round
+    s.update(0);
+    ASSERT_EQ(s.round_number(), 2);
+    ASSERT_EQ(s.trophy_popup_id(), static_cast<int>(tt2::TROPHY_WORD_NERD));
+}
+
+// Gap 4 negative in WOTD: GIVE UP's reveal holds it too, and the end card
+// follows, so it never shows (the award stays).
+TEST(wotd_give_up_reveal_holds_trophies) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    f.profile.solved = 999;
+    f.type("car");
+    s.key_return();                                        // Word Nerd, not shown yet
+    s.press("BUTTON_GiveUp");
+    s.dialog_press("BUTTON_YES");
+    s.update(0);
+    ASSERT_EQ(s.trophy_popup_id(), -1);
+    s.update(REVEAL_MS + 10);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::EndGame);
+    s.update(5000);
+    ASSERT_EQ(s.trophy_popup_id(), -1);
+    ASSERT_EQ(s.trophies_waiting(), std::size_t{1});
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_WORD_NERD], tt2::TROPHY_NEW);
+}
+
+// Answer (a): a trophy won before state 3 shows during the reveal; state 3
+// sets +0x260 (0x426b5c) and nothing clears it before the scene goes
+// (0x427d10, the end card, its OK -> 0x427b20 -> 0x427b40 all leave it),
+// so the round's own trophy, here Well Rounded, is won but never shown.
+// The trophy room shows it as new (slot 1).
+TEST(wotd_round_trophy_is_won_but_never_shown) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    f.profile.rounds_completed = {1, 1, 1, 1, 0};
+    bingo(f);
+    s.press("BUTTON_WOTD_DONE");
+    s.update(0);
+    ASSERT_EQ(s.trophy_popup_id(), static_cast<int>(tt2::TROPHY_SPEED_SPELLER));   // during the reveal
+    s.update(REVEAL_MS + 10);                              // state 3
+    ASSERT_TRUE(f.profile.has_trophy(tt2::TROPHY_WELL_ROUNDED));
+    ASSERT_EQ(s.trophies_waiting(), std::size_t{1});
+    s.update(1000);                                        // Speed Speller's 3500 ms are over
+    s.update(0);
+    ASSERT_EQ(s.trophy_popup_id(), -1);                    // +0x260 holds Well Rounded
+    s.update(WOTD_GAME_OVER_DELAY_MS);
+    ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
+    s.update(5000);
+    ASSERT_EQ(s.trophy_popup_id(), -1);
+    ASSERT_EQ(s.trophies_waiting(), std::size_t{1});
+    s.dialog_press("BUTTON_OK");
+    ASSERT_EQ(f.exits, 1);
+    ASSERT_EQ(f.profile.trophies[tt2::TROPHY_WELL_ROUNDED], tt2::TROPHY_NEW);
+}
+
+// Gap 5, 0x432850: "uncommon" is a miss in the table's list at +0x180,
+// which 0x432330 fills with the board's words only. "rat" is common, but
+// the WOTD cap of 5 per length leaves it off the carte board, so it takes
+// the first free 3-letter slot as an uncommon word (Human Dictionary).
+TEST(wotd_common_word_off_the_board_counts_as_uncommon) {
+    Fixture f(WOTD, false, 0, true, MANILA_1023_0730);
+    auto& s = *f.scene;
+    ASSERT_TRUE(f.com.contains("rat"));
+    ASSERT_TRUE(f.slot("rat") == nullptr);
+    f.type("rat");
+    s.key_return();
+    ASSERT_TRUE(f.slot("rat") != nullptr && f.slot("rat")->found);
+    ASSERT_EQ(f.profile.hard_solved, 1);
+    f.type("cat");                                         // a board word is not uncommon
+    s.key_return();
+    ASSERT_EQ(f.profile.hard_solved, 1);
+}
+
+// Gap 5 negative: Classic keeps every common word of this rack (27 < 48),
+// so "rat" is a board word there; a full-only word is still uncommon.
+TEST(classic_board_word_is_not_uncommon) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    ASSERT_TRUE(f.slot("rat") != nullptr);
+    f.type("rat");
+    s.key_return();
+    ASSERT_EQ(f.profile.hard_solved, 0);
+    f.type("cart");
+    s.key_return();
+    ASSERT_EQ(f.profile.hard_solved, 1);
 }

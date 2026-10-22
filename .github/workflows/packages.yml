@@ -1,14 +1,15 @@
 # Release builds: a Linux AppImage, a Windows zip (tt2.exe + DLLs +
 # data/) and an Android APK signed with the release key. Runs on pushes to
-# main, on version tags (v*), and by hand; a v* tag also publishes all
-# three as a GitHub Release.
+# main, feature/** and hotfix/** (test builds, kept as run artifacts), on
+# version tags (v*), and by hand; only a v* tag publishes all three as a
+# GitHub Release.
 # The packages carry only the open-license dictionaries and the
 # procedural placeholder art; GameHouse assets are never part of a build.
 name: Packages
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/**", "hotfix/**"]
     tags: ["v*"]
   workflow_dispatch:
 

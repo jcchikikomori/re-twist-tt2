@@ -14,6 +14,7 @@
 #include <string_view>
 
 #include "tt2/settings.hpp"
+#include "tt2/wotd_day.hpp"
 
 namespace tt2 {
 
@@ -98,6 +99,27 @@ inline bool parse_texture_filter(std::string_view s, TextureFilter& out) {
     return false;
 }
 
+// Which day Word of the Day uses (deviation UX-12): `original` copies the
+// exe's three clocks (UTC word, local standard-time gate, UTC date);
+// `local` puts all three on the player's local calendar day, DST included
+// (tt2/wotd_day.hpp).
+inline const char* to_string(WotdDayRule r) {
+    switch (r) {
+        case WotdDayRule::Original: return "original";
+        case WotdDayRule::Local: return "local";
+    }
+    return "original";
+}
+
+inline bool parse_wotd_day_rule(std::string_view s, WotdDayRule& out) {
+    for (WotdDayRule r : {WotdDayRule::Original, WotdDayRule::Local})
+        if (s == to_string(r)) {
+            out = r;
+            return true;
+        }
+    return false;
+}
+
 // The frame limits IMPROVEMENTS offers (deviation UX-7); 0 = no limit. The
 // original caps itself at about 62.5 fps (a 16 ms Sleep); the port runs at
 // the display's refresh rate unless one of these is picked.
@@ -170,6 +192,10 @@ struct Improvements {
     // Ask "Continue the game?" when a save exists (game-scene.md 7). Off is
     // the original: the save resumes without asking.
     bool resume_prompt = true;
+    // Deviation (UX-12): WORD OF THE DAY. Original (the default) copies the
+    // exe's clocks; Local uses the local calendar day for the word, the
+    // menu gate, the save DAY, player.WOD and the high-score date.
+    WotdDayRule wotd_day = WotdDayRule::Original;
 
     // Picks a window mode and remembers a fullscreen one for Alt+Enter.
     void set_window(WindowMode m) {
@@ -197,7 +223,7 @@ struct Improvements {
                a.frame_limit == b.frame_limit && a.resolution == b.resolution &&
                a.fullscreen_mode == b.fullscreen_mode && a.widescreen_fill == b.widescreen_fill &&
                a.filter == b.filter && a.upscaler == b.upscaler &&
-               a.resume_prompt == b.resume_prompt;
+               a.resume_prompt == b.resume_prompt && a.wotd_day == b.wotd_day;
     }
     friend bool operator!=(const Improvements& a, const Improvements& b) { return !(a == b); }
 };
@@ -214,7 +240,8 @@ inline std::string serialize(const Improvements& imp) {
        << "widescreen_fill=" << (imp.widescreen_fill ? 1 : 0) << '\n'
        << "filter=" << to_string(imp.filter) << '\n'
        << "upscaler=" << (imp.upscaler ? "super-xbr" : "off") << '\n'
-       << "resume_prompt=" << (imp.resume_prompt ? 1 : 0) << '\n';
+       << "resume_prompt=" << (imp.resume_prompt ? 1 : 0) << '\n'
+       << "wotd_day=" << to_string(imp.wotd_day) << '\n';
     return os.str();
 }
 
@@ -275,6 +302,8 @@ inline bool parse(std::string_view text, Improvements& out) {
         } else if (key == "resume_prompt") {
             if (val != "0" && val != "1") return false;
             imp.resume_prompt = val == "1";
+        } else if (key == "wotd_day") {
+            if (!parse_wotd_day_rule(val, imp.wotd_day)) return false;
         }
         // Any other key belongs to a newer build: skip it.
     }
