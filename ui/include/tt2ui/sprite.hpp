@@ -60,6 +60,7 @@ struct SpriteState {
     int frame_accum_ms = 0;
     bool additive = false;  // blendmode="additive"
     unsigned tint = 0xFFFFFF;   // color="#RRGGBB" (multiplied in)
+    float rotation = 0.0f;  // radians, clockwise on screen, about (x, y) after the scale
 
     // Top-left corner on screen after applying the anchor.
     float left() const {

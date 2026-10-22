@@ -7,8 +7,9 @@ T4.2), binary `TextTwist2.exe` (sha256 `0c6e962c…a9e801`). The port's rules li
 
 Tags: **CONFIRMED** (read in code or shipped XML), **INFERRED** (strong reading, not proven), **UNCONFIRMED**
 (searched, not found; the search trail is in §11). Constants marked "file read" were read from the exe's data
-sections with `/usr/bin/python3` (the same bytes Ghidra decodes), not through an REA call. Evidence ids `CW1`..`CW43`
-are listed at the end. Only keys, numbers, positions and short UI labels are copied from the install.
+sections with `/usr/bin/python3` (the same bytes Ghidra decodes), not through an REA call. Evidence ids `CW1`..`CW75`
+are listed at the end. Only keys, numbers, positions and short UI labels are copied from the install. The zoom state
+(§3.7) was traced again on 2026-10-22 against the user's play-test of the original (CW44..CW73).
 
 ## 0. Corrections to the older notes (now fixed there)
 
@@ -33,7 +34,7 @@ are listed at the end. Only keys, numbers, positions and short UI labels are cop
 
 `<CrisscrossScene id="SCENE_CRISSCROSS" background="BACKGROUND" section="crosswordscene">`. All buttons except
 `BUTTON_PREVWORD` have `setup="DEFAULT_BUTTON"`, `clicksound="SOUND_BUTTON"`, `soundsection="default"`; all except
-`BUTTON_Menu` have `hitmaskthreshold="100"`. Images are named by id only.
+`BUTTON_Menu` and `BUTTON_PREVWORD` have `hitmaskthreshold="100"`. Images are named by id only.
 
 | Component | Image / text (section) | Position | Notes |
 | --- | --- | --- | --- |
@@ -76,7 +77,7 @@ dialog has `SWITCH_CROSSWORD` (39, 302) and `LABEL_CROSSWORD` (105, 320).
 
 | Id (section) | File | Size / frames |
 | --- | --- | --- |
-| `SOUND_crossword_rotate_word` (default, line 37) | `sound/crossword_rotate_word.ogg` | volume 0.5 |
+| `SOUND_crossword_rotate_word` (default, line 37) | `sound/crossword_rotate_word.ogg` | `volue="0.5"` (sic): a misspelt attribute, so full volume (INFERRED; the port reads `volume` only) |
 | `BACKGROUND` (crosswordscene) | `images/crosswordscene/background.png` | 800×600 |
 | `LetterBox` (crosswordscene) | `images/crosswordscene/letterBox.png` | 55×54 |
 | `IMAGE_LETTERBAR` (crosswordscene) | `images/crosswordscene/letterBar.png` | 367×34 (no string in the exe) |
@@ -99,18 +100,27 @@ the exe (file read), so both are unused. The word count uses `BLITZ_WORD_NUMBER_
 - `LetterBox` exists in `gamescene` (`letterBox.png`, 2 separate frames) and in `crosswordscene` (55×54). Which one
   the rack draws is **UNCONFIRMED**: the LetterBox constructor `0x43ab90` was not traced; it references
   `XwordBox` (xref `0x43aeea`, CW32), whose 69 px frames match the rack spacing (§3.4).
+  **Settled during T6b.5** (instructions read from the file, not through REA; they match screenshots A and B,
+  CW74, CW75): the word object builds its entry row with `0x43ab90(.., len, 1, 0)` (@`0x4351af..0x4351b5`) and its
+  rack with `0x43ab90(.., 1, 1)` (@`0x435163..0x435177`). Argument 4 = 1 picks `XwordBox` over `LetterBox`
+  (@`0x43aeea`; Classic passes 0, @`0x43998c` / `0x4399cc`), argument 5 is the frame, and the hole overlay
+  `IMAGE_XWORD_OVERLAY` shows only for an `XwordBox` at frame 0 (@`0x43b505..0x43b526`). So an empty grid cell is
+  `XwordBox` frame 0 plus the hole, and an empty rack slot is `XwordBox` frame 1, the 27 px gold dot. The
+  crosswordscene `LetterBox` (55×54) is not used by the rack.
 
 ## 2. Objects and state
 
 ### 2.1 Scene fields (CONFIRMED unless tagged)
 
 Vtable `0x5902fc` (file read): slot 0 dtor `0x419bb0`, 24 buttons `0x41b910`, 25 update `0x41ebc0`, 44 enter
-`0x41ef40`, 45 exit `0x41f0c0` → `0x41a170`, 51 init `0x419d40`, 53 mouse down `0x421e50`, 54 NEXTROUND closed
-`0x41fcf0`, 55 leave `0x41f7d0`, 56 unlock `0x41f7b0`, 57 `0x41ba30` = `0x41ba40(1)`. A second interface at
-`scene+0x174` carries the keyboard handler `0x41f120` (pointer at `0x5904c0`) and the pointer handler `0x41f2b0`.
+`0x41ef40`, 45 exit `0x41f0c0` → `0x41a170`, 51 init `0x419d40` (pointer at `0x5903c8`; run on the first enter
+only, §3.1), 53 mouse down `0x421e50`, 54 NEXTROUND closed `0x41fcf0`, 55 leave `0x41f7d0`, 56 unlock `0x41f7b0`,
+57 `0x41ba30` = `0x41ba40(1)`. A second interface at `scene+0x174` carries the keyboard handler `0x41f120` (pointer
+at `0x5904c0`) and the pointer handler `0x41f2b0`.
 
 | Offset | Meaning |
 | --- | --- |
+| `+0x1cc` | scene state (framework field): enter `0x41ef40` runs init while it is 0, then sets it to 2 (§3.1, CW58) |
 | `+0x20c` | pending dialog, run by the update: 1 / 2 menu, 3 next round, 4 give-up confirm, 5 tutorial |
 | `+0x260` | dialog lock (all buttons disabled) |
 | `+0x264` | round state: 0 playing, 1 solved, 2 given up |
@@ -122,11 +132,12 @@ Vtable `0x5902fc` (file read): slot 0 dtor `0x419bb0`, 24 buttons `0x41b910`, 25
 | `+0x378` | selected word object |
 | `+0x380..+0x384` | word objects, index = placement index, root first |
 | `+0x39c` / `+0x3a0` | `BUTTON_NEXTWORD` / `BUTTON_PREVWORD` |
-| `+0x3a4` | grid view (0x17c-byte node from `0x434da0`); its scale `+0x6c` is 1.0 or 0.5 |
+| `+0x3a4` | grid view: a 0x17c-byte `ClickableSprite` (ctor `0x434da0`, CW44, CW59). Scale x / y at `+0x6c` / `+0x70`: **1.0 when built** (`0x44a320` on the `+0x60` sub-object, CW65), set to **0.5 at once by every round setup and every load** (`0x41d920`, CW57), and 1.0 or 0.5 at rest after that (§3.7) |
 | `+0x3a8` | highlight sprite, built in code (§3.3) |
 | `+0x3c0` | CrosswordTable (0x8b0 bytes, ctor `0x435760`) |
 | `+0x3c8` | direction the grid view is turned to (1 = horizontal) |
-| `+0x3c9` | zoom flag; `+0x3cc` is `BUTTON_Zoom` |
+| `+0x3c9` | **zoom-in flag** (§3.7): 1 = the player's last ZOOM press zoomed **in**, so a select at 0.5 goes back to 1.0; 0 = overview, a select at 0.5 stays at 0.5. Init sets 0; only ZOOM writes it; only `0x41d390` reads it (byte scan, file read). Not saved |
+| `+0x3cc` | `BUTTON_Zoom` |
 | `+0x34c` / `+0x350` | popup anchor (400.0, **70.0**); the Classic scene uses (400, 150) |
 
 ### 2.2 Word object (0xbc bytes, ctor `0x434f40(parent, rack, len, index, restore)`, CW36)
@@ -157,9 +168,14 @@ is drawn at all is UNCONFIRMED (§11).
 
 - Enter `0x41ef40`: music `MUSIC_in-game_1` (section `music`) at volume 0.7 (`0x3f333333`), then `0x41a110`.
 - `0x41a110`: save tag **`CROSSWORD`** (`0x590254`). A save exists → load `0x420fa0`; else round setup
-  `0x41ba40(1)`. The string `CRISSCROSS` (`0x5917fa`) has no xrefs (CW31).
-- Init `0x419d40` (CW5): `+0x2f0 = 6`, `+0x2f4 = 8`; grid view and highlight sprite created; `setVisible(0)` on
-  `+0x234`, `+0x238` **and `+0x244` (`TIME_LABEL`)**; popup anchor (400, 70).
+  `0x41ba40(1)`. The string `CRISSCROSS` (`0x5917fa`) has no xrefs (CW31). Both paths end in `0x41d920` (CW56), so a
+  new game and a resumed one open the same way: scale 0.5, the root selected (§3.2, §3.7, §5.5).
+- Init `0x419d40` (CW5, CW45): `+0x2f0 = 6`, `+0x2f4 = 8`, **`+0x3c9 = 0`** (@`0x419d99`); grid view and highlight
+  sprite created; `setVisible(0)` on `+0x234`, `+0x238` **and `+0x244` (`TIME_LABEL`)**; popup anchor (400, 70).
+- Init runs **on the first enter only** (CW58): enter reads `+0x1cc` (@`0x41ef68`), calls vtable slot `0xcc` (init)
+  when it is 0, then sets `+0x1cc = 2` (@`0x41ef7e`). Later enters skip init, so `+0x3c9` keeps its value across
+  rounds, menu trips and new games. No other `+0x1cc` write is in the scene code (byte scan of `0x419000..0x423000`,
+  file read). INFERRED: the scene object lives until the program exits (§11).
 
 ### 3.2 Round setup `0x41ba40(round)` (CONFIRMED, CW14, CW15)
 
@@ -173,7 +189,12 @@ is drawn at all is UNCONFIRMED (§11).
 1. Full-list sub-anagrams of the root → `table+0x198`; the common list → `table+0x188` (§0); grid built
    (`0x436090`). A failed build restarts the setup.
 1. One word object per placement, root first. Every rack holds the whole root, shuffled on its own (`0x43c370`,
-   CRT). The root is selected first; `+0x3c8 = 1`; grid rotation 0.
+   CRT); a locked letter later takes its ball out (§3.4, CW74). Then `+0x3c8 = 1` and grid rotation 0
+   (@`0x41c6e1..0x41c6f1`, CW15), and `0x41d920` (@`0x41c6f3`, CW55,
+   CW57): every row goes into the grid view (vertical rows turned π/2), the grid view's scale is set to **0.5 at
+   once**, with no animation (`setScale` through the `+0x60` vtable slot `+0x70`, @`0x41dddf..0x41ddf8`, CW60 to
+   CW63), and word 0, the root, is selected (`xor eax,eax; jmp 0x41e7f0` @`0x41ddfa..0x41de04`). That select pans
+   to the root and zooms in only when `+0x3c9 == 1` (§3.3, §3.7).
 
 No round-start sound was found in `0x41ba40` (§11).
 
@@ -187,15 +208,24 @@ No round-start sound was found in `0x41ba40` (§11).
   that word; a click on the selected word goes to the pointer handler (§3.4). After the round, a click looks the
   word up instead (§3.9).
 - Select `0x41e7f0`: clears the typed letters of an unsolved selected word, hides its rack, switches, shows the new
-  rack if that word is unsolved, refreshes the buttons, then:
-  - **Rotate** `0x41d390`: when the new word's direction differs from `+0x3c8`, plays
-    **`SOUND_crossword_rotate_word`** (its only xref, `0x41d42e`, CW18) and turns the whole grid view by ±π/2, with
-    every letter turned back, so **the selected word always reads left to right** on screen. When zoomed out by the
-    player (`+0x3c9 == 1`) it scales back to 1.0.
-  - **Pan** `0x41d160`: `ModifierLocationLine`, smoothstep (`0x4513d0`), to (400 − x, 189 − y) of the word;
-    500 ms (INFERRED: `mov r,500` @`0x41d304` next to the modifier call, file read).
-  - Then `0x41cd00`: the selected row's crossing cells take the letters of the **solved** crossing words and are
-    locked (`+0x180 = 1`); the others are unlocked; the highlight is placed.
+  rack if that word is unsolved, then calls the pan `0x41d160` (@`0x41e919`), refreshes the buttons and places the
+  highlight (`0x41de10`) (CW51). Its callers (CW66): NEXT / PREV and the 700 ms auto-advance (`0x41e140` /
+  `0x41e230`), the row click (`0x421e50`), the last solve (`0x41e930`), GIVE UP yes (`0x41fb50`), and round setup
+  and load (`0x41d920`). The animation is one modifier chain, in this order:
+  - **Pan** `0x41d160` (CW48, CW49): busy (`+0x2f9 = 1` @`0x41d274`); the grid view's anchor is set to the word's
+    centre (vtable `+0x88`, `AnchorPoint` type 9, @`0x41d26b`); then `ModifierLocationLine`, smoothstep
+    (`0x4513d0`), to (400 − x, 189 − y) of the word (`0x59b958` = 400.0, `0x59b950` = 189.0, file read); 500 ms
+    (INFERRED: `mov edx,0x1f4` @`0x41d304` next to the modifier call). It has no scale test: it pans the same way at
+    1.0 and at 0.5.
+  - **Rotate** `0x41d390`, chained after the pan (`mov eax,0x41d390` @`0x41d369`, CW50): when the new word's
+    direction differs from `+0x3c8`, plays **`SOUND_crossword_rotate_word`** (its only xref, `0x41d42e`, CW18) and
+    turns the whole grid view by ±π/2, with every letter turned back, so **the selected word always reads left to
+    right** on screen.
+  - **Zoom back in**, same function: only when `+0x3c9 == 1` **and** the scale is exactly 0.5 (@`0x41d776..0x41d797`):
+    `ModifierScale` to 1.0 (1500 ms INFERRED, `mov esi,0x5dc` @`0x41d7b9`), then `0x41b320(true)` (@`0x41d85d`).
+    With `+0x3c9 == 0` a select at 0.5 only pans, and the view **stays at 0.5** (§3.7).
+  - Then `0x41cd00` (@`0x41d874`): the selected row's crossing cells take the letters of the **solved** crossing
+    words and are locked (`+0x180 = 1`); the others are unlocked; the highlight is placed.
 - **Highlight** (`0x41de10` / `0x41df10`): the sprite `+0x3a8` (`IMAGE_CROSSWORDHIGHLIGHT`, 12 frames of 572×90) is
   created in code, child of the grid; the XML `SPRITE_HIGHLIGHT` name is not in the exe (file read). Position = entry
   row (x − 10, y − 11); rotation 0 for a horizontal word, π/2 for a vertical one; **frame = len − 3**. When the word
@@ -218,6 +248,14 @@ No round-start sound was found in `0x41ba40` (§11).
   removes each from a copy of the root; when a letter is missing, popup 4 shows and the letter is taken back
   (`0x41b390(0)`). INFERRED reading: the crossing word would need more copies of a letter than the root has.
 - Clicking the last typed letter of the row takes it back (`0x41f2b0` → `0x41b390`).
+- **Rack** (user's play-test of 2026-10-22, screenshots A and B, CW74, CW75): the selected unsolved word's rack has
+  one slot per root letter, drawn as the Classic letter balls on a 69 px pitch centred on x 400 (slot centres about
+  225 … 569, ball centre y about 410). **A locked letter takes its ball out of the rack**: with root PRIDED and a
+  locked D, the rack showed a small gold dot and P E D R I. A typed ball leaves its slot in place as the same gold
+  dot; the rack is not compacted. Which slot a locked letter empties (the first match, or where its ball sat) is
+  UNCONFIRMED; screenshot A shows slot 0.
+- In the selected row, typed letters and locked letters are drawn as small letter balls in the dark hole cells;
+  solved words are square letter tiles (CW74, CW75).
 
 ### 3.5 ENTER `0x41a510` (CONFIRMED, CW9, CW10, CW11, CW12, CW13)
 
@@ -262,17 +300,68 @@ again, **`+0x371 = 1`**. `+0x85` stays set, so solving that slot again adds no p
 enabled whenever the row has letters, a solved row included). `+0x371` has no other writer in the scene code
 (byte scan of `0x419000..0x423000`: `0x41bbd4` reset, `0x41e9bf` read, `0x41eb9a` set; file read).
 
-### 3.7 Zoom (CONFIRMED unless tagged, CW16)
+### 3.7 Zoom (CONFIRMED unless tagged, CW16, CW44..CW73)
 
-- Scale 1.0 → `+0x3c9 = 0`, busy, `ModifierScale` to **0.5** (1000 ms, INFERRED from `mov r,1000` @`0x41b27d`, file
-  read), list look switch `0x41b320(false)` on every word.
-- Scale 0.5 → `+0x3c9 = 1`, `0x41d160`: back to the selected word (pan, and scale 1.0 in `0x41d390`; a
-  `mov r,1500` @`0x41d7b9` sits next to that modifier, INFERRED duration).
+The grid view `+0x3a4` rests at scale 1.0 (69 px cells) or 0.5 (34.5 px cells). `+0x3c9` is a **zoom-in flag**, not
+a "zoomed out" flag: ZOOM writes 1 when it zooms **in** and 0 when it zooms **out**, and the select's
+`0x41d390` reads it to decide whether a view at 0.5 goes back to 1.0. (§3.3 used to read it the other way round.)
+The scene code has four scale writers: three `ModifierScale` vtable stores (`0x59700c` @`0x41b292`, `0x41d7ce`,
+`0x41ffba`) and one direct `setScale` (@`0x41ddf8`); and four `+0x3c9` accesses: `0x419d99`, `0x41b1e3`, `0x41b301`
+(writes) and `0x41d776` (the only read). Both lists come from byte scans of `0x419000..0x423000` (file read).
+
+| Event | Scale | `+0x3c9` |
+| --- | --- | --- |
+| grid view built: `0x434da0` → `0x442be0` → `0x44a320` on `+0x60` (@`0x442c37`, CW44, CW45, CW65) | 1.0 | — |
+| scene's first enter: init `0x419d40` (§3.1) | unchanged | 0 (@`0x419d99`) |
+| round setup `0x41ba40` (@`0x41c6f3`) or load `0x420fa0` (@`0x421dc3`) → `0x41d920` | **0.5 at once** (@`0x41ddf8`), then a select | unchanged |
+| any select: `0x41e7f0` → pan `0x41d160` → `0x41d390` | 0.5 → 1.0 (1500 ms) only if `+0x3c9 == 1`; else unchanged | unchanged |
+| ZOOM at 1.0 | 1.0 → 0.5 (1000 ms), then the root is centred | 0 (@`0x41b1e3`) |
+| ZOOM at 0.5 | 0.5 → 1.0 on the selected word, through the select's pan and `0x41d390` | 1 (@`0x41b301`) |
+| reveal `0x41fed0` (puzzle solved or given up, §5.1, §5.3) | 1.0 → 0.5 if at 1.0 | unchanged |
+| save `0x4203f0`, leave `0x41f7d0` | untouched (no `+0x3a4` access, file read) | unchanged |
+
+ZOOM handler `0x41b1c0` (CW46, CW47), called by the button dispatcher (@`0x41b9e8`) and the keyboard (@`0x41f22f`):
+
+- **Scale 1.0** (`fld1; fcomp [ecx+0x6c]` @`0x41b1c6..0x41b1db`): `+0x3c9 = 0`, busy, button refresh, then one
+  chain: `0x41b320(false)` (the list look on every word); `ModifierScale` to 0.5 (`0x59b858`, CW61; 1000 ms INFERRED
+  from `mov esi,0x3e8` @`0x41b27d`; ease `0x4513d0` @`0x41b278`, INFERRED); then `0x41cab0` (@`0x41b2d4`).
+  `0x41cab0` anchors the grid view on the **root's** row (word 0, @`0x41cb18`) and pans it like a select does
+  (500 ms INFERRED, `mov edx,0x1f4` @`0x41cc2f`), so the overview centres on the root, not on the selected word. It
+  ends in `0x41cce0`: `+0x2f9 = 0` and the button refresh (file read).
+- **Scale 0.5** (`0x59b858` compare @`0x41b2ef..0x41b2fd`): `+0x3c9 = 1`, then the pan `0x41d160` (@`0x41b308`):
+  pan to the selected word, turn if needed, zoom in to 1.0 (§3.3).
+- **Any other scale** (mid-animation): nothing. Not reachable in play: the ZOOM button is disabled and keys are
+  ignored while busy (§3.6, §3.8).
+
+What this means:
+
+- **Fresh round: 0.5.** The overview is set at once and the select pans to the root; the view stays at 0.5 unless
+  `+0x3c9 == 1`. In the first Crossword game of a run the flag is 0, so the round stays at 0.5.
+- **Resumed game: 0.5, for the same reason.** Load ends in the same `0x41d920`. Nothing zooms out before the save:
+  leave only saves (while `+0x264 == 0`) and calls `0x427b40`, and no zoom state is stored (§5.5). This matches the
+  **user's play-test of 2026-10-22, screenshot (a)** (CW72): a resumed game showed cells of about 34.5 px with no
+  ZOOM press.
+- **One ZOOM press at 0.5** sets the flag and runs the select path: 69 px cells, the selected word centred at
+  (400, 189). This matches **screenshot (b)** (CW73).
+- **Selecting at 0.5** (NEXT, PREV, a row click, the 700 ms auto-advance): with `+0x3c9 == 0` (never zoomed in,
+  or the last ZOOM press zoomed out) the view only pans and **stays at 0.5**. With `+0x3c9 == 1` it pans, turns if
+  needed, then zooms back to 1.0.
+- INFERRED from the writer lists above: while a round is played and nothing animates, the scale is 1.0 exactly when
+  `+0x3c9 == 1`. A view at 0.5 with the flag set exists only for a moment, between `0x41d920` and its select's zoom-in
+  (or after the reveal, when input is off).
+- **The flag outlives the round.** Init runs on the first enter only (§3.1). After the player zooms in once, every
+  later round and every resumed game in the same run opens at 0.5 and then zooms in on the root after the pan.
+  INFERRED: this lasts until the program exits (§11).
 - At 1.0 the 18-cell grid is 18 × 69 = 1242 px wide, so only part of it is on screen; at 0.5 it is 621 px, inside
   the 630 px click area. INFERRED: that is why the view pans to each selected word.
+- INFERRED: the scale pivots on the anchored word (`AnchorPoint` set by `0x41d160` and `0x41cab0`), so zooming keeps
+  that word in place; the anchor code was not decompiled (§11).
 
 ### 3.8 Button refresh `0x41b510` (CONFIRMED, CW23)
 
+- "The row has letters" counts **typed** letters only, not locked ones (user's play-test, CW74, CW75): with a
+  locked D and nothing typed, CLEAR, LAST and ENTER were off and TWIST on; after one typed letter, TWIST, CLEAR and
+  ENTER were on and LAST off.
 - Lock (`+0x260`) or busy (`+0x2f9`): all ten buttons disabled, visibility unchanged.
 - All solved: Menu on; Twist, Enter, LastWord, Clear, Zoom, Next, Prev off; NextRound hidden and off; GiveUp off
   but visible.
@@ -319,8 +408,13 @@ both timer labels, so the UI bar shows SCORE and ROUND only. There is no time-ou
 1. All solved: `+0x264 = 1`, select (`0x41e7f0`); Puzzle Pro (id 8) when `+0x370 == 0` and not yet won; Perfect
    Puzzler (id 9) when `+0x371 == 0` and not yet won (§6).
 1. ENTER adds the `+1000` after this call. The select ends in `0x41cd00`, which for `+0x264 != 0` runs the reveal
-   `0x41fed0` (callers: `0x41cd00` only, CW21): busy, zoom out to 0.5, `SOUND_letter_sheen` (only xref `0x420047`,
-   CW19) and a sheen over every row, `ModifierDelay` **2500 ms**, then `0x428a60`: `+0x2f9 = 0`, `+0x20c = 3`.
+   `0x41fed0` (callers: `0x41cd00` only, CW21; called @`0x41d145`): busy; when the scale is 1.0, the same chain as a
+   ZOOM-out press, `0x41b320(false)`, `ModifierScale` to 0.5 (@`0x41ffba`) and `0x41cab0` (@`0x41fff6`), but
+   **`+0x3c9` is not touched** (CW52, §3.7); `SOUND_letter_sheen` (only xref `0x420047`, CW19) and a sheen over
+   every row, `ModifierDelay` **2500 ms**, then `0x428a60`: `+0x2f9 = 0`, `+0x20c = 3`.
+   The sheen (file read during T6b.5): `0x43d310` on every row (@`0x4200f0..0x42013a`) starts each letter's
+   `+0x178` child, built hidden (@`0x43a1b1..0x43a286`): `IMAGE_CHICKLET_SHEEN`, 9 frames, a `ModifierFrame` at 100 ms
+   (vtable `0x5971dc`, `+0x48 = 100`).
 1. The next update plays `SOUND_game_next_round_acheived` and opens **`DIALOG_NEXTROUND` on its own**.
 
 ### 5.2 Next round (CONFIRMED, CW7, CW22)
@@ -346,14 +440,34 @@ Closing `DIALOG_NEXTROUND` (`0x41fcf0`): unlock, refresh, `0x41b000`: Well Round
 - Exit `0x41a170`: closes `CTEXT_MENU_STOP`, `DIALOG_MENU`, `DIALOG_HIGHSCORES`, `DIALOG_CONGRATS`, `DIALOG_ENDGAME`
   and clears the popup and trophy queues.
 
-### 5.5 Save and load (CONFIRMED string pushes, file read; recorded only, D-10)
+### 5.5 Save and load (CONFIRMED unless tagged; recorded only, D-10)
 
 Save `0x4203f0` (CW33), under the player, tag `CROSSWORD`: `DATA` / `GAME` { `ROUND` (`+0x300`), `TIME` (`+0x2fc`,
 always 0), `SCORE` (`+0x308`), `WORD` (the root, word 0's `+0x18`), the table (`0x437140`, key
-`CROSSWORD_TABLE`), `CROSS_LIST` of `CROSS_INFO` { `SOURCE`, `HINT`, `PLAYED`, `LENGTH`, `SCORED` } }. Load
-`0x420fa0` reads the same keys in that order and writes `+0x300`, `+0x2fc`, `+0x308`. INFERRED (load not
-decompiled): the grid comes back from `CROSSWORD_TABLE` and is never rebuilt, and a non-empty `PLAYED` restores a
-solved word (the word-object constructor sets `+0x84` when its restore string is not empty, CW36).
+`CROSSWORD_TABLE`), `CROSS_LIST` of `CROSS_INFO` { `SOURCE`, `HINT`, `PLAYED`, `LENGTH`, `SCORED` } }.
+
+Load `0x420fa0` (CW54) reads the same keys in that order:
+
+1. `+0x264 = 0`; `ROUND`, `TIME`, `SCORE` → `+0x300`, `+0x2fc`, `+0x308`; the round and score labels.
+1. A new table (`0x435760`) read from `CROSSWORD_TABLE` (`0x4381e0`).
+1. One word object per `CROSS_INFO` (`0x434f40`, restore string = `PLAYED`); the i-th word's `+0x85` takes its
+   `SCORED` (store @`0x421c9d`, file read).
+1. Word 0 becomes the selected word; its rack shows only while it is unsolved; `0x41c740`; `+0x3c8 = 1`
+   (@`0x421db1`) and grid rotation 0 (@`0x421da6..0x421dc1`).
+1. `0x41d920` (@`0x421dc3`): scale **0.5 at once**, then select word 0 (§3.2). So a resumed game always opens on
+   word 0, not on the word that was selected when it was saved. INFERRED: word 0 is the root, as the save writes
+   the words in index order (the save loop was not decompiled).
+1. `0x461840`, the call GIVE UP yes uses to delete the save. INFERRED: the save is used up on resume and written
+   again on leave (§5.4).
+
+**No zoom state is saved or restored.** No key holds it, and neither `0x4203f0` nor the leave `0x41f7d0` reads or
+writes `+0x3a4` or `+0x3c9` (byte scan, file read). Leave is `+0x264 == 0` → save (@`0x41f7dc`), then the shared
+leave `0x427b40`; it does not zoom out first. The resumed game opens at 0.5 because load runs `0x41d920`, and zooms
+in only when `+0x3c9` is still 1 from earlier in the same run (§3.7).
+
+INFERRED: the grid comes back from `CROSSWORD_TABLE` and is never rebuilt (`0x4381e0` not decompiled), and a
+non-empty `PLAYED` restores a solved word (the word-object constructor sets `+0x84` when its restore string is not
+empty, CW36).
 
 ## 6. Trophies and counters (CONFIRMED, CW11, CW35)
 
@@ -401,9 +515,15 @@ Popups use the shared queue (`game-scene.md` §5.1), anchored at (400, 70).
   `srand((uint)_time64(NULL))`; `0x4f5829` (`0x4f57f0`, a multipart-boundary helper, time + counter) and `0x50fb99`
   (`0x50fb90`, `srand(clock())`), both library code; `0x4b523c` in undefined code (CW28, CW29).
 - Every seed is clock-based, so **the original never uses the CRT default seed 1** and its own grids, rack shuffles
-  and twists differ from run to run. Which seed is live when a round starts is UNCONFIRMED, and it does not matter:
-  no fixed seed reproduces the original's grids. The `rand` state is process-wide, so a second game in the same run
-  continues the sequence.
+  and twists differ from run to run. The `rand` state is process-wide, so a second game in the same run continues
+  the sequence.
+- Which seed is live when a round starts: INFERRED `srand(_time64)` at `0x482b04`, not traced end to end (CW67 to
+  CW71). `0x482af0` is renderer set-up, not game code: it calls the device at `+0x13c` through slot `0x5c` with
+  (1024, 1024, 1, 0, 0x15), the shape of `IDirect3DDevice9::CreateTexture` for a 1024×1024 A8R8G8B8 texture. Its
+  only chain is `0x482400` ← `0x440e50` ← `0x46df00`, and `0x46df00` has no direct caller (a virtual method), so it
+  most likely runs after the `GF2::Application` constructor's `timeGetTime` seed. Whether a device reset runs it
+  again mid-game is UNCONFIRMED (§11). It does not matter for the port: no fixed seed reproduces the original's
+  grids.
 
 ## 10. The port: rule gaps for T5.1 and deviations
 
@@ -422,6 +542,16 @@ unfilled grid word and has a `NoRoom` result; the original has neither. T5.1 mus
 | G8 flags | twisted and mistake flags, reset each round | §3.2, §6 |
 | G9 restore | root, round, score, placements and per-slot played word and scored flag; the grid is never rebuilt | §5.5 |
 | G10 uncommon | accepted word not in the common sub-anagrams of the root | §3.5 |
+
+Scene zoom for T6b.4 (§3.7), the rule the port needs:
+
+- One zoom-in flag for the scene's lifetime: off at start-up, never saved, not reset by a new round or a new game.
+- Every new round and every resumed game: scale 0.5 at once, select the root (pan 500 ms); then, only when the
+  flag is on, zoom in to 1.0 (1500 ms) after the pan and the turn.
+- ZOOM at 1.0: flag off, zoom out to 0.5 (1000 ms), then pan so the root is centred (500 ms). ZOOM at 0.5: flag on,
+  pan to the selected word, turn if needed, zoom in to 1.0.
+- A select at 0.5 with the flag off only pans; the view stays at 0.5. The reveal zooms out without touching the
+  flag.
 
 Decisions and deviations (user, T4.4, 2026-10-22):
 
@@ -444,12 +574,16 @@ Decisions and deviations (user, T4.4, 2026-10-22):
 | Round-start sound | `0x41ba40` (CW14, CW15); every string push in `0x419000..0x423000` (file read): no load or start sound among the 11 `SOUND_` ids | none in the scene code; shared code not searched |
 | `ANAGRAMS` drawn? | the string `ANAGRAMS` is not in the exe (file read); init looks up `OVERLAY`, `BUTTON_Zoom`, the arrows | never looked up by name |
 | `COMMENTARY`, `GAME_OVER`, `PANEL_*` | `COMMENTARY` and `GAME_OVER` are not in the exe; `PANEL_BG` once, outside the scene range (file read) | not used by this scene's code |
-| Which `LetterBox` the rack uses | `XwordBox` xref `0x43aeea` (CW32) inside `0x43ab90`; ctor not decompiled | open |
+| Which `LetterBox` the rack uses | `XwordBox` xref `0x43aeea` (CW32) inside `0x43ab90`; the callers' arguments read from the file in T6b.5 (§1.3) | `XwordBox` frame 1 (gold dot); matches CW74, CW75 |
+| Which rack slot a locked letter empties | screenshot A (CW74) shows slot 0; the code that moves the ball was not traced | open; the port takes the leftmost free ball with that letter |
+| List look `0x41b320` | `0x41b320(flag)` calls `0x43d280(word + 0xb8, flag)` on every word (file read, T6b.5): square `IMAGE_XBOX` at scale 2.0 (`0x59b9d8`) or `IMAGE_BLITZDOT` at 2.5 (`0x59b9dc`), the same switch as Lightning | not drawn by the port; T7.1 |
 | Popup 4 / 7 / 9 meanings | `0x41e270`, `0x41aa20`, `0x41df10` pseudo (CW37, CW38); `0x41e060`, `0x43c060`, `0x40b230` not decompiled | INFERRED readings in §3.3-§3.4 |
-| Zoom, pan, rotate durations | register immediates next to the modifier calls (file read) | INFERRED 1000 / 500 / 1500 ms |
+| Zoom, pan, rotate durations | register immediates next to the modifier calls: `mov esi,0x3e8` @`0x41b27d`, `mov edx,0x1f4` @`0x41d304` and `0x41cc2f`, `mov esi,0x5dc` @`0x41d7b9` (CW47, CW49, CW50, CW53); the modifier constructors `0x47ece0` / `0x486560` were not decompiled | INFERRED 1000 / 500 / 1500 ms |
 | High-score `extra` | `0x41f800` (CW33): `0x449c90` int → string before the insert | INFERRED round |
-| Load details | string pushes and field stores in `0x420fa0` (file read) | keys CONFIRMED, flow INFERRED |
-| Live CRT seed at round start | five `srand` callers (CW26) | all clock-based; order not traced |
+| Load details | pseudo `0x420fa0` (CW54); `SCORED` store @`0x421c9d` (file read); `0x4381e0` (table read) and `0x461840` not decompiled; the save loop's word order not decompiled | flow and zoom CONFIRMED; grid never rebuilt, save used up on resume, word 0 = root: INFERRED |
+| Live CRT seed at round start | five `srand` callers (CW26); `0x482af0` ← `0x482400` ← `0x440e50` ← `0x46df00`, which has no direct caller (CW67 to CW71); the vtable that holds `0x46df00` and any device-reset path were not traced | INFERRED `_time64` (`0x482b04`) is the last seed before a round; all clock-based |
+| `+0x3c9` across scene exits | enter guard `+0x1cc` (@`0x41ef68`, CW58); byte scan of `0x419000..0x423000` finds no other `+0x1cc` write (file read); the framework's scene lifetime (who frees the scene, whether `+0x1cc` is reset) was not traced | INFERRED: the flag lasts until the program exits |
+| Scale pivot and pan target | `0x41d160` / `0x41cab0` set an `AnchorPoint` (type 9) on the grid view (CW49, CW53); `0x41ca00`, `0x419900` and the anchor code were not decompiled | INFERRED: the scale pivots on the anchored word; the user's screenshot (b) shows the word at (400, 189) at 1.0 |
 | Key codes `0x14..0x17` | code → char table `0x5d3228` has no char for them (`lightning.md`) | INFERRED arrow keys |
 | Definition click under the end dialogs | `0x421e50` (CW42); dialog attributes in `dialogs.xml`; the dialog input path was not traced (a vtable-`0xd4` call at `0x462e60` turned out to be a scene switch) | INFERRED unreachable, §3.9 |
 
@@ -487,12 +621,18 @@ stateDiagram-v2
 | `0x41b910` / `0x41f120` / `0x41f2b0` / `0x421e50` | buttons / keyboard / rack and row clicks / mouse down |
 | `0x41ba40` / `0x41ba30` | round setup / new game (`0x41ba40(1)`) |
 | `0x434f40` / `0x4355d0` | word object / set solved |
+| `0x43ab90` | LetterBox / XwordBox constructor (argument 4 = 1: `XwordBox`; argument 5: frame; §1.3) |
+| `0x43d280` / `0x43d310` | a word's list look switch / start its sheen (§5.1, §11) |
 | `0x436a00` / `0x436ff0` | guess check / write into the slot |
 | `0x41a510` / `0x41aa20` / `0x41b390` | ENTER / type a letter / take back a letter |
 | `0x41a3d0` / `0x41ae20` / `0x41b060` / `0x41b1c0` | CLEAR / LAST WORD / TWIST / ZOOM |
 | `0x41eaf0` | take a solved word back (`+0x371 = 1`) |
 | `0x41e140` / `0x41e230` / `0x41e7f0` | next / previous / select word |
-| `0x41d390` / `0x41d160` / `0x41cd00` | rotate the grid / pan / lock crossing letters |
+| `0x41d390` / `0x41d160` / `0x41cd00` | rotate the grid, then zoom in when `+0x3c9 == 1` / pan / lock crossing letters |
+| `0x41d920` | rows into the grid view, scale 0.5 at once, select word 0 (round setup and load) |
+| `0x41cab0` / `0x41cce0` | after a zoom-out: anchor on the root and pan / clear busy and refresh |
+| `0x41b320` | list look switch on every word (`false` before a zoom-out, `true` after a zoom-in) |
+| `0x44ad70` / `0x401e40` / `0x401e10` | `setScale` on the `+0x60` interface / scale x (`+0x6c`) / scale y (`+0x70`) |
 | `0x41de10` / `0x41df10` / `0x41e060` | highlight / highlight + dead-end check (popup 9) / dead-end test |
 | `0x41e270` | crossing letter-count check (popup 4) |
 | `0x41b510` / `0x41b8c0` | button refresh / all solved? |
@@ -555,7 +695,46 @@ stateDiagram-v2
 | CW41 | callers `0x419020` | `ev_26f423dccd7e6c35186d0c24455105a197bc1f3963a181a7bc3b8cfdf2e7fdfc` |
 | CW42 | batch `0x421e50 0x419020 0x4409f0` | `ev_6cbabb3dd989b61ea828950f8ece5486f7a69714b606eea71ad78f0b81848e3c` |
 | CW43 | callers `0x428e20` (popups) | `ev_7a00ff4aa5a82da910c3abd4f77755124a9b3ef9214d52db183f9462ec4c86e3` |
+| CW44 | pseudo `0x434da0` (grid view ctor) | `ev_15874268ccbda12f754e7d5d007cb0dc88c959b2af4f6acb09ff6486b6bcca76` |
+| CW45 | batch `0x442be0 0x419d40` (Sprite ctor, init) | `ev_db6b17b28e2feab9775ac410924a47304c7bd50e0b958718d36ff1b7fabe6ddf` |
+| CW46 | pseudo `0x41b1c0` (ZOOM) | `ev_554169d83a5aae88049424f424fdc524bfad131716223d870f1bb389bcca6271` |
+| CW47 | asm `0x41b1c0` | `ev_bfe20db8d8803e61c6e87b6d082d0f295490939549b56b49cc06dbcc742c21ec` |
+| CW48 | batch `0x41d160 0x41d390` | `ev_51a4518685e7fda123b773b0bfffcb977a630e47376875e71c7b704390a52333` |
+| CW49 | asm `0x41d160` (pan) | `ev_6a72beb5bd37a810ce6e9c4952b23f8056639074ab3a05048d010a15dc959d6b` |
+| CW50 | asm `0x41d390` (rotate, zoom in) | `ev_3627c81b67b0d1ce170a3123237d044f3ae1ec6af942dc1510d303fccdf88889` |
+| CW51 | batch `0x422840 0x41e7f0 0x41b320` | `ev_7576e17ba1708d806897c804e39e47e6f86cc3a6616026fdc0f4546817acb966` |
+| CW52 | batch `0x41cab0 0x41fed0` | `ev_bc0540ee33e4a710076bbbcbfac632ea2ccb5295b05d8109387a7df15c345346` |
+| CW53 | asm `0x41cab0` | `ev_9af21d01c43a4c4920b05b2c8378954c75881b89853a75066d55df89e11caee7` |
+| CW54 | pseudo `0x420fa0` (load) | `ev_f08b770938b493ca55fc1761a9c9377d752fc235492733f3231514c27c49704a` |
+| CW55 | batch `0x41c740 0x41d920 0x4172f0` | `ev_6c7a8713d7de07c6d5cf14aa157aa28f251982c2f652229786e280590050a868` |
+| CW56 | callers `0x41d920` | `ev_6c54fee86e6f54c3024a4f25492f6720a2e785e7c967f1a4f895df625d60cf90` |
+| CW57 | asm `0x41d920` | `ev_45e297ce19bdc1757756ff73d9c7efd2515a5ad937c1cc4960c7342f1ed50a42` |
+| CW58 | asm `0x41ef40` (enter, init guard) | `ev_416f5dcb8f838a553a91cddf556411d0d1bc4253f749acd00d0e9011a3471a63` |
+| CW59 | asm `0x434da0` (`+0x60` vtable `0x591f04`) | `ev_7972d43beada097f970acee54268a3842a9e9b7abe9817094a4e3c6afd553263` |
+| CW60 | bytes `0x591f6c` (slots `+0x68`, `+0x6c`, `+0x70` of `0x591f04`) | `ev_9dbcd2d04a58e06be97acb7d4df07c7754fa53197c0b717763f7e82955b57853` |
+| CW61 | bytes `0x59b858` (0.5) | `ev_55489fa4eaa8088102c02461244bae937c43197707bf40457c07ab430e6890f7` |
+| CW62 | asm `0x44ad70` (`setScale`) | `ev_063630c3bee8e73efb514c41db6d644e7e9c27ffd91a96591d544ff0e86e9df1` |
+| CW63 | batch `0x401e40 0x401e10` (scale x / y setters) | `ev_f762cd02018195566bdccaf1818ced23d21d0775f2f5e7a6c822f9b6172b0e54` |
+| CW64 | pseudo `0x448130` (GameNode ctor) | `ev_1e004cd82dddcc8af073e27a329770caa70cec8bb0c83cfccd748eb5ab07fb45` |
+| CW65 | pseudo `0x44a320` (scale 1.0 at construction) | `ev_5f65d7d8413d58d466bd8c574003cfa188204902ae01e5b9ad90de3468d173de` |
+| CW66 | callers `0x41e7f0` | `ev_7885b031315938cd76114d60687c71221efd21d63463db24a9549535198a1114` |
+| CW67 | callers `0x482af0` | `ev_839ec7a6c2b4fea8b786f13dc47fef7095db2ad4986aad91e07ec4c4237d5125` |
+| CW68 | pseudo `0x482af0` | `ev_f26cf53b722d86f88cccb4b5570235cb45169e7983e11fd01e5b6a5245b6f706` |
+| CW69 | callers `0x482400` | `ev_a2492fb87f73407910044f31cbf01d8f95e738f89314ca416e7afaa137edc8e6` |
+| CW70 | callers `0x440e50` | `ev_01281f842c6b946b6fa5644938d448e0fcd43ba03496d1bf355e42def0df3734` |
+| CW71 | callers `0x46df00` (none) | `ev_5850488db4047f29f1da93716396f7f7b3daac3e8edaf8cb7c9e8fb624a4ba6d` |
+| CW72 | user play-test 2026-10-22, screenshot (a): a game resumed from a save, no ZOOM press, cells about 34.5 px (scale 0.5) | none (observation) |
+| CW73 | user play-test 2026-10-22, screenshot (b): after one ZOOM press, 69 px cells, the selected word centred at (400, 189) | none (observation) |
+| CW74 | user play-test 2026-10-22, screenshot A: resumed game (root PRIDED), an unsolved 5-letter word ending on a locked D selected, nothing typed; rack = gold dot + P E D R I; TWIST on, CLEAR / LAST / ENTER off; the turned grid at 0.5 with the word centred near (397, 187) | none (observation) |
+| CW75 | user play-test 2026-10-22, screenshot B: the same after typing P; P shows as a small ball in cell 0, its rack slot becomes a gold dot in place; TWIST / CLEAR / ENTER on, LAST off | none (observation) |
 
-File reads (no evidence id): the vtable `0x5902fc`; the keyboard handler `0x41f120` and its jump tables; the
-`+0x370` / `+0x371` byte scan; the string pushes and field accesses in `0x4203f0..0x421e50`; the duration
-immediates; the `srand` bytes at `0x4c5700`; the strings listed in §1 and §3.
+The tail of round setup (`0x41c6cd..0x41c6f3`) is read from CW15, the same `asm 0x41ba40` evidence.
+
+File reads (no evidence id): the vtable `0x5902fc` and its slot 51 at `0x5903c8`; the keyboard handler `0x41f120`
+and its jump tables; the `+0x370` / `+0x371` byte scan; the string pushes and field accesses in
+`0x4203f0..0x421e50`; the duration immediates; the `srand` bytes at `0x4c5700`; the strings listed in §1 and §3.
+For the zoom trace: the `+0x3c9`, `+0x3c8` and `+0x1cc` byte scans of `0x419000..0x423000`; the `+0x3a4` scans of
+save, leave and load; the call-site scans for `0x41d920`, `0x41b1c0`, `0x41fed0`, `0x41d160` and `0x41cab0`; the
+`ModifierScale` vtable (`0x59700c`) scan; the bytes of `0x41cce0`, of leave `0x41f7d0` and of the load tail
+`0x421d98..0x421dc8`; the constants `0x59b950` (189.0) and `0x59b958` (400.0); the Sprite ctor's
+`lea edi,[esi+0x60]; call 0x44a320` at `0x442c37`; the `SCORED` store at `0x421c9d`.

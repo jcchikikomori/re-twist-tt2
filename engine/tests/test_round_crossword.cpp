@@ -643,7 +643,7 @@ TEST(crossword_restore_rebuilds_the_round_cell_by_cell) {
         ASSERT_EQ(after.slots()[i].played, played[i]);
         ASSERT_EQ(after.slots()[i].scored, static_cast<bool>(scored[i]));
     }
-    ASSERT_EQ(after.selected(), 1u);   // the first unsolved slot
+    ASSERT_EQ(after.selected(), 0u);   // word 0, solved or not (0x420fa0)
 }
 
 TEST(crossword_restore_keeps_the_scored_flag_of_a_taken_back_slot) {
@@ -652,7 +652,7 @@ TEST(crossword_restore_keeps_the_scored_flag_of_a_taken_back_slot) {
     CrosswordRound round(com, ful);
     // "pane" was solved, scored and taken back before the save.
     ASSERT_TRUE(round.restore(fixed_grid(), {"planet", "", "", ""}, {true, true, false, false}, 520, 2));
-    ASSERT_EQ(round.selected(), 1u);
+    ASSERT_TRUE(round.select(1));
     auto g = round.guess("pane");
     ASSERT_EQ(code(g.status), code(Guess::Accepted));
     ASSERT_EQ(g.points_awarded, 0);
@@ -673,7 +673,32 @@ TEST(crossword_restore_starts_with_fresh_flags) {
     ASSERT_TRUE(round.restore(fixed_grid(), {"planet", "", "", ""}, {true, false, false, false}, 360, 1));
     ASSERT_TRUE(!round.twisted());
     ASSERT_TRUE(!round.mistake());
-    ASSERT_EQ(round.selected(), 1u);
+    ASSERT_EQ(round.selected(), 0u);
+}
+
+// The exe's load 0x420fa0 makes word 0 the selected word, then 0x41d920
+// selects word 0 again (crossword.md §5.5, CW54, CW57): a resumed game opens
+// on the root even when the root is solved, not on the first unsolved word.
+TEST(crossword_restore_selects_word_0_like_the_exes_load) {
+    auto com = common();
+    auto ful = full();
+    CrosswordRound round(com, ful);
+    ASSERT_TRUE(round.restore(fixed_grid(), {"planet", "", "", ""}, {true, false, false, false}, 360, 1));
+    ASSERT_EQ(round.selected(), 0u);
+    ASSERT_TRUE(round.slots()[0].solved());
+    // Two solved words in front of the first unsolved one: still the root.
+    ASSERT_TRUE(round.restore(fixed_grid(), {"planet", "pane", "", ""}, {true, true, false, false}, 520, 2));
+    ASSERT_EQ(round.selected(), 0u);
+    // Negative: a fresh round and a resume with nothing solved select the
+    // root too, so nothing else moved.
+    ASSERT_TRUE(round.restore(fixed_grid(), NONE_PLAYED, NONE_SCORED, 0, 1));
+    ASSERT_EQ(round.selected(), 0u);
+    Bag bag(com, BagState{1, 0});
+    Random lcg(2024);
+    CrtRandom crt;
+    CrosswordRound fresh(com, ful);
+    fresh.start(1, lcg, crt, bag);
+    ASSERT_EQ(fresh.selected(), 0u);
 }
 
 TEST(crossword_restore_fails_on_a_misfit_placement) {
@@ -737,7 +762,7 @@ TEST(crossword_next_and_previous_wrap_and_include_solved_words) {
     auto ful = full();
     CrosswordRound round(com, ful);
     ASSERT_TRUE(round.restore(fixed_grid(), {"planet", "", "", ""}, {true, false, false, false}, 360, 1));
-    ASSERT_EQ(round.selected(), 1u);
+    ASSERT_TRUE(round.select(1));
 
     ASSERT_TRUE(round.select_previous());
     ASSERT_EQ(round.selected(), 0u);   // the solved root is not skipped
@@ -1126,7 +1151,7 @@ TEST(crossword_uncommon_means_not_a_common_sub_anagram_of_the_root) {
     auto ful = full();
     CrosswordRound round(com, ful);
     ASSERT_TRUE(round.restore(fixed_grid(), {"planet", "", "", ""}, {true, false, false, false}, 360, 1));
-    ASSERT_EQ(round.selected(), 1u);
+    ASSERT_TRUE(round.select(1));
     auto nape = round.guess("nape");   // full list only
     ASSERT_EQ(code(nape.status), code(Guess::Accepted));
     ASSERT_TRUE(nape.uncommon);
@@ -1170,7 +1195,7 @@ TEST(crossword_solving_the_last_slot_ends_the_round) {
     auto ful = full();
     CrosswordRound round(com, ful);
     ASSERT_TRUE(round.restore(fixed_grid(), {"planet", "pane", "tale", ""}, {true, true, true, false}, 680, 1));
-    ASSERT_EQ(round.selected(), 3u);
+    ASSERT_TRUE(round.select(3));
     auto g = round.guess("ten");
     ASSERT_TRUE(g.complete);
     ASSERT_EQ(round.score(), 1770);

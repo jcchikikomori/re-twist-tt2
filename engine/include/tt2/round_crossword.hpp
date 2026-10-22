@@ -452,9 +452,9 @@ public:
     // word (empty while unsolved) and the scored flag; the running score
     // and the round number. The grid is replayed through
     // `CrosswordGrid::replay`, never rebuilt. The twisted and mistake
-    // flags start clear (the exe saves neither) and the first unsolved
-    // slot from the root is selected (the load was not decompiled, so this
-    // is the port's choice, like LightningRound::restore).
+    // flags start clear (the exe saves neither) and word 0, the root, is
+    // selected even when it is solved: the load makes word 0 the selected
+    // word and 0x41d920 selects word 0 (crossword.md §5.5, CW54, CW57).
     //
     // Returns false, leaving the round untouched, on a placement that
     // does not fit or a state the game cannot write: sizes that differ,
@@ -482,9 +482,8 @@ public:
         }
         if (!possible_state(slots, placements)) return false;
 
-        begin(placements, std::move(*grid), std::move(slots), round);
-        score_    = score;
-        selected_ = first_unsolved_from(0);
+        begin(placements, std::move(*grid), std::move(slots), round);   // selects word 0
+        score_ = score;
         return true;
     }
 

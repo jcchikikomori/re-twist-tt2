@@ -63,6 +63,9 @@ enum class SoundId {
     LightningTimeLow,      // SOUND_lightning_time_low    (sound/lightning_time_low.ogg)
     LightningHint,         // SOUND_lightning_hint        (sound/lightning_hint.ogg)
     LightningSkip,         // SOUND_lightning_skip        (sound/lightning_skip.ogg)
+    // Crossword (docs/reverse-engineering/crossword.md §8, section "default").
+    CrosswordRotateWord,   // SOUND_crossword_rotate_word (sound/crossword_rotate_word.ogg)
+    LetterSheen,           // SOUND_letter_sheen (sound/letter_sheen.ogg): the solved puzzle (0x420047)
 };
 
 // What the scenes need from the application.

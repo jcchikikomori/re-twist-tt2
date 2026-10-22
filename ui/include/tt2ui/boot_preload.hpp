@@ -12,13 +12,20 @@
 // clamped to 100 ms (frame_clock.hpp), so the logo animation fell that far
 // behind its music.
 //
-// The two groups here are taken from the scenes themselves, so a sprite added
-// to a scene is preloaded without touching this file:
-//   PRELOAD_LOADING  what LoadScene draws and plays; loaded during the splash
-//                    (SplashScene waits for it: FlowHost::preloading_done)
-//   PRELOAD_MENU     what SelectionScene draws and plays, and the fonts the
-//                    host draws over it; loaded during the loading screen,
-//                    whose bar shows the progress (loader_progress)
+// The groups here are taken from the scenes themselves, so a sprite added to
+// a scene is preloaded without touching this file:
+//   PRELOAD_LOADING    what LoadScene draws and plays; loaded during the
+//                      splash (SplashScene waits for it:
+//                      FlowHost::preloading_done)
+//   PRELOAD_MENU       what SelectionScene draws and plays, and the fonts the
+//                      host draws over it; loaded during the loading screen,
+//                      whose bar shows the progress (loader_progress)
+//   PRELOAD_CROSSWORD  every image the Crossword scene draws
+//                      (CrosswordScene::art); queued when the scene starts,
+//                      so what shows later (the 572 x 1080 highlight sheet's
+//                      red frames, popups 4 / 7 / 9, the sheen) decodes on the
+//                      workers instead of in the frame it first shows. Nothing
+//                      waits for it.
 // The host decodes on worker threads and makes one texture per frame
 // (ui/src/main.cpp, Assets::preload); anything not loaded yet when it's first
 // needed still loads on the spot, as before.
@@ -42,6 +49,7 @@ struct PreloadSet {
 
 inline constexpr int PRELOAD_LOADING = 0;
 inline constexpr int PRELOAD_MENU = 1;
+inline constexpr int PRELOAD_CROSSWORD = 2;
 
 namespace preload_detail {
 
@@ -103,6 +111,19 @@ inline PreloadSet preload_menu() {
         preload_detail::RecordingHost::add(set.sounds, id);
     // LABEL_PLAYERNAME, the menu's tooltips, and the profile dialogs' text.
     set.fonts = {"FONT_FONT_UIBAR", "FONT_TOOLTIP", "FONT_SETTINGSTEXT"};
+    return set;
+}
+
+// A play scene's images, as its art() lists them (CrosswordScene::art for
+// PRELOAD_CROSSWORD): each id once, the first spec seen, images only.
+inline PreloadSet preload_scene_art(const std::vector<SheetSpec>& art) {
+    PreloadSet set;
+    for (const SheetSpec& s : art) {
+        if (s.image_id.empty()) continue;
+        const bool seen = std::any_of(set.images.begin(), set.images.end(),
+                                      [&](const SheetSpec& x) { return x.image_id == s.image_id; });
+        if (!seen) set.images.push_back(s);
+    }
     return set;
 }
 

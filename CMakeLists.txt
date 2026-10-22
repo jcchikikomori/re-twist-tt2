@@ -279,6 +279,7 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_trophy_room.cpp
         ui/tests/test_highscore_dialog.cpp
         ui/tests/test_blitz_scene.cpp
+        ui/tests/test_crossword_scene.cpp
         ui/tests/test_asset_import.cpp
         ui/tests/test_folder_picker.cpp
         ui/tests/test_import_prompt.cpp

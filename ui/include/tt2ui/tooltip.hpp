@@ -78,6 +78,7 @@ inline constexpr const char* INGAME_MENU = "Show the game menu";
 enum class TooltipSurface {
     Selection,      // the main menu scene
     Game,           // the Classic and Lightning scenes' own buttons
+    Crossword,      // SCENE_CRISSCROSS's own buttons (dialogs.xml lines 147-165)
     PauseMenu,      // DIALOG_MENU
     RoundDialog,    // DIALOG_TUTORIAL / NEXTROUND / PASSROUND / ENDGAME / CONGRATS
     PlayerSelect,   // DIALOG_PLAYERSELECT
@@ -108,6 +109,13 @@ inline const char* tooltip_text(TooltipSurface surface, std::string_view name) {
             if (name == "BUTTON_Pass" || name == "BUTTON_Pass_2" || name == "BUTTON_GiveUp") return s::GIVE_UP;
             if (name == "BUTTON_Menu") return s::INGAME_MENU;
             break;
+        case TooltipSurface::Crossword:
+            // Sic: ZOOM carries CTOOLTIP_GiveUp and the NEXT arrow
+            // CTOOLTIP_Clear; the PREV arrow has none, and no code sets
+            // another (no CTOOLTIP string in the exe, crossword.md §1.1).
+            if (name == "BUTTON_Zoom") return s::GIVE_UP;
+            if (name == "BUTTON_PREVWORD") return "";
+            return tooltip_text(TooltipSurface::Game, name);
         case TooltipSurface::PauseMenu:
             if (name == "BUTTON_HOWTOPLAY") return s::MENU_HELP;
             if (name == "BUTTON_SETTINGS") return s::MENU_SETTINGS;

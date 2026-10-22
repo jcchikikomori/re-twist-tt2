@@ -64,6 +64,7 @@
 #include "tt2ui/bitmap_font.hpp"
 #include "tt2ui/blitz_scene.hpp"
 #include "tt2ui/boot_preload.hpp"
+#include "tt2ui/crossword_scene.hpp"
 #include "tt2ui/asset_import.hpp"
 #include "tt2ui/data_paths.hpp"
 #include "tt2ui/dialog_fade.hpp"
@@ -200,6 +201,25 @@ const std::map<std::string, std::string> kImageFiles = {
     {"blitzscene/IMAGE_PANEL_SIDER", "images/blitzscene/panel_sideR.png"},
     {"blitzscene/IMAGE_PANEL_CORNERR", "images/blitzscene/panel_cornerR.png"},
     {"blitzscene/IMAGE_PANEL_CORNERTOPR", "images/blitzscene/panel_cornertopR.png"},
+    // SCENE_CRISSCROSS (resources.xml section "crosswordscene"). BACKGROUND
+    // and LetterBox are also gamescene ids, so they carry the section
+    // (crossword.md §1.3).
+    {"crosswordscene/BACKGROUND", "images/crosswordscene/background.png"},
+    {"crosswordscene/LetterBox", "images/crosswordscene/letterBox.png"},
+    {"IMAGE_OVERLAY", "images/crosswordscene/overlay.png"},
+    {"IMAGE_BTN_ARROW_NEXT", "images/crosswordscene/btn_arrow_next.png"},
+    {"IMAGE_BTN_ARROW_PREV", "images/crosswordscene/btn_arrow_prev.png"},
+    {"BUTTON_ZOOM", "images/gamescene/button_zoom.png"},
+    // The grid, the rack, the highlight and the sheen (crossword_scene.hpp;
+    // resources.xml section gamescene).
+    {"XwordBox", "images/gamescene/XwordBox.png"},
+    {"IMAGE_XWORD_OVERLAY", "images/gamescene/letterBox_cwordhole.png"},
+    {"IMAGE_CROSSWORDHIGHLIGHT", "images/gamescene/crosswordHighlight.png"},
+    {"IMAGE_CHICKLET_SHEEN", "images/gamescene/chicklet_sheen.png"},
+    // Crossword's popups 4, 7 and 9 (scene_popups.hpp, crossword.md §8).
+    {"IMAGE_IMAGE_POPUP_4", "images/gamescene/image_popup_4.png"},
+    {"IMAGE_IMAGE_POPUP_7", "images/gamescene/image_popup_7.png"},
+    {"IMAGE_IMAGE_POPUP_9", "images/gamescene/image_popup_9.png"},
     {"BUTTON_OK", "images/gui/button_ok.png"},
     {"BUTTON_CANCEL", "images/gui/button_cancel.png"},
     {"BUTTON_ADD", "images/gui/button_add.png"},
@@ -323,6 +343,9 @@ const std::map<SoundId, std::string> kSoundFiles = {
     {SoundId::LightningTimeLow, "sound/lightning_time_low.ogg"},
     {SoundId::LightningHint, "sound/lightning_hint.ogg"},
     {SoundId::LightningSkip, "sound/lightning_skip.ogg"},
+    // resources.xml:37 spells its gain `volue`, so it plays at full volume.
+    {SoundId::CrosswordRotateWord, "sound/crossword_rotate_word.ogg"},
+    {SoundId::LetterSheen, "sound/letter_sheen.ogg"},   // resources.xml:50, `volue` too
 };
 // The few resources.xml sounds whose attribute is spelled `volume` (the
 // `volue` ones are never read; help-and-settings.md §3.3).
@@ -699,15 +722,24 @@ public:
     // are decoded on worker threads; poll_preload() makes their textures and
     // clips between frames. Anything drawn or played before its turn loads on
     // the spot, as without a preload.
+    // A group can be queued again (PRELOAD_CROSSWORD, each time the scene
+    // starts): what is loaded or already queued is skipped, so no file is
+    // decoded twice.
     void preload(int group, const tt2ui::PreloadSet& set) {
         tt2ui::PreloadCount& c = preload_counts_[group];
+        if (c.finished()) preload_started_ns_[group] = SDL_GetTicksNS();
         auto queue = [&](PreloadJob j) {
             j.group = group;
             preload_jobs_.push_back(std::move(j));
             ++c.total;
         };
+        auto queued = [&](const std::string& id) {
+            return std::any_of(preload_jobs_.begin(), preload_jobs_.end(), [&](const PreloadJob& j) {
+                return j.kind == PreloadJob::Kind::Image && j.spec.image_id == id;
+            });
+        };
         for (const SheetSpec& spec : set.images)
-            if (!images_.count(spec.image_id)) {
+            if (!images_.count(spec.image_id) && !queued(spec.image_id)) {
                 PreloadJob j;
                 j.kind = PreloadJob::Kind::Image;
                 j.spec = spec;
@@ -734,7 +766,6 @@ public:
                 j.font = id;
                 queue(std::move(j));
             }
-        if (preload_started_ns_ == 0) preload_started_ns_ = SDL_GetTicksNS();
     }
     tt2ui::PreloadCount preload_count(int group) const {
         auto it = preload_counts_.find(group);
@@ -792,7 +823,7 @@ public:
             ++c.done;
             if (c.finished())
                 std::printf("preload: group %d, %zu files in %llu ms\n", j.group, c.total,
-                            static_cast<unsigned long long>((SDL_GetTicksNS() - preload_started_ns_) / 1000000));
+                            static_cast<unsigned long long>((SDL_GetTicksNS() - preload_started_ns_[j.group]) / 1000000));
             it = preload_jobs_.erase(it);
         }
     }
@@ -1144,7 +1175,7 @@ private:
     };
     std::deque<PreloadJob> preload_jobs_;
     std::map<int, tt2ui::PreloadCount> preload_counts_;
-    std::uint64_t preload_started_ns_ = 0;
+    std::map<int, std::uint64_t> preload_started_ns_;   // when each group was last queued from finished
 };
 
 // Alpha of the pixel under (px, py) for the button's current frame.
@@ -1207,7 +1238,13 @@ void draw_sprite(SDL_Renderer* ren, Assets& assets, const SpriteState& s, float 
     SDL_SetTextureBlendMode(img.texture, s.additive ? SDL_BLENDMODE_ADD : SDL_BLENDMODE_BLEND);
     const float d = img.density;   // source in texture pixels, destination in canvas pixels
     const SDL_FRect srcf{src.x * d, src.y * d, src.w * d, src.h * d};
-    SDL_RenderTextureRotated(ren, img.texture, &srcf, &dst, 0.0, nullptr, static_cast<SDL_FlipMode>(flip));
+    // A turned sprite (the Crossword highlight) turns about its anchor
+    // point; SDL takes degrees, clockwise, and the centre relative to dst.
+    const bool turned = s.rotation != 0.0f && !s.has_clip;
+    const SDL_FPoint pivot{s.x + ox - dst.x, s.y + oy - dst.y};
+    const double degrees = turned ? static_cast<double>(s.rotation) * 180.0 / 3.14159265358979323846 : 0.0;
+    SDL_RenderTextureRotated(ren, img.texture, &srcf, &dst, degrees, turned ? &pivot : nullptr,
+                             static_cast<SDL_FlipMode>(flip));
     SDL_SetTextureColorMod(img.texture, 255, 255, 255);
     SDL_SetTextureBlendMode(img.texture, SDL_BLENDMODE_BLEND);
 }
@@ -1450,6 +1487,9 @@ const char* popup_placeholder_text(PopupKind k) {
         case PopupKind::AllWords: return "ALL WORDS!";
         case PopupKind::Bingo: return "BINGO!\nNEXT ROUND!";
         case PopupKind::AlreadyGuessed: return "ALREADY\nFOUND";
+        case PopupKind::CrosswordIntersection: return "THAT LETTER\nDOESN'T FIT\nTHE CROSSING";
+        case PopupKind::LockedLetter: return "THAT LETTER\nIS TAKEN";
+        case PopupKind::DeadEnd: return "NO WORD\nFITS HERE";
         case PopupKind::EnoughOfLength: return "THAT LENGTH\nIS FULL";
         case PopupKind::ExtraTime: return "+8 SECONDS";
         case PopupKind::NoneOfLength: return "NO WORDS OF\nTHAT LENGTH";
@@ -1562,6 +1602,37 @@ void draw_help(SDL_Renderer* ren, Assets& assets, const Dialog& d) {
     }
 }
 
+// A play scene's buttons; the placeholder build writes each one's name on it.
+void draw_scene_buttons(SDL_Renderer* ren, Assets& assets, const std::vector<MenuButton>& buttons) {
+    for (const MenuButton& b : buttons) {
+        draw_sprite(ren, assets, b.sprite);
+        if (b.sprite.visible && assets.image(b.sprite.sheet).placeholder) {
+            std::string label = b.sprite.name.substr(7);
+            for (auto& c : label) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            draw_text(ren, assets, "PLACEHOLDER_2", label, b.sprite.left() + b.sprite.sheet.frame_w * 0.5f,
+                      b.sprite.top() + b.sprite.sheet.frame_h * 0.5f, TextAlign::Center, Anchor::Center, -1);
+        }
+    }
+}
+
+// The two popups every play scene shares (scene_popups.hpp).
+template <class Scene>
+void draw_scene_popups(SDL_Renderer* ren, Assets& assets, const Scene& g) {
+    // 0x428ec0: one popup at a time; the label waits until it has grown.
+    if (g.popup_kind()) {
+        const SpriteState& p = g.popup();
+        draw_sprite_or_label(ren, assets, p, p.scale >= 0.9f ? popup_placeholder_text(*g.popup_kind()) : "",
+                             "PLACEHOLDER_3", 20);
+    }
+    // 0x429510: the trophy and its FONT_TROPHYNAMES title, bottom right.
+    if (g.trophy_popup_id() >= 0) {
+        const SpriteState& t = g.trophy_popup();
+        if (t.visible) draw_sprite(ren, assets, t);
+        const SpriteState& l = g.trophy_label();
+        if (l.visible) draw_text_scaled(ren, assets, "FONT_TROPHYNAMES", l.name, l.x, l.y, l.scale, l.alpha);
+    }
+}
+
 void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
     draw_sprite(ren, assets, sprite("BACKGROUND", sheet(g.background_id(), SCREEN_W, SCREEN_H), 0, 0));
 
@@ -1622,29 +1693,8 @@ void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
         draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_seconds_text(), 752, 574, TextAlign::Left, Anchor::Center, -1);
     }
 
-    for (const MenuButton& b : g.buttons()) {
-        draw_sprite(ren, assets, b.sprite);
-        if (b.sprite.visible && assets.image(b.sprite.sheet).placeholder) {
-            std::string label = b.sprite.name.substr(7);
-            for (auto& c : label) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            draw_text(ren, assets, "PLACEHOLDER_2", label, b.sprite.left() + b.sprite.sheet.frame_w * 0.5f,
-                      b.sprite.top() + b.sprite.sheet.frame_h * 0.5f, TextAlign::Center, Anchor::Center, -1);
-        }
-    }
-
-    // 0x428ec0: one popup at a time; the label waits until it has grown.
-    if (g.popup_kind()) {
-        const SpriteState& p = g.popup();
-        draw_sprite_or_label(ren, assets, p, p.scale >= 0.9f ? popup_placeholder_text(*g.popup_kind()) : "",
-                             "PLACEHOLDER_3", 20);
-    }
-    // 0x429510: the trophy and its FONT_TROPHYNAMES title, bottom right.
-    if (g.trophy_popup_id() >= 0) {
-        const SpriteState& t = g.trophy_popup();
-        if (t.visible) draw_sprite(ren, assets, t);
-        const SpriteState& l = g.trophy_label();
-        if (l.visible) draw_text_scaled(ren, assets, "FONT_TROPHYNAMES", l.name, l.x, l.y, l.scale, l.alpha);
-    }
+    draw_scene_buttons(ren, assets, g.buttons());
+    draw_scene_popups(ren, assets, g);
 }
 
 // SCENE_BLITZ (dialogs.xml order): background, the list panel, the time
@@ -1688,28 +1738,28 @@ void draw_blitz(SDL_Renderer* ren, Assets& assets, const BlitzScene& g) {
     draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_minutes_text(), 749, 574, TextAlign::Right, Anchor::Center, -1);
     draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_seconds_text(), 752, 574, TextAlign::Left, Anchor::Center, -1);
 
-    for (const MenuButton& b : g.buttons()) {
-        draw_sprite(ren, assets, b.sprite);
-        if (b.sprite.visible && assets.image(b.sprite.sheet).placeholder) {
-            std::string label = b.sprite.name.substr(7);
-            for (auto& c : label) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            draw_text(ren, assets, "PLACEHOLDER_2", label, b.sprite.left() + b.sprite.sheet.frame_w * 0.5f,
-                      b.sprite.top() + b.sprite.sheet.frame_h * 0.5f, TextAlign::Center, Anchor::Center, -1);
-        }
-    }
+    draw_scene_buttons(ren, assets, g.buttons());
     if (g.pause_veil()) draw_sprite(ren, assets, sprite("PAUSE_VEIL", sheet("IMAGE_PAUSEVEIL", 220, 545), 0, 0));
+    draw_scene_popups(ren, assets, g);
+}
 
-    if (g.popup_kind()) {
-        const SpriteState& p = g.popup();
-        draw_sprite_or_label(ren, assets, p, p.scale >= 0.9f ? popup_placeholder_text(*g.popup_kind()) : "",
-                             "PLACEHOLDER_3", 20);
-    }
-    if (g.trophy_popup_id() >= 0) {
-        const SpriteState& t = g.trophy_popup();
-        if (t.visible) draw_sprite(ren, assets, t);
-        const SpriteState& l = g.trophy_label();
-        if (l.visible) draw_text_scaled(ren, assets, "FONT_TROPHYNAMES", l.name, l.x, l.y, l.scale, l.alpha);
-    }
+// SCENE_CRISSCROSS (D-7; the sprites come from crossword_scene.hpp): the
+// background, the grid view (every cell's XwordBox and hole, the letters
+// upright, the sheen) with the highlight over it, then OVERLAY, which
+// 0x44b370 re-adds above the grid, so the zoomed grid is clipped at the
+// panel's edge (EV-2); then UI_BAR and its labels, the selected word's rack,
+// the buttons and the two popups. Imported art only (A6): without a
+// verified import the launch prompt asks for one before the menu.
+void draw_crossword(SDL_Renderer* ren, Assets& assets, const CrosswordScene& g) {
+    draw_sprite(ren, assets, sprite("BACKGROUND", sheet(g.background_id(), SCREEN_W, SCREEN_H), 0, 0));
+    for (const SpriteState& s : g.grid_sprites()) draw_sprite(ren, assets, s);
+    draw_sprite(ren, assets, g.highlight_sprite());
+    for (const SpriteState& s : g.sprites()) draw_sprite(ren, assets, s);   // hidden ones skip themselves
+    for (const TextLabel& l : g.labels())
+        if (l.visible) draw_text(ren, assets, l.font_id, l.text, l.x, l.y, l.align, l.anchor, l.char_spacing);
+    for (const SpriteState& s : g.rack_sprites()) draw_sprite(ren, assets, s);
+    draw_scene_buttons(ren, assets, g.buttons());
+    draw_scene_popups(ren, assets, g);
 }
 
 // SCENE_TROPHY (dialogs.xml): background, ribbons, the header, the
@@ -2025,7 +2075,7 @@ int main(int argc, char** argv) {
     std::string debug_player;
     std::string data_dir = TT2_DATA_DIR;
     bool data_dir_given = false;
-    std::string auto_play;     // --play untimed|timed|lightning|wotd: start a game as soon as the menu is up
+    std::string auto_play;     // --play untimed|timed|lightning|wotd|crossword: start a game as soon as the menu is up
     bool hover_set = false;    // --hover X,Y: the cursor parked on one point (smoke tests)
     float hover_x = 0, hover_y = 0;
     std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
@@ -2037,6 +2087,8 @@ int main(int argc, char** argv) {
                                //     '{' its renderer, '%' its WORD OF THE DAY),
                                // '!' fullscreen switch, '^' Alt+Enter,
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND;
+                               // Lightning and Crossword: '[' / ']' the previous / next word,
+                               // Crossword: '/' ZOOM;
                                // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
                                // '&' the main menu SETTINGS' IMPORT (re-import, deviation OP-7),
                                // '"' the main menu's CHANGE NAME, then '-' its REMOVE,
@@ -2068,7 +2120,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--renderer") && i + 1 < argc) renderer_flag = argv[++i];
         else if (!std::strcmp(argv[i], "--help")) {
             std::printf("usage: tt2 [--assets DIR] [--data-dir DIR] [--save-dir DIR] [--player NAME]\n"
-                        "           [--play untimed|timed|lightning|wotd] [--speed N] [--exit-after MS]\n"
+                        "           [--play untimed|timed|lightning|wotd|crossword] [--speed N] [--exit-after MS]\n"
                         "           [--import DIR] [--asset-dir DIR] [--asset-manifest FILE]\n"
                         "           [--renderer auto|vulkan|opengl|software]\n"
                         "\n"
@@ -2104,6 +2156,12 @@ int main(int argc, char** argv) {
     auto seed_ticks = [&]() -> std::uint32_t {
         return fixed_dt > 0 ? static_cast<std::uint32_t>(1000 + simulated_ms) : static_cast<std::uint32_t>(SDL_GetTicks());
     };
+    // The CRT rand() state Crossword shuffles with (D-11, crossword.md §9):
+    // one per process, seeded once at start-up from the clock, as the exe's
+    // srand((uint)_time64(NULL)) at 0x482b04, so a second game in the same
+    // run continues the sequence. Every scene borrows it; it outlives them
+    // all. Under --fixed-dt it takes the simulated clock, so a run repeats.
+    tt2::CrtRandom crt_random(fixed_dt > 0 ? seed_ticks() : static_cast<std::uint32_t>(std::time(nullptr)));
 
     // The data folder (dictionaries, asset manifest). Packaged builds
     // (AppImage, Windows zip) carry it next to the executable; a source
@@ -2431,13 +2489,19 @@ int main(int argc, char** argv) {
     // (TRANSITION_DEFAULT: 500 ms to black, then 500 ms back; each half
     // uses FadeBlackTransition's full `time`, 0x46c362 / 0x46c78f).
     std::unique_ptr<GameScene> game;
-    std::unique_ptr<BlitzScene> blitz;   // SCENE_BLITZ (Lightning) instead of `game`
-    // The scene being played, Classic or Lightning: most of the front end
-    // talks to both through the same member names.
+    std::unique_ptr<BlitzScene> blitz;           // SCENE_BLITZ (Lightning) instead of `game`
+    std::unique_ptr<CrosswordScene> crossword;   // SCENE_CRISSCROSS instead of `game`
+    // Crossword's zoom-in flag (+0x3c9) outlives each CrosswordScene: the
+    // exe's scene object lives for the whole run (crossword.md §3.1, §3.7).
+    bool crossword_zoom_in = false;
+    // The scene being played, Classic, Lightning or Crossword: most of the
+    // front end talks to all three through the same member names.
     auto with_play = [&](auto&& fn) {
         if (game) fn(*game);
         else if (blitz) fn(*blitz);
+        else if (crossword) fn(*crossword);
     };
+    auto in_play = [&] { return game || blitz || crossword; };
     // SCENE_TROPHY: opened from the menu (0x42e390) and left by its MENU
     // button (0x42fcb0), both through TRANSITION_DEFAULT like the game.
     std::unique_ptr<TrophyRoom> trophy_room;
@@ -2608,6 +2672,7 @@ int main(int argc, char** argv) {
         if (auto_play == "timed") request_game(tt2::GameMode::Timed);
         else if (auto_play == "lightning") request_game(tt2::GameMode::Blitz);
         else if (auto_play == "wotd") request_game(tt2::GameMode::WordOfTheDay);
+        else if (auto_play == "crossword") request_game(tt2::GameMode::Crossword);
         else if (!auto_play.empty()) request_game(tt2::GameMode::Untimed);
     };
 
@@ -2709,6 +2774,7 @@ int main(int argc, char** argv) {
         else if (name == "BUTTON_PLAY") request_game(tt2::GameMode::Timed);
         else if (name == "BUTTON_BLITZ") request_game(tt2::GameMode::Blitz);
         else if (name == "BUTTON_PLAY_WOD") request_game(tt2::GameMode::WordOfTheDay);
+        else if (name == "BUTTON_CRISSCROSS") request_game(tt2::GameMode::Crossword);
         else if (name == "BUTTON_HOWTOPLAY") menu_help.emplace();
         else if (name == "BUTTON_HIGHSCORES")
             menu_highscores.emplace(highscores, HighScoreDialog::Opener::Menu, last_mode,
@@ -2789,6 +2855,25 @@ int main(int argc, char** argv) {
                 std::string racks;
                 for (const auto& w : blitz->words()) racks += (racks.empty() ? "" : " ") + w.answer;
                 std::printf("game: lightning round %d, words %s\n", blitz->round_number(), racks.c_str());
+            } else if (pending_mode == tt2::GameMode::Crossword) {
+                // 0x41ef40: MUSIC_in-game_1 at 0.7, as Lightning. The scene
+                // borrows the process-wide CRT generator (D-11).
+                crossword = std::make_unique<CrosswordScene>(common_tree, full_tree, *players.current(), &highscores,
+                                                             gs, static_cast<std::int64_t>(seed_ticks()), crt_random,
+                                                             pending_resume.get());
+                crossword->set_zoom_in_flag(crossword_zoom_in);   // before the opening select reads it
+                if (crossword->resume_failed()) {
+                    std::fprintf(stderr, "warning: saved crossword game for %s could not be restored; starting again\n",
+                                 players.current()->name.c_str());
+                    pending_resume.reset();   // the save stays on disk; this is a new game
+                }
+                std::string words;
+                for (const auto& p : crossword->round().placements()) words += (words.empty() ? "" : " ") + p.word;
+                std::printf("game: crossword round %d, root %s, %zu words: %s\n", crossword->round_number(),
+                            crossword->round().root().c_str(), crossword->round().placements().size(), words.c_str());
+                // Its art decodes on the workers (boot_preload.hpp); the
+                // first frame takes what it needs at once.
+                assets.preload(tt2ui::PRELOAD_CROSSWORD, tt2ui::preload_scene_art(crossword->art()));
             } else {
                 game = std::make_unique<GameScene>(common_tree, full_tree, *players.current(), &highscores,
                                                    pending_mode, gs, static_cast<std::int64_t>(seed_ticks()),
@@ -2800,6 +2885,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "game: %s could not start: %s\n", tt2::mode_key(pending_mode), e.what());
             game.reset();
             blitz.reset();
+            crossword.reset();
             pending_resume.reset();
             menu_dialog = build_yes_no(game_strings::START_FAILED_HEADER, game_strings::START_FAILED_BODY, true,
                                        wrap_message);
@@ -2884,11 +2970,13 @@ int main(int argc, char** argv) {
                 pick(profile.dialog().buttons, TooltipSurface::PlayerSelect, "players");
             return;
         }
-        if (game || blitz) {
+        if (in_play()) {
             with_play([&](auto& g) {
                 if (const SettingsDialog* sd = g.settings_dialog()) { pick_settings(*sd, "game-settings"); return; }
                 switch (g.dialog_kind()) {
-                    case GameDialog::None: pick(g.buttons(), TooltipSurface::Game, "game"); break;
+                    case GameDialog::None:
+                        pick(g.buttons(), crossword ? TooltipSurface::Crossword : TooltipSurface::Game, "game");
+                        break;
                     case GameDialog::PauseMenu: pick(g.dialog().buttons, TooltipSurface::PauseMenu, "pause"); break;
                     case GameDialog::Tutorial:
                     case GameDialog::NextRound:
@@ -3025,7 +3113,7 @@ int main(int argc, char** argv) {
                     profile.mouse_up(e.button.x, e.button.y);
                 continue;
             }
-            if (game || blitz) {
+            if (in_play()) {
                 with_play([&](auto& g) {
                     if (e.type == SDL_EVENT_KEY_DOWN) {
                         if (const char c = letter_for_key(e.key.key, (e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT |
@@ -3056,6 +3144,18 @@ int main(int argc, char** argv) {
                         case SDLK_RIGHT: blitz->key_word(true); break;
                         case SDLK_UP:
                         case SDLK_LEFT: blitz->key_word(false); break;
+                        default: break;
+                    }
+                }
+                // 0x41f120 (crossword.md §3.6): Tab and Right NEXT, Left PREV,
+                // Up and Down ZOOM (INFERRED key codes 0x14..0x17).
+                if (crossword && e.type == SDL_EVENT_KEY_DOWN) {
+                    switch (e.key.key) {
+                        case SDLK_TAB:
+                        case SDLK_RIGHT: crossword->key_word(true); break;
+                        case SDLK_LEFT: crossword->key_word(false); break;
+                        case SDLK_UP:
+                        case SDLK_DOWN: crossword->key_zoom(); break;
                         default: break;
                     }
                 }
@@ -3163,7 +3263,7 @@ int main(int argc, char** argv) {
         else if (menu_highscores) hot = dialog_pointer_hot(menu_highscores->dialog());
         else if (menu_settings) hot = menu_settings->pointer_hot();
         else if (menu_improvements) hot = menu_improvements->pointer_hot();
-        else if (game || blitz) with_play([&](auto& g) { hot = g.pointer_over_clickable(); });
+        else if (in_play()) with_play([&](auto& g) { hot = g.pointer_over_clickable(); });
         else if (trophy_room) hot = trophy_room->pointer_over_clickable();
         else if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             hot = flow.selection()->pointer_over_clickable();
@@ -3210,6 +3310,8 @@ int main(int argc, char** argv) {
                     pending_exit = false;
                     game.reset();
                     blitz.reset();
+                    if (crossword) crossword_zoom_in = crossword->zoom_in_flag();
+                    crossword.reset();
                     refresh_wotd_gate();   // a menu entry: a finished WOTD game closes the gate
                     assets.play_stream(SoundId::MusicMenu);
                     std::printf("t=%ld ms: back to the menu\n", simulated_ms);
@@ -3261,7 +3363,7 @@ int main(int argc, char** argv) {
         // '=' IMPROVEMENTS, then '<' / '>' its display mode, '(' / ')' its resolution, '[' / ']' its filter,
         // '*' its upscaler, '{' its renderer, '%' its WORD OF THE DAY, '|' OK (then OK on "Restart needed"),
         // '~' CANCEL.
-        if (!game && !blitz && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
+        if (!in_play() && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
             flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
             if (auto_type_ms >= 300) {
@@ -3308,7 +3410,7 @@ int main(int argc, char** argv) {
             }
         }
         if (trophy_room) trophy_room->update(dt);
-        if (game || blitz) {
+        if (in_play()) {
             with_play([&](auto& g) { g.update(dt); });
             // --type: one key every 300 ms while a round is being played.
             auto_type_ms += dt;
@@ -3318,6 +3420,9 @@ int main(int argc, char** argv) {
                 auto_type.erase(0, 1);
                 // Lightning: '[' / ']' the previous / next word (Up / Tab).
                 if (blitz && (c == '[' || c == ']')) { blitz->key_word(c == ']'); continue; }
+                // Crossword: '[' / ']' PREV / NEXT (Left / Tab), '/' ZOOM (Up).
+                if (crossword && (c == '[' || c == ']')) { crossword->key_word(c == ']'); continue; }
+                if (crossword && c == '/') { crossword->key_zoom(); continue; }
                 with_play([&](auto& g) {
                     if (c == '\n' || c == '|') g.key_return();
                     else if (c == ' ') g.key_space();
@@ -3402,6 +3507,8 @@ int main(int argc, char** argv) {
             draw_game(ren, assets, *game);
         } else if (blitz) {
             draw_blitz(ren, assets, *blitz);
+        } else if (crossword) {
+            draw_crossword(ren, assets, *crossword);
         } else if (trophy_room) {
             draw_trophy_room(ren, assets, *trophy_room);
         } else if (!boot_prompt_open()) {   // black behind the boot prompt

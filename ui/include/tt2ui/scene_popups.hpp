@@ -29,9 +29,17 @@ enum class PopupKind {
     AllWords = 1,        // IMAGE_POPUP_ALLWORDS banner
     Bingo = 2,           // IMAGE_POPUP_BINGO banner
     AlreadyGuessed = 3,  // image_popup_3
+    // Crossword's three (crossword.md §3.3, §3.4, §8; meanings INFERRED):
+    // image_popup_4, a letter that leaves a crossing word unspellable
+    // (0x41e270); image_popup_7, a letter that differs from a locked one
+    // (0x41aa20); image_popup_9, no valid word fits the selected slot
+    // (0x41df10).
+    CrosswordIntersection = 4,
     EnoughOfLength = 5,  // image_popup_5
     ExtraTime = 6,       // image_popup_6: Lightning's +8 s (0x4116e0)
+    LockedLetter = 7,
     NoneOfLength = 8,    // image_popup_8
+    DeadEnd = 9,
     Definitions = 10,    // image_popup_10: click entered words for definitions
     // image_popup_11: "You found the WORD OF THE DAY!". The first bingo of a
     // Word of the Day round queues it instead of the BINGO banner (0x424730
@@ -59,9 +67,12 @@ inline SheetSpec popup_sheet(PopupKind k) {
         case PopupKind::AllWords: return sheet("IMAGE_POPUP_ALLWORDS", 2280, 420, 6, 3, 18);
         case PopupKind::NotListed: return sheet("IMAGE_IMAGE_POPUP_0", 254, 97);
         case PopupKind::AlreadyGuessed: return sheet("IMAGE_IMAGE_POPUP_3", 295, 97);
+        case PopupKind::CrosswordIntersection: return sheet("IMAGE_IMAGE_POPUP_4", 314, 125);
         case PopupKind::EnoughOfLength: return sheet("IMAGE_IMAGE_POPUP_5", 339, 103);
         case PopupKind::ExtraTime: return sheet("IMAGE_IMAGE_POPUP_6", 324, 107);
+        case PopupKind::LockedLetter: return sheet("IMAGE_IMAGE_POPUP_7", 320, 101);
         case PopupKind::NoneOfLength: return sheet("IMAGE_IMAGE_POPUP_8", 301, 102);
+        case PopupKind::DeadEnd: return sheet("IMAGE_IMAGE_POPUP_9", 268, 102);
         case PopupKind::Definitions: return sheet("IMAGE_IMAGE_POPUP_10", 326, 121);
         // A message, not a banner: 0x428ec0 @0x42934c runs the banner chain
         // only for kinds 2 and 1 (game-scene.md §8.5, W5 audit).
