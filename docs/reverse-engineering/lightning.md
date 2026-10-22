@@ -382,8 +382,8 @@ time added (the +8 s branch is skipped). Player block `p = *(DAT_005fde98 + 0x70
   blitz dots are not drawn; the 60 px placeholder pearls stand in.
 - **The round-start flip**: the original flips every word's balls, but a list word's 24 px child covers
   its flip, so the port flips only the current word, which looks the same.
-- **Rack order**: the racks are shuffled like Classic's (`GameScene::scrambled`); the deal order was
-  not traced.
+- **Rack order**: each word is dealt like Classic's, through `tt2::deal_order` on the shared CRT
+  (`0x414340` -> `0x43c370`, `game-scene.md` §4.2), and so is its TWIST (`0x413090`).
 - **Twist sound**: as in Classic, only when the rack moves (a held Space does not stack clicks).
 - **Resumed solved words** show their tiles in the entry row like a word solved in play; the original's
   `0x4174c0` rebuild of a `COMPLETED` word was not traced in that detail.

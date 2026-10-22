@@ -174,7 +174,6 @@ constexpr int BALL_REVEAL_FRAME_MS = 60;     // 0x43a820: ModifierFrame(60 ms)
 constexpr int BALL_REVEAL_STAGGER_MS = 120;  // 0x43c940: delay += 0x78 per ball
 constexpr int BALL_MOVE_MS = 300;            // 0x43a4c0: ModifierLocationLine(0x12c) for place / take back
 constexpr int BALL_RELAYOUT_MS = 400;        // 0x43a4c0 (no container): 0x190, used by the twist relayout
-constexpr int TWIST_MAX_SHUFFLES = 16;       // port guard on 0x43c370's reshuffle-until-different loop
 
 // x of the left edge of a row holding `n` letters (0x4396e0: 400 - n*69/2).
 inline float row_left(int n) { return 400.0f - static_cast<float>(n) * BALL_PITCH * 0.5f; }
@@ -266,6 +265,40 @@ struct LetterBall {
         return started;
     }
 };
+
+// The balls still in the available row, left to right: the order 0x43c170
+// reads the row in (empty cells skipped) before 0x43c370 deals it again.
+inline std::vector<std::size_t> available_row(const std::vector<LetterBall>& balls) {
+    std::vector<std::size_t> row;
+    for (std::size_t i = 0; i < balls.size(); ++i) if (!balls[i].played) row.push_back(i);
+    std::sort(row.begin(), row.end(), [&](std::size_t a, std::size_t b) { return balls[a].slot < balls[b].slot; });
+    return row;
+}
+inline std::string row_letters(const std::vector<LetterBall>& balls, const std::vector<std::size_t>& row) {
+    std::string out;
+    for (std::size_t i : row) out.push_back(balls[i].letter);
+    return out;
+}
+// A TWIST's moves after tt2::deal_order turned the row's letters into
+// `dealt`: {ball, cell} pairs, where the k-th cell of `row` takes the first
+// unused ball of `row` that shows dealt[k]. 0x43c370 shuffles the balls
+// themselves, so in the exe two equal letters may also trade places; the
+// port keeps them in order. The letters each cell shows are the same.
+inline std::vector<std::pair<std::size_t, int>> dealt_moves(const std::vector<LetterBall>& balls,
+                                                            const std::vector<std::size_t>& row,
+                                                            const std::string& dealt) {
+    std::vector<std::pair<std::size_t, int>> moves;
+    std::vector<bool> used(row.size(), false);
+    for (std::size_t k = 0; k < row.size() && k < dealt.size(); ++k) {
+        for (std::size_t j = 0; j < row.size(); ++j) {
+            if (used[j] || balls[row[j]].letter != dealt[k]) continue;
+            used[j] = true;
+            moves.emplace_back(row[j], balls[row[k]].slot);
+            break;
+        }
+    }
+    return moves;
+}
 
 // DIALOG_NEXTROUND letterballs (0x409100, game-scene.md §6): every
 // non-space character of TEXT_NEXT_ROUND_LETTERBALLS becomes a LetterBall
@@ -505,14 +538,17 @@ public:
 
     // `mode`: Timed, Untimed or WordOfTheDay (D-1); Lightning and Crossword
     // have scenes of their own, so they throw std::invalid_argument.
+    // `rng_seed` seeds the game LCG (the bag, the target length). `crt`: the
+    // process-wide CRT generator (D-11) the rack deal and TWIST draw from
+    // (0x43c370, game-scene.md §4.1); it must outlive the scene.
     // `resume`: a saved game to continue (0x42a460); nullptr starts round 1.
     // A Word of the Day start throws tt2::NoRackError when the common list
     // has no 5-8 letter word.
     GameScene(const tt2::WordTree& common, const tt2::WordTree& full, tt2::PlayerProfile& profile,
               tt2::HighScoreManager* highscores, tt2::GameMode mode, Services services, std::int64_t rng_seed,
-              const tt2::SavedGame* resume = nullptr)
+              tt2::CrtRandom& crt, const tt2::SavedGame* resume = nullptr)
         : common_(common), full_(full), profile_(profile), highscores_(highscores), mode_(scene_mode(mode)),
-          services_(std::move(services)), rng_(rng_seed), bag_(common, profile.bag) {
+          services_(std::move(services)), rng_(rng_seed), crt_(crt), bag_(common, profile.bag) {
         particle_rng_.set_seed(rng_seed + 1);
         build_buttons();
         if (!(resume && resume_game(*resume))) {
@@ -1030,8 +1066,11 @@ private:
             v.y = static_cast<int>(table_y()) + table_.slots[i].y;
             slots_.push_back(v);
         }
-        // Rack: every ball starts in the available row (0x4396e0 loop).
-        const std::string order = scrambled(rack_);
+        // Rack: ball i starts as letter i of the word in the available row
+        // (0x4396e0 @0x43988b-0x439b1a), then 0x43c370(table+0x1c, slide 0)
+        // deals them at once (@0x426242-0x426253, DL1-DL3), before the
+        // flip-in, so the word's own order is never drawn.
+        const std::string order = tt2::deal_order(rack_, rack_, crt_);
         balls_.clear();
         const int n = static_cast<int>(rack_.size());
         for (int i = 0; i < n; ++i) {
@@ -1058,19 +1097,6 @@ private:
             bingo_streak_ = 0;
         }
         refresh_buttons();
-    }
-
-    // The rack letters in the order the balls are laid out. DEVIATION /
-    // INFERRED: the order the shipped game deals the balls in was not
-    // traced. Laying them out in word order handed the player the bingo
-    // (ROADMAP "Identified bugs" #1), so they are shuffled with the game
-    // LCG like a twist, and shuffled again (up to 8 tries) while they still
-    // spell the rack word.
-    std::string scrambled(const std::string& word) {
-        std::vector<char> letters(word.begin(), word.end());
-        for (int tries = 0; tries < 8 && std::string(letters.begin(), letters.end()) == word; ++tries)
-            rng_.shuffle(letters);
-        return std::string(letters.begin(), letters.end());
     }
 
     // DIALOG_ENDGAME "PLAY AGAIN": a fresh game in the same mode.
@@ -1584,29 +1610,21 @@ private:
     // letters are available, while every available letter is the same, or
     // while any ball in the available row is still sliding (its +0x184
     // move is set until 0x43a2f0 clears it), so a held key twists once per
-    // finished slide instead of once per key repeat. Otherwise it shuffles
-    // again until the order differs from the one before and from the rack
-    // word (0x43c370's two string compares; the second string is INFERRED
-    // to be the rack word). INFERRED: the shuffle itself uses the game LCG
-    // (std::random_shuffle semantics via 0x439370).
+    // finished slide instead of once per key repeat. Otherwise the row is
+    // dealt again from the CRT (tt2::deal_order, 0x43c370 @0x42532e-0x425347):
+    // reshuffled while it reads as before or as the rack word (table+0x1c).
+    // INFERRED, not built: 0x43c370 shuffles all n cells, empty ones too, so
+    // with letters typed the exe may also move the gaps; the port deals only
+    // the balls still in the row and keeps the gaps (game-scene.md §4.2).
     void twist() {
         if (phase_ != GamePhase::Playing) return;
         if (!can_twist()) return;
         play(SoundId::WordTwist);
-        std::vector<std::size_t> avail;
-        for (std::size_t i = 0; i < balls_.size(); ++i) if (!balls_[i].played) avail.push_back(i);
-        std::vector<int> slots;
-        for (std::size_t i : avail) slots.push_back(balls_[i].slot);
-        const std::string before = available_order(avail, slots);
-        // The original loops until the order changes; the cap only guards
-        // against a rack the RNG cannot reorder.
-        for (int tries = 0; tries < TWIST_MAX_SHUFFLES; ++tries) {
-            rng_.shuffle(slots);
-            const std::string now = available_order(avail, slots);
-            if (now != before && now != rack_) break;
-        }
-        // 0x43c370: the relayout slides every ball to its new cell in 400 ms.
-        for (std::size_t k = 0; k < avail.size(); ++k) move_to(balls_[avail[k]], false, slots[k], BALL_RELAYOUT_MS);
+        const std::vector<std::size_t> row = available_row(balls_);
+        const std::string dealt = tt2::deal_order(row_letters(balls_, row), rack_, crt_);
+        // 0x43c370 (slide 1): the relayout slides every ball to its new cell in 400 ms.
+        for (const auto& [ball, cell] : dealt_moves(balls_, row, dealt))
+            move_to(balls_[ball], false, cell, BALL_RELAYOUT_MS);
         // 0x425240: a twist ends the no-twist streak and marks the round.
         no_twist_streak_ = 0;
         twisted_this_round_ = true;
@@ -1622,16 +1640,6 @@ private:
         }
         if (letters.size() < 2) return false;
         return letters.find_first_not_of(letters[0]) != std::string::npos;
-    }
-    // The available letters read left to right if ball avail[k] sat in slots[k].
-    // The row can have empty cells, so this sorts by cell, not by index.
-    std::string available_order(const std::vector<std::size_t>& avail, const std::vector<int>& slots) const {
-        std::vector<std::pair<int, char>> cells;
-        for (std::size_t k = 0; k < avail.size(); ++k) cells.emplace_back(slots[k], balls_[avail[k]].letter);
-        std::sort(cells.begin(), cells.end());
-        std::string out;
-        for (const auto& c : cells) out.push_back(c.second);
-        return out;
     }
 
     // ---- presentation helpers --------------------------------------
@@ -1718,7 +1726,8 @@ private:
     tt2::HighScoreManager* highscores_;
     tt2::GameMode mode_;
     Services services_;
-    tt2::Random rng_;
+    tt2::Random rng_;          // the game LCG (0x5fde90): bag and target length
+    tt2::CrtRandom& crt_;      // the CRT rand(): the deal and TWIST (0x43c370, D-11)
     tt2::Bag bag_;
     std::unique_ptr<tt2::ClassicRound> round_;
     int round_number_ = 0;
@@ -1740,8 +1749,8 @@ private:
     std::vector<LetterBall> dialog_balls_;   // DIALOG_NEXTROUND letterballs
     std::vector<Particle> dialog_particles_;
     // The original draws the burst from its global LCG (0x5fde90); a
-    // separate stream keeps the cosmetic burst from shifting the deal and
-    // twist randomness.
+    // separate stream keeps the cosmetic burst from shifting the bag and
+    // target-length draws.
     tt2::Random particle_rng_;
     std::vector<MenuButton> buttons_;
     bool ball_hot_ = false;   // pointer over a letter ball (hand cursor)

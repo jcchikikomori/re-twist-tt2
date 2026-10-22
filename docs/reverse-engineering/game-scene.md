@@ -320,12 +320,23 @@ Worked example (CONFIRMED arithmetic, DL10): `srand(1)` draws `41, 18467, 6334, 
 `eadrgn` differs from `garden`, so one pass deals it (5 draws). With `srand(195)` and `stone`, the first pass gives
 back `stone`; the guard rejects it, and the second pass deals `snteo` (8 draws).
 
-Port notes (no change made here; T9.3 waits for the user's F10 answer): `GameScene::scrambled()`
-(`game_scene.hpp:1063-1074`) already shuffles at least once and again while the row spells the word, as the exe
-does, but it draws the game LCG `rng_` and caps the loop at 8 tries. `BlitzScene::scrambled()`
-(`blitz_scene.hpp:1222-1229`) is a copy. `GameScene::twist()` draws the LCG too, and shuffles only the available
-balls' slots, so its gaps never move. `CrosswordScene::deal_racks()` and `CrosswordScene::twist()` use the CRT but
-shuffle once, with no "differs from before / from the word" loop.
+Port (T9.3b): `tt2::deal_order(before, word, crt)` in `engine/include/tt2/random.hpp` is `0x43c280`'s refusal
+plus `0x43c370`'s uncapped do-while on `CrtRandom::shuffle`. Every deal and TWIST goes through it: `GameScene` (round
+start, resume, TWIST), `BlitzScene` (each word, TWIST) and `CrosswordScene` (each word's rack with the root as the
+word, TWIST). All three borrow `main.cpp`'s one process-wide `CrtRandom` (D-11), so the deal no longer draws the
+game LCG: for a given `--seed`, later rounds' target lengths and bag picks differ from older builds, as they do in
+the exe. The engine tests replay the worked examples above. Differences that remain:
+
+- A TWIST with letters typed deals only the balls still in the row, so its gaps never move; the exe shuffles all
+  `n` cells (INFERRED above). Each pass therefore draws one less per gap than the exe's.
+- A ball's identity: the port maps the dealt letters back to balls left to right, so two equal letters never trade
+  places in a twist. The letters each cell shows are the same as the exe's.
+- Port guard: two different letters whose swap is the word leave no order to deal (the exe would loop forever); the
+  row stays as it is. Every rack and Lightning word has 5+ letters, so play never reaches it.
+- A resumed Crossword round deals every rack again. The exe deals only the words with no `PLAYED` string
+  (@`0x435303`-`0x435312`), so a resume with solved words draws less there (INFERRED; the load was not traced).
+- The menu's idle timers (`welcome-flow.md` §3) still have their own `CrtRandom` in `WelcomeFlow`, not the shared
+  one.
 
 ### 4.3 Search trails
 

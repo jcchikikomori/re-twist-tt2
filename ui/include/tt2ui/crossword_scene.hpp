@@ -457,7 +457,7 @@ public:
     }
 
     // The selected word's rack (word+0xb4): the whole root, in the order it
-    // was shuffled at round setup or by TWIST. A ball in the row leaves a
+    // was dealt at round setup or by TWIST (0x43c370). A ball in the row leaves a
     // gap: each typed letter, and each locked crossing letter, which takes a
     // ball of its own as the word is selected (the play-test, CW74).
     const std::string& rack() const {
@@ -881,7 +881,7 @@ private:
             scored.push_back(w.scored);
         }
         if (!round_.restore(placements, played, scored, g.score, g.round)) return false;
-        // INFERRED: the racks are shuffled again as at setup (the save keeps
+        // INFERRED: the racks are dealt again as at setup (the save keeps
         // only SOURCE, the root, per word; 0x434f40 was not traced on load).
         deal_racks();
         open_round_view();
@@ -891,16 +891,17 @@ private:
     }
 
     // 0x41ba40 step 6: one word object per placement, root first; every rack
-    // holds the whole root, shuffled on its own with the CRT (0x43c370 ->
-    // 0x439370, std::random_shuffle).
+    // holds the whole root (word+0x18), dealt on its own from the CRT by
+    // 0x434f40 -> 0x43c370(word+0x18, slide 0) (@0x4353f5-0x4353fd,
+    // game-scene.md §4.2; the word string INFERRED from register flow):
+    // never in the root's own order. INFERRED: on a
+    // load the exe deals only the words with no PLAYED string
+    // (@0x435303-0x435312); the port deals every rack again, so a resumed
+    // round may draw more from the CRT than the exe's.
     void deal_racks() {
         racks_.clear();
         const std::string& root = round_.root();
-        for (std::size_t i = 0; i < round_.placements().size(); ++i) {
-            std::vector<char> letters(root.begin(), root.end());
-            crt_.shuffle(letters);
-            racks_.emplace_back(letters.begin(), letters.end());
-        }
+        for (std::size_t i = 0; i < round_.placements().size(); ++i) racks_.push_back(tt2::deal_order(root, root, crt_));
     }
 
     // 0x41d920 (round setup @0x41c6f3, load @0x421dc3): +0x3c8 = 1 and the
@@ -1276,23 +1277,26 @@ private:
     }
 
     // TWIST (0x41b060, CW16): SOUND_word_twist, the selected word's rack
-    // shuffled with the CRT (0x43c370), +0x370 = 1 (the Puzzle Pro blocker)
-    // and the twist counter (0x40f170). Only the balls still in the rack
-    // move: a locked letter's slot stays empty (the play-test, CW74), and
-    // INFERRED, the typed ones stay in the row too.
+    // dealt again from the CRT by 0x43c370(word+0x18, slide 1)
+    // (@0x41b14e-0x41b160; tt2::deal_order, compared with the order before
+    // and the root), +0x370 = 1 (the Puzzle Pro blocker) and the twist
+    // counter (0x40f170). Only the balls still in the rack move: a locked
+    // letter's slot stays empty (the play-test, CW74), and INFERRED, the
+    // typed ones stay in the row too, so the gaps never move (0x43c370
+    // shuffles all n cells; game-scene.md §4.2).
     void twist() {
         if (!round_.twist()) return;
         play(SoundId::WordTwist);
         std::string& r = racks_[round_.selected()];
         std::vector<std::size_t> free_balls;
-        std::vector<char> letters;
+        std::string letters;
         for (std::size_t k = 0; k < r.size(); ++k) {
             if (rack_in_row(k)) continue;
             free_balls.push_back(k);
             letters.push_back(r[k]);
         }
-        crt_.shuffle(letters);
-        for (std::size_t i = 0; i < free_balls.size(); ++i) r[free_balls[i]] = letters[i];
+        const std::string dealt = tt2::deal_order(letters, round_.root(), crt_);
+        for (std::size_t i = 0; i < free_balls.size(); ++i) r[free_balls[i]] = dealt[i];
         trophies_.push(tt2::count_twist(profile_));
         changed();
         refresh_buttons();

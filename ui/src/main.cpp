@@ -2158,11 +2158,13 @@ int main(int argc, char** argv) {
     auto seed_ticks = [&]() -> std::uint32_t {
         return fixed_dt > 0 ? static_cast<std::uint32_t>(1000 + simulated_ms) : static_cast<std::uint32_t>(SDL_GetTicks());
     };
-    // The CRT rand() state Crossword shuffles with (D-11, crossword.md §9):
-    // one per process, seeded once at start-up from the clock, as the exe's
-    // srand((uint)_time64(NULL)) at 0x482b04, so a second game in the same
-    // run continues the sequence. Every scene borrows it; it outlives them
-    // all. Under --fixed-dt it takes the simulated clock, so a run repeats.
+    // The CRT rand() state (D-11, crossword.md §9): the rack deal and TWIST
+    // of every mode (0x43c370, game-scene.md §4.2) and the Crossword grid
+    // shuffles. One per process, seeded once at start-up from the clock, as
+    // the exe's srand((uint)_time64(NULL)) at 0x482b04, so a second game in
+    // the same run continues the sequence. Every scene borrows it; it
+    // outlives them all. Under --fixed-dt it takes the simulated clock, so a
+    // run repeats.
     tt2::CrtRandom crt_random(fixed_dt > 0 ? seed_ticks() : static_cast<std::uint32_t>(std::time(nullptr)));
 
     // The data folder (dictionaries, asset manifest). Packaged builds
@@ -2864,8 +2866,10 @@ int main(int argc, char** argv) {
         try {
             if (pending_mode == tt2::GameMode::Blitz) {
                 // 0x415a70: MUSIC_in-game_1 (at 0.7; the port has no per-stream gain).
+                // Every scene deals its racks from the process-wide CRT (D-11, 0x43c370).
                 blitz = std::make_unique<BlitzScene>(common_tree, full_tree, *players.current(), &highscores, gs,
-                                                     static_cast<std::int64_t>(seed_ticks()), pending_resume.get());
+                                                     static_cast<std::int64_t>(seed_ticks()), crt_random,
+                                                     pending_resume.get());
                 std::string racks;
                 for (const auto& w : blitz->words()) racks += (racks.empty() ? "" : " ") + w.answer;
                 std::printf("game: lightning round %d, words %s\n", blitz->round_number(), racks.c_str());
@@ -2891,7 +2895,7 @@ int main(int argc, char** argv) {
             } else {
                 game = std::make_unique<GameScene>(common_tree, full_tree, *players.current(), &highscores,
                                                    pending_mode, gs, static_cast<std::int64_t>(seed_ticks()),
-                                                   pending_resume.get());
+                                                   crt_random, pending_resume.get());
                 std::printf("game: %s, rack %s, %zu slots\n", tt2::mode_key(pending_mode), game->rack().c_str(),
                             game->slots().size());
             }

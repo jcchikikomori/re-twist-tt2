@@ -81,10 +81,12 @@ private:
 // CONFIRMED 2026-10-13 (Ghidra 12.1.4, TextTwist2.exe 0c6e962c…): the
 // Crossword word-list shuffle (0x4228f0) and the crossing-pair shuffle
 // (0x439370) are MSVC `std::random_shuffle` driven by this generator,
-// not by the Java LCG above. The game seeds it from the clock
-// (`srand(timeGetTime())` at 0x46d5bd, docs/reverse-engineering/crossword.md
-// §9), so the front end seeds one shared instance once; tests pass their
-// own seed. The CRT default seed is 1.
+// not by the Java LCG above; so is every rack deal and TWIST (0x43c370 ->
+// 0x439370, deal_order below; game-scene.md §4.1). The game seeds it from
+// the clock (`srand(timeGetTime())` at 0x46d5bd,
+// docs/reverse-engineering/crossword.md §9), so the front end seeds one
+// shared instance once; tests pass their own seed. The CRT default seed
+// is 1.
 class CrtRandom {
 public:
     static constexpr std::uint32_t MULTIPLIER = 214013u;
@@ -114,10 +116,10 @@ public:
         return n == 0 ? 0 : v % n;
     }
 
-    // MSVC `std::random_shuffle(first, last)`:
+    // MSVC `std::random_shuffle(first, last)` over a vector or a string:
     //   for i in 1..n-1: swap(a[i], a[below(i + 1)])
-    template <typename T>
-    void shuffle(std::vector<T>& a) noexcept {
+    template <typename Sequence>
+    void shuffle(Sequence& a) noexcept {
         for (std::size_t i = 1; i < a.size(); ++i) {
             const std::size_t j = below(static_cast<std::uint32_t>(i + 1));
             std::swap(a[i], a[j]);
@@ -127,6 +129,37 @@ public:
 private:
     std::uint32_t state_;
 };
+
+// 0x43c370, the deal every rack and every TWIST goes through, in Classic,
+// Word of the Day, Lightning and Crossword (game-scene.md §4.1-§4.2,
+// evidence DL1-DL10). `before` is the row's letters left to right, as
+// 0x43c170 reads them (@0x43c3c8); `word` is the rack word the row is
+// compared with (Classic table+0x1c, Lightning word+0x1c, Crossword
+// word+0x18, which holds the root).
+//
+//   - 0x43c280 refuses a row of fewer than two letters or of one repeated
+//     letter: the row stays as it is and no rand() is drawn.
+//   - Otherwise a do-while with no cap: shuffle the row (0x439370, MSVC
+//     random_shuffle on the CRT rand(), n - 1 draws a pass), and shuffle
+//     it again while it reads the same as `before` (compare @0x43c43d) or
+//     as `word` (@0x43c49a). Each pass shuffles the last one's result.
+//
+// So the rack word is never dealt in order, and a twist always moves a
+// letter. The refusal while a ball is still sliding (`+0x184`) is the
+// scene's to check. Port guard: two different letters whose swap is
+// `word` leave no order to deal, and the exe's loop would never end; the
+// row comes back unchanged, as for a refusal. Play never gets there:
+// every rack and Lightning word has 5+ letters, and a row of 3+ letters,
+// not all the same, has at least 3 orders.
+inline std::string deal_order(const std::string& before, const std::string& word, CrtRandom& crt) {
+    if (before.size() < 2 || before.find_first_not_of(before[0]) == std::string::npos) return before;
+    if (before.size() == 2 && word.size() == 2 && word[0] == before[1] && word[1] == before[0]) return before;
+    std::string row = before;
+    do {
+        crt.shuffle(row);
+    } while (row == before || row == word);
+    return row;
+}
 
 // Monotonic millisecond clock. The binary uses `timeGetTime()` from
 // WinMM; the engine references `tt2::millis()` only when the bag is

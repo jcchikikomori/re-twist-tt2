@@ -265,9 +265,10 @@ the address-level walkthrough of the gameplay code is in
   ```
 
   This is enforced by the tests (see `engine/tests/test_round_classic.cpp`)
-  and the CMake build's ASan run. The Crossword scene holds the front
-  end's one `CrtRandom` by reference the same way, so it must outlive
-  the scene too.
+  and the CMake build's ASan run. The Classic, Lightning and Crossword
+  scenes hold the front end's one `CrtRandom` (the rack deal and TWIST,
+  `tt2::deal_order`) by reference the same way, so it must outlive them
+  too.
 - UI work (layout, styling, motion, responsiveness) goes through the
   designer lane. The UI lives in `ui/`: `ui/include/tt2ui/` is the
   headless scene model (`sprite.hpp`, `modifier.hpp`,

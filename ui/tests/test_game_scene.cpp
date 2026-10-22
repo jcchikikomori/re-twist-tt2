@@ -51,6 +51,9 @@ struct Fixture {
     tt2::GameSettings settings;
     std::vector<float> fx_applied, music_applied;
     int settings_commits = 0;
+    // The process-wide CRT the deal and TWIST draw from (0x43c370, D-11),
+    // seeded with the fixture's `seed`; it outlives the scene.
+    tt2::CrtRandom crt;
     std::unique_ptr<GameScene> scene;
     // The wall clock Services::now reads (WOTD); tests move it.
     tt2::WallClock clock{};
@@ -63,9 +66,9 @@ struct Fixture {
         : Fixture(timed ? tt2::GameMode::Timed : tt2::GameMode::Untimed, with_hs, seed, tutorial_seen) {}
     explicit Fixture(tt2::GameMode mode, bool with_hs = true, std::int64_t seed = 0, bool tutorial_seen = true,
                      tt2::WallClock now = tt2::WallClock{}, tt2::WotdDayRule wotd_rule = tt2::WotdDayRule::Original)
-        : clock(now), rule(wotd_rule) {
+        : crt(static_cast<std::uint32_t>(seed)), clock(now), rule(wotd_rule) {
         profile.mode_flags.fill(tutorial_seen);
-        scene = std::make_unique<GameScene>(com, ful, profile, with_hs ? &hs : nullptr, mode, services(), seed);
+        scene = std::make_unique<GameScene>(com, ful, profile, with_hs ? &hs : nullptr, mode, services(), seed, crt);
     }
     // The fixture's hooks, for a second scene built by a test.
     GameScene::Services services() {
@@ -235,6 +238,28 @@ TEST(scene_deals_the_rack_scrambled) {
         std::sort(b.begin(), b.end());
         ASSERT_EQ(a, b);                                   // same letters, new order
     }
+}
+
+// 0x425c50 -> 0x43c370 (game-scene.md §4.1, DL1-DL10): the balls start in
+// word order and are dealt with the process CRT, shuffled again while they
+// still spell the rack word. The deal is the round start's only CRT draw;
+// the bag and the target length stay on the game LCG.
+TEST(scene_deals_the_rack_with_the_crt_like_0x43c370) {
+    for (std::int64_t seed : {0, 1, 5, 195, 12345}) {
+        Fixture f(false, true, seed);
+        tt2::CrtRandom expect(static_cast<std::uint32_t>(seed));
+        ASSERT_EQ(ball_order(*f.scene), tt2::deal_order(f.scene->rack(), f.scene->rack(), expect));
+        ASSERT_EQ(f.crt.state(), expect.state());
+    }
+}
+
+// A fixed seed gives a literal order: the LCG seed 1 draws "cater" from the
+// bag, and srand(1)'s first pass (41, 18467, 6334, 26500; j = 1, 2, 2, 0)
+// deals cater -> cater -> cater -> caetr -> raetc.
+TEST(scene_deal_is_literal_for_a_fixed_seed) {
+    Fixture f(false, true, 1);
+    ASSERT_EQ(f.scene->rack(), std::string("cater"));
+    ASSERT_EQ(ball_order(*f.scene), std::string("raetc"));
 }
 
 TEST(scene_starts_round_one_with_rack_and_board) {
@@ -498,6 +523,62 @@ TEST(twist_needs_two_letters_in_the_row) {
     s.key_space();
     ASSERT_EQ(f.profile.twists, twists);
     ASSERT_TRUE(!f.played(SoundId::WordTwist));            // a refused press is silent
+}
+
+// TWIST (0x425240 -> 0x43c370, game-scene.md §4.2): the row is dealt again
+// from the shared CRT, compared with the order before and the rack word,
+// and the generator moves on by exactly that deal's draws.
+TEST(twist_deals_the_row_with_the_crt) {
+    Fixture f(false, true, 195);
+    auto& s = *f.scene;
+    for (int i = 0; i < 10; ++i) {
+        const std::string before = rack_row(s);
+        tt2::CrtRandom expect = f.crt;
+        const std::string want = tt2::deal_order(before, s.rack(), expect);
+        s.key_space();
+        ASSERT_EQ(rack_row(s), want);
+        ASSERT_EQ(f.crt.state(), expect.state());
+        s.update(BALL_RELAYOUT_MS);
+    }
+}
+
+// With letters typed, only the balls left in the row are dealt; the cells
+// the typed balls left stay empty. INFERRED port choice: 0x43c370 shuffles
+// all n cells, so the exe may move the gaps too (game-scene.md §4.2).
+TEST(twist_with_letters_typed_deals_only_the_balls_in_the_row) {
+    Fixture f(false, true, 5);
+    auto& s = *f.scene;
+    const std::string typed = s.rack().substr(0, 2);
+    f.type(typed);
+    s.update(BALL_MOVE_MS);
+    auto free_cells = [&s] {
+        std::vector<int> cells;
+        for (const auto& b : s.balls()) if (!b.played) cells.push_back(b.slot);
+        std::sort(cells.begin(), cells.end());
+        return cells;
+    };
+    const std::vector<int> cells = free_cells();
+    const std::string before = rack_row(s);
+    tt2::CrtRandom expect = f.crt;
+    const std::string want = tt2::deal_order(before, s.rack(), expect);
+    s.key_space();
+    ASSERT_EQ(rack_row(s), want);
+    ASSERT_TRUE(rack_row(s) != before);
+    ASSERT_TRUE(free_cells() == cells);                    // the gaps stay where they were
+    ASSERT_EQ(s.typed(), typed);                           // the played row is untouched
+    ASSERT_EQ(f.crt.state(), expect.state());
+}
+
+// 0x43c280's refusal draws nothing: the CRT stays where it was.
+TEST(refused_twist_draws_nothing_from_the_crt) {
+    Fixture f(false);
+    auto& s = *f.scene;
+    f.type(s.rack().substr(0, s.rack().size() - 1));      // one letter left in the row
+    s.update(BALL_MOVE_MS);
+    const std::uint32_t before = f.crt.state();
+    s.key_space();
+    s.press("BUTTON_Twist");
+    ASSERT_EQ(f.crt.state(), before);
 }
 
 // LetterBall::tick reports the start of the flip once, and a ball that is
@@ -1339,7 +1420,7 @@ TEST(resumed_misses_pick_the_skip_button) {
     g.fail_count = 1;
     Fixture r(false, false);
     GameScene::Services sv;
-    GameScene s(r.com, r.ful, r.profile, nullptr, tt2::GameMode::Untimed, sv, 0, &g);
+    GameScene s(r.com, r.ful, r.profile, nullptr, tt2::GameMode::Untimed, sv, 0, r.crt, &g);
     ASSERT_EQ(s.misses(), 1);
     ASSERT_TRUE(s.button("BUTTON_Pass")->sprite.visible);
     ASSERT_TRUE(!s.button("BUTTON_Pass_2")->sprite.visible);
@@ -1757,7 +1838,8 @@ TEST(scene_yes_no_dialogs_use_the_wrap_service) {
         ASSERT_EQ(w, YESNO_MESSAGE_W);
         return t + "\nX";
     };
-    GameScene s(com, ful, profile, nullptr, tt2::GameMode::Untimed, sv, 0);
+    tt2::CrtRandom crt;
+    GameScene s(com, ful, profile, nullptr, tt2::GameMode::Untimed, sv, 0, crt);
     s.press("BUTTON_Pass_2");                              // "PASS?" has two own lines too
     ASSERT_EQ(calls, 1);
     ASSERT_EQ(text_line_count(s.dialog().label("MESSAGE")->text), 3);   // 2 own lines + 1 added
@@ -1993,6 +2075,19 @@ TEST(nothing_is_saved_once_the_round_is_over) {
     ASSERT_TRUE(s.dialog_kind() == GameDialog::NextRound);
 }
 
+// 0x42a460 passes WORD back to 0x425c50 (W36): a resumed rack is dealt
+// afresh by 0x43c370 from wherever the shared CRT stands.
+TEST(saved_game_rack_is_dealt_afresh_with_the_crt) {
+    Fixture f(true);
+    const tt2::SavedGame g = f.scene->snapshot();
+    tt2::CrtRandom expect = f.crt;                         // after the first scene's deal
+    GameScene::Services sv;
+    GameScene resumed(f.com, f.ful, f.profile, nullptr, tt2::GameMode::Timed, sv, 0, f.crt, &g);
+    ASSERT_EQ(resumed.rack(), g.word);
+    ASSERT_EQ(ball_order(resumed), tt2::deal_order(g.word, g.word, expect));
+    ASSERT_EQ(f.crt.state(), expect.state());
+}
+
 TEST(saved_game_resumes_where_it_left_off) {
     Fixture f(true);
     f.type(f.scene->rack());
@@ -2011,7 +2106,7 @@ TEST(saved_game_resumes_where_it_left_off) {
     tt2::SavedGame later = g;
     later.round = 4;
     later.fail_count = 2;
-    GameScene resumed(r.com, r.ful, r.profile, nullptr, tt2::GameMode::Timed, sv, 0, &later);
+    GameScene resumed(r.com, r.ful, r.profile, nullptr, tt2::GameMode::Timed, sv, 0, r.crt, &later);
     ASSERT_EQ(discards, 1);                                // 0x42a460 deletes the file
     ASSERT_EQ(resumed.rack(), g.word);
     ASSERT_TRUE(ball_order(resumed) != g.word);           // the resumed rack is scrambled too
@@ -2047,7 +2142,7 @@ TEST(unusable_save_starts_a_fresh_game) {
     sv.discard_save = [&] { ++discards; };
     tt2::SavedGame bad;
     bad.word = "x";                                        // invalid
-    GameScene s(f.com, f.ful, f.profile, nullptr, tt2::GameMode::Untimed, sv, 0, &bad);
+    GameScene s(f.com, f.ful, f.profile, nullptr, tt2::GameMode::Untimed, sv, 0, f.crt, &bad);
     ASSERT_EQ(discards, 0);
     ASSERT_EQ(s.round_number(), 1);
     ASSERT_EQ(s.rack().size(), std::size_t{5});
@@ -2199,7 +2294,7 @@ TEST(resumed_game_never_shows_the_tutorial) {
     g.round = 3;
     f.profile.mode_flags.fill(false);
     GameScene::Services sv;
-    GameScene s(f.com, f.ful, f.profile, nullptr, tt2::GameMode::Untimed, sv, 0, &g);
+    GameScene s(f.com, f.ful, f.profile, nullptr, tt2::GameMode::Untimed, sv, 0, f.crt, &g);
     ASSERT_TRUE(!s.dialog_open());                         // 0x42a460 skips 0x425c50
     ASSERT_TRUE(!f.profile.mode_flags[static_cast<std::size_t>(tt2::GameMode::Untimed)]);
 }
@@ -2492,6 +2587,18 @@ TEST(wotd_starts_with_the_word_of_the_day) {
     ASSERT_EQ(std::string(s.save_mode()), std::string("WORD_OF_THE_DAY"));
 }
 
+// Word of the Day deals through the same 0x425c50 -> 0x43c370 (game-scene.md
+// §4.2): "carte" with srand(7) is dealt as below. Its reseed of the game LCG
+// (§8.2) never reaches the CRT, so the deal is the CRT's only draw.
+TEST(wotd_deals_the_rack_with_the_crt_too) {
+    Fixture f(WOTD, false, 7, true, MANILA_1023_0730);
+    ASSERT_EQ(f.scene->rack(), std::string("carte"));
+    ASSERT_EQ(ball_order(*f.scene), std::string("eratc"));
+    tt2::CrtRandom expect(7);
+    ASSERT_EQ(ball_order(*f.scene), tt2::deal_order("carte", "carte", expect));
+    ASSERT_EQ(f.crt.state(), expect.state());
+}
+
 // AC-W1: MAX WORD LENGTH does not apply (0x426008-0x426104 skipped); a
 // player set to 6 still gets the day's 8-letter word.
 TEST(wotd_ignores_max_word_length) {
@@ -2506,7 +2613,8 @@ TEST(wotd_ignores_max_word_length) {
     p.max_word_length = 6;
     GameScene::Services sv;
     sv.now = [] { return MANILA_1023_0730; };
-    GameScene s(tri, tri, p, nullptr, WOTD, sv, 0);
+    tt2::CrtRandom crt;
+    GameScene s(tri, tri, p, nullptr, WOTD, sv, 0, crt);
     ASSERT_EQ(s.rack(), std::string("triangle"));
     // 21 three-letter sub-anagrams, 5 kept; no 5-7 letter words.
     const std::vector<std::string> board = {"tin", "tie", "tar", "tan", "tag", "tile", "tail", "ring", "rate",
@@ -2521,7 +2629,8 @@ TEST(game_scene_rejects_lightning_and_crossword) {
         tt2::PlayerProfile p = tt2::PlayerProfile::create("Mugwump", 7u);
         bool invalid = false;
         try {
-            GameScene s(com, com, p, nullptr, m, GameScene::Services{}, 0);
+            tt2::CrtRandom crt;
+            GameScene s(com, com, p, nullptr, m, GameScene::Services{}, 0, crt);
         } catch (const std::invalid_argument&) {
             invalid = true;
         }
@@ -2543,7 +2652,8 @@ TEST(wotd_start_throws_no_rack_on_an_empty_pool) {
     p.mode_flags.fill(true);
     bool no_rack = false;
     try {
-        GameScene s(small, small, p, nullptr, WOTD, GameScene::Services{}, 0);
+        tt2::CrtRandom crt;
+        GameScene s(small, small, p, nullptr, WOTD, GameScene::Services{}, 0, crt);
     } catch (const tt2::NoRackError&) {
         no_rack = true;
     }
@@ -2661,7 +2771,8 @@ TEST(wotd_bingo_that_fills_the_board_queues_all_words_not_popup_11) {
     GameScene::Services sv;
     sv.now = [] { return MANILA_1023_0730; };
     sv.play_sound = [&sounds](SoundId id) { sounds.push_back(id); };
-    GameScene s(cab, cab, p, nullptr, WOTD, sv, 0);
+    tt2::CrtRandom crt;
+    GameScene s(cab, cab, p, nullptr, WOTD, sv, 0, crt);
     ASSERT_EQ(s.rack(), std::string("cabin"));
     const std::vector<std::string> board = {"cab", "can", "ban", "bin", "nab", "cabin"};   // DFS on the rack
     ASSERT_TRUE(board_of(s) == board);
@@ -2879,7 +2990,7 @@ TEST(wotd_same_day_save_resumes_without_a_new_pick) {
     f.clock = MANILA_1023_0830;
     ASSERT_EQ(tt2::Bag::word_of_the_day_for_day(f.com, 6624), std::string("cater"));
     ASSERT_TRUE(!wotd_save_is_stale(f.saved[0], f.clock));
-    GameScene s(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, &f.saved[0]);
+    GameScene s(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt, &f.saved[0]);
     ASSERT_TRUE(!s.dialog_open());                         // AC-W9: no tutorial on a resume
     ASSERT_EQ(s.rack(), std::string("carte"));
     ASSERT_EQ(s.scene_day(), 6624);
@@ -2902,7 +3013,7 @@ TEST(wotd_other_day_save_starts_a_new_game) {
     f.clock = MANILA_1023_0010;
     ASSERT_TRUE(wotd_save_is_stale(g, f.clock));
     ASSERT_TRUE(!wotd_save_is_stale(g, MANILA_1022_2350));
-    GameScene s(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, &g);
+    GameScene s(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt, &g);
     ASSERT_EQ(f.discards, 1);
     ASSERT_EQ(s.scene_day(), 6624);
     ASSERT_EQ(s.rack(), std::string("carte"));             // word day 6623 until 08:00 local
@@ -2913,7 +3024,7 @@ TEST(wotd_other_day_save_starts_a_new_game) {
     // takes the new UTC word day's word.
     f.clock = MANILA_1023_0830;
     ASSERT_TRUE(wotd_save_is_stale(g, f.clock));
-    GameScene later(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, &g);
+    GameScene later(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt, &g);
     ASSERT_EQ(f.discards, 2);
     ASSERT_EQ(later.rack(), std::string("cater"));
     ASSERT_EQ(later.score(), 0);
@@ -2943,7 +3054,7 @@ TEST(resumed_wotd_hides_the_round_label) {
     f.scene->key_return();
     const tt2::SavedGame g = f.scene->snapshot();
     ASSERT_TRUE(!wotd_save_is_stale(g, f.clock));
-    GameScene resumed(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, &g);
+    GameScene resumed(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt, &g);
     ASSERT_EQ(f.discards, 1);                              // it really resumed, no new pick
     ASSERT_EQ(resumed.score(), 90);
     ASSERT_TRUE(!resumed.round_visible());
@@ -2951,7 +3062,7 @@ TEST(resumed_wotd_hides_the_round_label) {
     Fixture c(tt2::GameMode::Untimed);
     tt2::SavedGame classic = c.scene->snapshot();
     classic.round = 3;
-    GameScene untimed(c.com, c.ful, c.profile, nullptr, tt2::GameMode::Untimed, c.services(), 0, &classic);
+    GameScene untimed(c.com, c.ful, c.profile, nullptr, tt2::GameMode::Untimed, c.services(), 0, c.crt, &classic);
     ASSERT_EQ(untimed.round_number(), 3);
     ASSERT_TRUE(untimed.round_visible());
 }
@@ -2994,7 +3105,7 @@ TEST(wotd_tutorial_shows_once) {
     ASSERT_EQ(f.scene->dialog().label("HEADER")->text, std::string("Word of the Day"));
     ASSERT_TRUE(f.profile.mode_flags[4]);
     ASSERT_TRUE(!f.profile.mode_flags[static_cast<std::size_t>(tt2::GameMode::Timed)]);
-    GameScene again(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0);
+    GameScene again(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt);
     ASSERT_TRUE(!again.dialog_open());
 }
 
@@ -3057,12 +3168,12 @@ TEST(wotd_rule_switch_turns_a_same_day_save_stale) {
     f.type("car");
     f.scene->key_return();
     const tt2::SavedGame original = f.scene->snapshot();
-    GameScene same(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, &original);
+    GameScene same(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt, &original);
     ASSERT_EQ(same.score(), 90);                           // same rule: resumed
     ASSERT_EQ(f.discards, 1);
     f.rule = tt2::WotdDayRule::Local;
     ASSERT_TRUE(wotd_save_is_stale(original, BERLIN_0715_0030, tt2::WotdDayRule::Local));
-    GameScene local(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, &original);
+    GameScene local(f.com, f.ful, f.profile, nullptr, WOTD, f.services(), 0, f.crt, &original);
     ASSERT_EQ(f.discards, 2);                              // deleted, new game
     ASSERT_EQ(local.score(), 0);
     ASSERT_EQ(local.scene_day(), 6524);

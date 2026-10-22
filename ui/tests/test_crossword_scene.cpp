@@ -1110,6 +1110,48 @@ TEST(crossword_focus_loss_under_next_round_opens_the_menu_after_it) {
 // T6b.4: controls, saving, trophies, popups
 // ---------------------------------------------------------------------------
 
+// 0x434f40 deals each word object's rack through 0x43c370 with the root
+// as the word (word+0x18, crossword.md §2.2), in placement order, from the
+// shared CRT (game-scene.md §4.2). The load restores the grid without a
+// draw (INFERRED: the racks are dealt again), so on a resume the racks are
+// the CRT's only draws.
+TEST(crossword_racks_are_dealt_with_the_crt_like_0x43c370) {
+    tt2::CrtRandom crt(195), expect(195);   // declared first: they outlive f's scene
+    Fixture f;
+    const tt2::SavedGame save = f.c().snapshot();
+    f.scene = std::make_unique<CrosswordScene>(f.com, f.ful, f.profile, &f.hs, f.services(), 5, crt, &save);
+    ASSERT_TRUE(!f.c().resume_failed());
+    std::vector<std::string> want;
+    for (std::size_t i = 0; i < f.r().placements().size(); ++i)
+        want.push_back(tt2::deal_order("planet", "planet", expect));
+    ASSERT_EQ(crt.state(), expect.state());
+    ASSERT_EQ(f.c().rack(), std::string("ptanel"));   // word 0, srand(195): one pass (0x439370)
+    for (std::size_t i = 0; i < want.size(); ++i) {
+        f.settle();
+        ASSERT_EQ(f.r().selected(), i);
+        ASSERT_EQ(f.c().rack(), want[i]);
+        ASSERT_NE(f.c().rack(), std::string("planet"));
+        f.c().key_word(true);
+    }
+    f.scene.reset();
+}
+
+// TWIST on a full rack: the deal compares the whole row with the root too,
+// so a twist never spells it and never keeps the order.
+TEST(crossword_twist_never_deals_the_root_or_the_order_before) {
+    Fixture f;
+    for (int i = 0; i < 12; ++i) {
+        const std::string before = f.c().rack();
+        tt2::CrtRandom expect = f.crt;
+        const std::string want = tt2::deal_order(before, "planet", expect);
+        f.c().key_space();
+        ASSERT_EQ(f.c().rack(), want);
+        ASSERT_NE(f.c().rack(), before);
+        ASSERT_NE(f.c().rack(), std::string("planet"));
+        ASSERT_EQ(f.crt.state(), expect.state());
+    }
+}
+
 // AC-C5 (0x41b060, CW16): TWIST plays SOUND_word_twist, shuffles the
 // selected word's rack with the shared CRT (0x43c370) and sets +0x370; the
 // twist counter counts it (0x40f170). INFERRED: the balls typed into the
@@ -1119,21 +1161,23 @@ TEST(crossword_twist_shuffles_the_rack_and_plays_the_twist_sound) {
     Fixture f;
     f.type("pl");
     const std::string before = f.c().rack();
-    // What 0x43c370 must give: the free balls shuffled by the same CRT.
+    // What 0x43c370 must give: the free balls dealt by the same CRT, with
+    // the root (word+0x18) as the word.
     tt2::CrtRandom expect = f.crt;
-    std::vector<char> free_letters;
+    std::string free_letters;
     for (std::size_t k = 0; k < before.size(); ++k)
         if (!f.c().rack_in_row(k)) free_letters.push_back(before[k]);
-    expect.shuffle(free_letters);
+    const std::string dealt = tt2::deal_order(free_letters, "planet", expect);
     std::string want = before;
     for (std::size_t k = 0, i = 0; k < want.size(); ++k)
-        if (!f.c().rack_in_row(k)) want[k] = free_letters[i++];
-    ASSERT_NE(want, before);   // this seed really moves a letter
+        if (!f.c().rack_in_row(k)) want[k] = dealt[i++];
+    ASSERT_NE(want, before);   // a deal always moves a letter
     const int changes = f.changes;
     f.click("BUTTON_Twist");
     ASSERT_EQ(f.count(SoundId::WordTwist), 1);
     ASSERT_EQ(f.count(SoundId::Button), 1);
     ASSERT_EQ(f.c().rack(), want);
+    ASSERT_EQ(f.crt.state(), expect.state());
     ASSERT_EQ(f.c().typed(), std::string("pl"));   // the row keeps its letters
     ASSERT_TRUE(f.r().twisted());
     ASSERT_EQ(f.profile.twists, 1);

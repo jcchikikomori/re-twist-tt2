@@ -189,8 +189,9 @@ is drawn at all is UNCONFIRMED (§11).
    `BLITZ_WORD_NUMBER_INCREMENT`, root appended last.
 1. Full-list sub-anagrams of the root → `table+0x198`; the common list → `table+0x188` (§0); grid built
    (`0x436090`). A failed build restarts the setup.
-1. One word object per placement, root first. Every rack holds the whole root, shuffled on its own (`0x43c370`,
-   CRT); a locked letter later takes its ball out (§3.4, CW74). Then `+0x3c8 = 1` and grid rotation 0
+1. One word object per placement, root first. Every rack holds the whole root, dealt on its own by `0x43c370`
+   (CRT, reshuffled while it spells the root, `game-scene.md` §4.2); a locked letter later takes its ball out (§3.4,
+   CW74). Then `+0x3c8 = 1` and grid rotation 0
    (@`0x41c6e1..0x41c6f1`, CW15), and `0x41d920` (@`0x41c6f3`, CW55,
    CW57): every row goes into the grid view (vertical rows turned π/2), the grid view's scale is set to **0.5 at
    once**, with no animation (`setScale` through the `+0x60` vtable slot `+0x70`, @`0x41dddf..0x41ddf8`, CW60 to

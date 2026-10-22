@@ -236,11 +236,14 @@ class BlitzScene {
 public:
     using Services = GameScene::Services;
 
+    // `rng_seed` seeds the game LCG (word lengths, the bag). `crt`: the
+    // process-wide CRT generator (D-11) every rack deal and TWIST draws from
+    // (0x43c370, game-scene.md §4.2); it must outlive the scene.
     // `resume`: a saved BLITZ game (0x4110f0 -> 0x4174c0); nullptr starts round 1.
     BlitzScene(const tt2::WordTree& common, const tt2::WordTree& full, tt2::PlayerProfile& profile,
-               tt2::HighScoreManager* highscores, Services services, std::int64_t rng_seed,
+               tt2::HighScoreManager* highscores, Services services, std::int64_t rng_seed, tt2::CrtRandom& crt,
                const tt2::SavedGame* resume = nullptr)
-        : profile_(profile), highscores_(highscores), services_(std::move(services)), rng_(rng_seed),
+        : profile_(profile), highscores_(highscores), services_(std::move(services)), rng_(rng_seed), crt_(crt),
           bag_(common, profile.bag), round_(common, full), popups_(BLITZ_POPUP_X, BLITZ_POPUP_Y) {
         particle_rng_.set_seed(rng_seed + 1);
         build_buttons();
@@ -731,7 +734,9 @@ private:
         for (std::size_t i = 0; i < words.size(); ++i) {
             BlitzWordView v;
             v.answer = words[i].word;
-            const std::string order = scrambled(v.answer);
+            // 0x414340 builds the word's balls in word order, then
+            // 0x43c370(word+0x1c, slide 0) deals them (@0x4143f3-0x414400).
+            const std::string order = tt2::deal_order(v.answer, v.answer, crt_);
             for (std::size_t k = 0; k < order.size(); ++k) {
                 LetterBall b;
                 b.letter = order[k];
@@ -1184,48 +1189,22 @@ private:
         }
         refresh_buttons();
     }
-    // 0x413090: SOUND_word_twist, the round's twist flag, the twist counter.
-    // The shuffle itself is GameScene's (same caveats on the sound).
+    // 0x413090: SOUND_word_twist, the round's twist flag, the twist counter,
+    // and 0x43c370(word+0x1c, slide 1) (@0x41317e-0x413197): the deal and
+    // the gaps as in GameScene::twist (same caveats on the sound).
     void twist() {
         auto& w = cur();
-        std::vector<std::size_t> avail;
-        std::string letters;
-        for (std::size_t i = 0; i < w.balls.size(); ++i) {
-            if (w.balls[i].played) continue;
-            if (w.balls[i].moving()) return;
-            avail.push_back(i);
-            letters.push_back(w.balls[i].letter);
-        }
-        if (letters.size() < 2 || letters.find_first_not_of(letters[0]) == std::string::npos) return;
+        for (const auto& b : w.balls) if (!b.played && b.moving()) return;   // 0x43c280: +0x184
+        const std::vector<std::size_t> row = available_row(w.balls);
+        const std::string before = row_letters(w.balls, row);
+        if (before.size() < 2 || before.find_first_not_of(before[0]) == std::string::npos) return;
         play(SoundId::WordTwist);
-        std::vector<int> slots;
-        for (std::size_t i : avail) slots.push_back(w.balls[i].slot);
-        auto order = [&](const std::vector<int>& s) {
-            std::vector<std::pair<int, char>> cells;
-            for (std::size_t k = 0; k < avail.size(); ++k) cells.emplace_back(s[k], w.balls[avail[k]].letter);
-            std::sort(cells.begin(), cells.end());
-            std::string out;
-            for (const auto& c : cells) out.push_back(c.second);
-            return out;
-        };
-        const std::string before = order(slots);
-        for (int tries = 0; tries < TWIST_MAX_SHUFFLES; ++tries) {
-            rng_.shuffle(slots);
-            const std::string now = order(slots);
-            if (now != before && now != w.answer) break;
-        }
-        for (std::size_t k = 0; k < avail.size(); ++k) move_ball(w, w.balls[avail[k]], false, slots[k], BALL_RELAYOUT_MS);
+        const std::string dealt = tt2::deal_order(before, w.answer, crt_);
+        for (const auto& [ball, cell] : dealt_moves(w.balls, row, dealt))
+            move_ball(w, w.balls[ball], false, cell, BALL_RELAYOUT_MS);
         round_.twist();
         trophies_.push(tt2::count_twist(profile_));
         changed();
-    }
-    // GameScene::scrambled: shuffled with the game LCG until it no longer
-    // spells the word (the deal order was not traced).
-    std::string scrambled(const std::string& word) {
-        std::vector<char> letters(word.begin(), word.end());
-        for (int tries = 0; tries < 8 && std::string(letters.begin(), letters.end()) == word; ++tries)
-            rng_.shuffle(letters);
-        return std::string(letters.begin(), letters.end());
     }
 
     // ---- hit tests ------------------------------------------------------
@@ -1325,7 +1304,8 @@ private:
     tt2::PlayerProfile& profile_;
     tt2::HighScoreManager* highscores_;
     Services services_;
-    tt2::Random rng_;
+    tt2::Random rng_;          // the game LCG (0x5fde90): word lengths and the bag
+    tt2::CrtRandom& crt_;      // the CRT rand(): the deal and TWIST (0x43c370, D-11)
     tt2::Bag bag_;
     tt2::LightningRound round_;
     std::vector<BlitzWordView> views_;
