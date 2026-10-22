@@ -282,7 +282,8 @@ the address-level walkthrough of the gameplay code is in
   `scene_popups.hpp` for the message and trophy popups the scenes share,
   `game_dialogs.hpp` for its pause menu, confirmations and round-end
   dialogs, `help_dialog.hpp` for HOW TO PLAY, `settings_dialog.hpp`
-  for SETTINGS, `highscore_dialog.hpp` for HIGH SCORES, `improvements_dialog.hpp` for the port's IMPROVEMENTS
+  for SETTINGS, `highscore_dialog.hpp` for HIGH SCORES, `quit_dialog.hpp` for the menu's QUIT confirm,
+  `improvements_dialog.hpp` for the port's IMPROVEMENTS
   dialog, `upscale.hpp` for the optional Super-xBR 2x texture upscaler (MIT, ported),
   `render_backend.hpp` for the renderer order (Vulkan, OpenGL,
   software; never Direct3D; `--renderer NAME` forces one for a run),

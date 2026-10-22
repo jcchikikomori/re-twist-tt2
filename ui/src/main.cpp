@@ -74,6 +74,7 @@
 #include "tt2ui/highscore_dialog.hpp"
 #include "tt2ui/import_prompt.hpp"
 #include "tt2ui/improvements_dialog.hpp"
+#include "tt2ui/quit_dialog.hpp"
 #include "tt2ui/render_options.hpp"
 #include "tt2ui/settings_dialog.hpp"
 #include "tt2ui/side_fill.hpp"
@@ -2093,7 +2094,8 @@ int main(int argc, char** argv) {
                                // '&' the main menu SETTINGS' IMPORT (re-import, deviation OP-7),
                                // '"' the main menu's CHANGE NAME, then '-' its REMOVE,
                                // '+' the main menu's TROPHIES, then '~' its MENU,
-                               // '$' the main menu's HIGH SCORES, then '1'..'5' its tabs, '~' OK
+                               // '$' the main menu's HIGH SCORES, then '1'..'5' its tabs, '~' OK,
+                               // '.' the main menu's QUIT, then '|' YES, '~' NO ('.' again: refused)
     long debug_seed = -1;      // --seed N: bag seed for --player (reproducible racks)
     std::vector<std::string> probe_files;   // --probe-media FILE (repeatable): decode, report, exit
     std::string renderer_flag;              // --renderer auto|vulkan|opengl|software: this run only
@@ -2379,14 +2381,15 @@ int main(int argc, char** argv) {
     std::printf("display: %s\n", check_presentation(ren).c_str());
     // One fading dialog slot per dialog source, drawn in this order.
     SideFillTextures side_fill;
-    DialogLayer game_under_layer, game_layer, game_credits_layer, menu_layer, menu_help_layer, menu_settings_layer,
-        menu_highscores_layer, menu_credits_layer, menu_improvements_layer, menu_notice_layer, profile_layer, import_layer;
+    DialogLayer game_under_layer, game_layer, game_credits_layer, menu_layer, menu_quit_layer, menu_help_layer,
+        menu_settings_layer, menu_highscores_layer, menu_credits_layer, menu_improvements_layer, menu_notice_layer,
+        profile_layer, import_layer;
     // The player dialogs under the top one (deepest: select, name input, message).
     std::array<DialogLayer, 2> profile_under_layers;
     // At shutdown, and after a render device reset (T2.4).
     const auto release_layers = [&] {
-        for (DialogLayer* l : {&game_under_layer, &game_layer, &game_credits_layer, &menu_layer, &menu_help_layer,
-                               &menu_settings_layer, &menu_highscores_layer, &menu_credits_layer,
+        for (DialogLayer* l : {&game_under_layer, &game_layer, &game_credits_layer, &menu_layer, &menu_quit_layer,
+                               &menu_help_layer, &menu_settings_layer, &menu_highscores_layer, &menu_credits_layer,
                                &menu_improvements_layer, &menu_notice_layer, &profile_layer, &import_layer})
             l->release();
         for (DialogLayer& l : profile_under_layers) l.release();
@@ -2764,8 +2767,22 @@ int main(int argc, char** argv) {
         }
         begin_game(menu_dialog_mode);
     };
+    // BUTTON_QUIT asks first (0x40ec20, quit_dialog.hpp); YES quits at once.
+    // Closing the window still quits without asking (SDL_EVENT_QUIT below).
+    QuitConfirm menu_quit([&](SoundId id) { assets.play_sound(id); }, wrap_message);
+    auto menu_quit_result = [&](QuitConfirm::Result r) {
+        if (r == QuitConfirm::Result::Quit) {
+            std::printf("menu: quit\n");
+            running = false;
+        } else if (r == QuitConfirm::Result::Stay) {
+            std::printf("menu: quit cancelled\n");
+        }
+    };
     services.menu_action = [&](const std::string& name) {
-        if (name == "BUTTON_QUIT") running = false;
+        if (name == "BUTTON_QUIT") {
+            if (menu_quit.request()) std::printf("menu: quit asked\n");
+            else std::printf("menu: quit already asked\n");   // 0x40ec20: no second confirm
+        }
         else if (name == "BUTTON_CHANGENAME") profile.open_player_select();
         else if (name == "BUTTON_PLAY_UNTIMED") request_game(tt2::GameMode::Untimed);
         else if (name == "BUTTON_PLAY") request_game(tt2::GameMode::Timed);
@@ -2985,7 +3002,7 @@ int main(int argc, char** argv) {
             });
             return;
         }
-        if (menu_dialog_open || menu_improvements || menu_help || menu_highscores) return;
+        if (menu_dialog_open || menu_quit.open() || menu_improvements || menu_help || menu_highscores) return;
         if (menu_settings) { pick_settings(*menu_settings, "settings"); return; }
         if (flow.current() == SceneId::Selection && flow.selection() && game_fade_out == 0)
             pick(flow.selection()->buttons(), TooltipSurface::Selection, "menu");
@@ -3180,6 +3197,20 @@ int main(int argc, char** argv) {
                     menu_dialog_press(dialog_mouse_up(menu_dialog, e.button.x, e.button.y));
                 continue;
             }
+            if (menu_quit.open()) {
+                // Deviation: Return is YES, Esc is NO (the original dialog takes no keys).
+                if (e.type == SDL_EVENT_KEY_DOWN) {
+                    const auto k = e.key.key;
+                    if (k == SDLK_RETURN || k == SDLK_KP_ENTER) menu_quit_result(menu_quit.key_return());
+                    else if (k == SDLK_ESCAPE) menu_quit_result(menu_quit.key_escape());
+                }
+                if (e.type == SDL_EVENT_MOUSE_MOTION) menu_quit.mouse_move(e.motion.x, e.motion.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT)
+                    menu_quit.mouse_down(e.button.x, e.button.y);
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT)
+                    menu_quit_result(menu_quit.mouse_up(e.button.x, e.button.y));
+                continue;
+            }
             if (menu_settings) {
                 // Deviation: Esc cancels, Return is OK (the original dialogs take no keys).
                 if (e.type == SDL_EVENT_KEY_DOWN) {
@@ -3256,6 +3287,7 @@ int main(int argc, char** argv) {
         if (import_prompt) hot = dialog_pointer_hot(import_prompt->dialog());
         else if (profile.open()) hot = profile.pointer_over_clickable();
         else if (menu_dialog_open) hot = dialog_pointer_hot(menu_dialog);
+        else if (menu_quit.open()) hot = menu_quit.pointer_hot();
         else if (menu_help) hot = dialog_pointer_hot(menu_help->dialog());
         else if (menu_highscores) hot = dialog_pointer_hot(menu_highscores->dialog());
         else if (menu_settings) hot = menu_settings->pointer_hot();
@@ -3342,6 +3374,19 @@ int main(int argc, char** argv) {
                 menu_dialog_press(c == '|' ? "BUTTON_YES" : "BUTTON_NO");
             }
         }
+        // --type answers the main menu's QUIT confirm: '|' YES, '~' NO; '.' clicks QUIT
+        // again, which 0x40ec20's guard refuses (no second confirm).
+        if (menu_quit.open() && !auto_type.empty() &&
+            (auto_type.front() == '|' || auto_type.front() == '~' || auto_type.front() == '.')) {
+            auto_type_ms += dt;
+            if (auto_type_ms >= 300) {
+                auto_type_ms = 0;
+                const char c = auto_type.front();
+                auto_type.erase(0, 1);
+                if (c == '.') services.menu_action("BUTTON_QUIT");
+                else menu_quit_result(c == '|' ? menu_quit.key_return() : menu_quit.key_escape());
+            }
+        }
         // --type with a player dialog up: '-' REMOVE, '|' Return, '~' Esc.
         if (profile.open() && !auto_type.empty() && flow.current() == SceneId::Selection) {
             auto_type_ms += dt;
@@ -3359,9 +3404,9 @@ int main(int argc, char** argv) {
         // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter;
         // '=' IMPROVEMENTS, then '<' / '>' its display mode, '(' / ')' its resolution, '[' / ']' its filter,
         // '*' its upscaler, '{' its renderer, '%' its WORD OF THE DAY, '|' OK (then OK on "Restart needed"),
-        // '~' CANCEL.
-        if (!in_play() && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
-            flow.current() == SceneId::Selection && game_fade_out == 0) {
+        // '~' CANCEL; '.' QUIT.
+        if (!in_play() && auto_play.empty() && !import_prompt && !menu_dialog_open && !menu_quit.open() && !profile.open() &&
+            !auto_type.empty() && flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
             if (auto_type_ms >= 300) {
                 auto_type_ms = 0;
@@ -3391,6 +3436,8 @@ int main(int argc, char** argv) {
                 else if (c == '$') services.menu_action("BUTTON_HIGHSCORES");
                 else if (c == '#') services.menu_action("BUTTON_SETTINGS");
                 else if (c == '=') services.menu_action("BUTTON_IMPROVEMENTS");
+                else if (c == '.' && !menu_improvements && !menu_settings && !menu_help && !menu_highscores)
+                    services.menu_action("BUTTON_QUIT");
                 else if (c == '^') toggle_fullscreen();
                 else if (menu_settings && c == '~') menu_settings_result(menu_settings->press("BUTTON_CANCEL"));
                 else if (menu_settings && c == '|') menu_settings_result(menu_settings->press("BUTTON_OK"));
@@ -3470,6 +3517,7 @@ int main(int argc, char** argv) {
             }
         }
         if (menu_dialog_open) dialog_tick(menu_dialog, dt);
+        menu_quit.tick(dt);
         if (menu_help) menu_help->tick(dt);
         if (menu_highscores) menu_highscores->tick(dt);
         if (menu_settings) menu_settings->tick(dt);
@@ -3560,6 +3608,8 @@ int main(int argc, char** argv) {
                           [&] { draw_dialog(ren, assets, *game_credits); });
         draw_dialog_layer(ren, layer_px, menu_layer, menu_dialog_open ? 1 + static_cast<int>(menu_dialog.kind) : 0, dt,
                           [&] { draw_dialog(ren, assets, menu_dialog); });
+        draw_dialog_layer(ren, layer_px, menu_quit_layer, menu_quit.open() ? 1 : 0, dt,
+                          [&] { draw_dialog(ren, assets, menu_quit.dialog()); });
         draw_dialog_layer(ren, layer_px, menu_help_layer, menu_help ? 1 : 0, dt,
                           [&] { draw_help(ren, assets, menu_help->dialog()); });
         draw_dialog_layer(ren, layer_px, menu_highscores_layer, menu_highscores ? 1 : 0, dt,

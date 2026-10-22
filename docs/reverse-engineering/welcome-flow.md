@@ -279,6 +279,68 @@ if bounceTimer <= 0:
 So the spring twangs and the "2" ball bounces independently, each first
 within 3–36 s of entering the menu and then every 7–40 s.
 
+### QUIT confirm (`0x40ec20`) — REA, 2026-10-22
+
+- **Binding (CONFIRMED).** Init `0x42d220` binds `BUTTON_QUIT` (string `0x5910c0`) to `0x40ec20`
+  (@`0x42d773`-`0x42d78f`; `ev_6f39440af57feb7eeca064d89e3c478d50ca5b8fdd65b739cdcf6140867d3f3a`). That binding is
+  `0x40ec20`'s only reference (`ev_0b0153bbc60a8e140cba09c9a0c9df034d287431687ed87371bc12eebbdebbac`), so no key
+  opens the quit confirm.
+- **Handler `0x40ec20` (CONFIRMED,** `ev_0d44a081ef5abcb2b6b913f6d8a0bd05014dd88872556472fa9d8d24247cb774`**):**
+  - It picks the parent: the current scene `[[0x5fde84]+0x28]`, or that scene's `+0x1e8` when a type test
+    (`vtable+0x14(0x5fef80)` → `0x45bb00`) passes (INFERRED: a GF2 class check).
+  - When the parent already has a child named `CTEXT_QUESTION_QUIT` (`0x45c3b0`, @`0x40eca5`-`0x40ece1`), it does
+    nothing, so repeated clicks never stack confirms.
+  - It loads resource section `"default"` (`0x44c150`) and polls with `Sleep(1)` until it is ready
+    (@`0x40ece7`-`0x40ed70`).
+  - It calls `0x40b310(message CTEXT_QUESTION_QUIT, header CTEXT_QUIT_HEADER, receiver [0x5ff648], YES 0x40eb90,
+    0, 0)` (@`0x40edea`-`0x40ee02`) and shows the result through vtable `+0xb0` (@`0x40ee5d`-`0x40ee6c`).
+- **Dialog (CONFIRMED).** `0x40b310` builds template `DIALOG_YESNO` (string `0x5919b8`,
+  `ev_e9c3cf2da01698192c7074845611c86172fa299f9f13312b2d3d6e6cec9cdef3`), named after the message key. It is the
+  same factory as "remove player" (`0x40ade0`, `profiles.md`) and the in-game "Exit Game?" (`0x408320`,
+  `game-scene.md` §6), so the port's `build_yes_no()` fits. `dialogs.xml:203-210`: autocenter, min 400×180,
+  `dodarkenbackground`, movable; `HEADER` (200, 13) `FONT_DIALOG_HEADERS2`; `MESSAGE` (200, 87) width 390,
+  wordwrap, `FONT_SETTINGSTEXT`, line height 30; `BUTTON_YES` (190, 100) anchor topright; `BUTTON_NO` (210, 100)
+  anchor topleft. `0x40b470` moves YES / NO below the message and grows the height (`game-scene.md` §6). Text:
+  `commontext.xml:18-19` "Quit" / "Are you sure you want to quit?".
+- **Buttons (CONFIRMED,** `0x40b470` @`0x40b496`-`0x40b624`,
+  `ev_b60513ea2c74d452bc58f492ad7395b221cbb5593270adb0597ecc8168719722`**).** Each button gets a (receiver,
+  callback) pair. A null receiver becomes the dialog, and a null callback becomes `0x43fcd0`. YES gets
+  (`[0x5ff648]`, `0x40eb90`), kept at `+0x1e4`. NO gets (the dialog, `0x43fcd0`), kept at `+0x1e8`.
+- **YES quits at once (CONFIRMED for the code; the listener registration is INFERRED).**
+  - `0x40eb90` (`ev_f088b6a6b139e272a93a2bacceec6de0be7136f3e7a1c9a72aa3053786c58189`) sends a `GF2::Message`
+    with id `0x402` to the app's listeners (`0x46cab0` on `[0x5fdea0]+0x40`). It has no fade, music stop or sound.
+  - `0x493f00` clears the byte `[0x5c87e5]` on `0x402`, and the main loop `0x46de50` tests that byte
+    (@`0x46de53`). A `.text` scan found the other `0x402` listeners: the scene handlers of Classic (`0x428ba6`),
+    Lightning (`0x416a16`, saves the game) and Crossword (`0x41fdf6`).
+  - Any shutdown fade after the loop ends: UNCONFIRMED (not traced).
+- **NO (CONFIRMED,** `ev_50d17151ac336188fdcdcbe82345f67d619c5226e9e42400e32ca0c14dd16c67`**).** `0x43fcd0`
+  calls `0x45c470` with the dialog. That calls its vtable `+0xb4` (INFERRED: hide), erases it from the scene's
+  list (`+0x1d4`) and releases it. The menu is otherwise untouched. Whether the 200 ms hide fade shows after the
+  erase is UNCONFIRMED.
+- **Keys.** Esc and Return do nothing to the confirm: dialogs bind no keys (`help-and-settings.md` §4, a bounded
+  negative read on `DialogSettings`; INFERRED that `DialogYesNo` behaves the same). Esc only switches fullscreen to
+  windowed (`help-and-settings.md` §3.4).
+- **Window close quits without asking (CONFIRMED).** The WndProc `0x483ef0` sends `0x402` directly on `WM_CLOSE`
+  (`0x10`, @`0x483f13`-`0x483f68`). It then falls to switch entry 6 = `0x4844a2`, which calls `DefWindowProcA`
+  (import `0x5762c0`). Alt+F4 takes the same path through `DefWindowProcA` → `SC_CLOSE` → `WM_CLOSE` (INFERRED;
+  the WndProc handles no `WM_SYSKEYDOWN` / `WM_SYSCOMMAND`). Esc on the menu never opens the confirm (CONFIRMED,
+  single xref).
+- **Sounds and tooltips.** `BUTTON_QUIT`, YES and NO all click `SOUND_BUTTON` (`dialogs.xml:54`, `:207-208`).
+  `BUTTON_QUIT`'s tooltip is `CTOOLTIP_SELECTION_QUIT`; the text exists only as `_WIN` "Quit the game and return to
+  Windows" / `_MAC` (`commontext.xml:84-85`; the suffix is INFERRED, and the port's `tooltip.hpp:98` already maps
+  it). Whether this dialog plays `SOUND_DIALOG_SHOW` depends on its `+0x1d8` flag (UNCONFIRMED, as in
+  `game-scene.md` §6). It fades in over 200 ms through the base show.
+- **Port.** `BUTTON_QUIT` opens `QuitConfirm` (`ui/include/tt2ui/quit_dialog.hpp`), a `build_yes_no()` dialog
+  with the text above and the port's usual 200 ms fade and backdrop. A second QUIT while it is up changes nothing.
+  YES clicks `SOUND_BUTTON` and quits at once; NO clicks it and closes the dialog. Closing the window and Alt+F4
+  (`SDL_EVENT_QUIT`) still quit without asking. **Port deviation:** Return answers YES and Esc answers NO, as
+  in the port's other yes/no dialogs; the original binds no keys here. Esc on the menu itself still quits the
+  desktop build at once (Android: to the background), an older port shortcut the original does not have.
+
+Local-listing evidence (no REA id): the QUIT binding, `0x40ec84`-`0x40ee6c`, `0x40b310`, `0x40b470`, `0x43fcd0`,
+`0x483f13`-`0x483f68`, `0x493f00`, the jump table at `0x484500` / `0x4844e4`, the `DefWindowProcA` import row, and
+the `.text` scan for `0x402`.
+
 ## 4. Open items
 
 - Exact `frametime` / `currentframe` / `flip` / `pivotpoint` semantics of
