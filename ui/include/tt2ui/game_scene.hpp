@@ -1,5 +1,7 @@
-// The Classic game scene (Untimed / Timed): `TextTwist2Scene` in the
-// original. Layout and flow come from the decompilation listed in
+// The Classic game scene (Untimed / Timed) and Word of the Day:
+// `TextTwist2Scene` in the original, which runs all three modes in one
+// class (game-scene.md §8: the mode string at +0x30c). Layout and flow
+// come from the decompilation listed in
 // docs/reverse-engineering/game-scene.md; the addresses are repeated
 // next to the numbers they justify. Everything here is SDL-free so the
 // rules can be unit tested headless; `ui/src/main.cpp` only draws the
@@ -15,6 +17,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -26,6 +29,7 @@
 #include "tt2/saved_game.hpp"
 #include "tt2/trophies.hpp"
 #include "tt2/word_tree.hpp"
+#include "tt2/wotd_day.hpp"
 #include "tt2ui/game_dialogs.hpp"
 #include "tt2ui/help_dialog.hpp"
 #include "tt2ui/scene_popups.hpp"
@@ -389,6 +393,10 @@ constexpr std::size_t ENTER_MIN_LETTERS = 3;
 constexpr int WARNING_MS = 10000;         // 0x425c50: +0x304 (countdown starts at 10 s)
 constexpr int LIVES = 3;                  // 0x425420: game over when the miss counter reaches 3
 constexpr int REVEAL_MS = 3000;           // 0x428840 / 0x425420 / 0x428c80: ModifierDelay(3000) after the reveal
+// Word of the Day (game-scene.md §8).
+constexpr std::size_t WOTD_BOARD_PER_LENGTH = 5;   // 0x4262b0: counters [0, 0, 0, 5, 5, 5, 5, 5, 5]
+constexpr int WOTD_ALL_WORDS_REVEAL_MS = 1000;     // 0x424730 -> 0x428840(1000)
+constexpr int WOTD_GAME_OVER_DELAY_MS = 3000;      // state 3 -> 0x428c80(.., 0): no second reveal, 3000 ms
 
 enum class GamePhase {
     Playing,
@@ -407,6 +415,26 @@ enum class RoundEnd { None, AllWords, TimeUpQualified, TimeUpMissed, NextRound, 
 // HTTPS dictionary.com page it lands on.
 inline constexpr const char* DEFINITION_URL_PREFIX = "https://www.dictionary.com/browse/";
 inline std::string definition_url(const std::string& word) { return DEFINITION_URL_PREFIX + word; }
+
+// 0x42a460 (Word of the Day only): the load recomputes today's scene day
+// and, when the save's DAY differs, deletes the save and starts a new game
+// with no prompt (game-scene.md §8.6). `rule` is IMPROVEMENTS -> WORD OF
+// THE DAY, so switching it can turn a same-day save into another day's
+// (AC-W11). Pure, so the front end can run the same check before it asks
+// "Continue the game?".
+inline bool wotd_save_is_stale(const tt2::SavedGame& g, tt2::WallClock now,
+                               tt2::WotdDayRule rule = tt2::WotdDayRule::Original) {
+    return static_cast<std::int64_t>(g.day) != tt2::wotd_days(now, rule).scene_day;
+}
+
+// The main menu runs the same check before "Continue the game?": a Word of
+// the Day save from another scene day is deleted and a new game starts with
+// no prompt (AC-W7), so only a same-day save reaches the prompt. The other
+// modes keep no day (DAY = -1), so their saves always reach it.
+inline bool menu_discards_saved_game(tt2::GameMode mode, const tt2::SavedGame& g, tt2::WallClock now,
+                                     tt2::WotdDayRule rule = tt2::WotdDayRule::Original) {
+    return mode == tt2::GameMode::WordOfTheDay && wotd_save_is_stale(g, now, rule);
+}
 
 struct SlotView {
     std::string word;
@@ -461,15 +489,26 @@ public:
         // 0x433500: clicking a shown word opens its definition in the
         // browser (ShellExecuteA "open"); the front end owns the browser.
         std::function<void(const std::string&)> open_url;
+        // Word of the Day (D-3): the wall clock, read at round start (word
+        // day, scene day), on resume (the stale-day check) and at game over
+        // (the high-score date). The front end fills it from the OS; the
+        // default is a fixed instant, so the model never reads a clock.
+        std::function<tt2::WallClock()> now = [] { return tt2::WallClock{}; };
+        // IMPROVEMENTS -> WORD OF THE DAY (D-12, deviation UX-12).
+        tt2::WotdDayRule wotd_rule = tt2::WotdDayRule::Original;
         // No pause hook: the pause menu leaves the music playing (DialogMenu
         // show 0x40aa30 has no stream call; game-scene.md §6, REA batch A).
     };
 
+    // `mode`: Timed, Untimed or WordOfTheDay (D-1); Lightning and Crossword
+    // have scenes of their own, so they throw std::invalid_argument.
     // `resume`: a saved game to continue (0x42a460); nullptr starts round 1.
+    // A Word of the Day start throws tt2::NoRackError when the common list
+    // has no 5-8 letter word.
     GameScene(const tt2::WordTree& common, const tt2::WordTree& full, tt2::PlayerProfile& profile,
-              tt2::HighScoreManager* highscores, bool timed, Services services, std::int64_t rng_seed,
+              tt2::HighScoreManager* highscores, tt2::GameMode mode, Services services, std::int64_t rng_seed,
               const tt2::SavedGame* resume = nullptr)
-        : common_(common), full_(full), profile_(profile), highscores_(highscores), timed_(timed),
+        : common_(common), full_(full), profile_(profile), highscores_(highscores), mode_(scene_mode(mode)),
           services_(std::move(services)), rng_(rng_seed), bag_(common, profile.bag) {
         particle_rng_.set_seed(rng_seed + 1);
         build_buttons();
@@ -480,7 +519,14 @@ public:
     }
 
     // ---- state for the renderer -------------------------------------
-    bool timed() const { return timed_; }
+    tt2::GameMode mode() const { return mode_; }
+    // The clock runs in Timed and Word of the Day (0x426d59 / 0x426d67).
+    bool timed() const { return mode_ == tt2::GameMode::Timed || wotd(); }
+    bool wotd() const { return mode_ == tt2::GameMode::WordOfTheDay; }
+    // Word of the Day: the scene day taken at round start (+0x1ec, local
+    // standard time by default), which the save writes as DAY and game end
+    // writes into player.WOD; -1 in the other modes.
+    std::int32_t scene_day() const { return scene_day_; }
     GamePhase phase() const { return phase_; }
     RoundEnd last_round_end() const { return round_end_; }
     int round_number() const { return round_number_; }
@@ -528,7 +574,10 @@ public:
     const SpriteState& trophy_label() const { return trophies_.label(); }
     int trophy_popup_id() const { return trophies_.id(); }
     std::size_t trophies_waiting() const { return trophies_.waiting(); }
-    const char* background_id() const { return timed_ ? "gamescene/BACKGROUND_TIMED" : "gamescene/BACKGROUND"; }
+    const char* background_id() const {
+        if (wotd()) return "gamescene/BACKGROUND_WOTD";
+        return timed() ? "gamescene/BACKGROUND_TIMED" : "gamescene/BACKGROUND";
+    }
     bool dialog_open() const { return dialog_kind_ != GameDialog::None; }
     GameDialog dialog_kind() const { return dialog_kind_; }
     const Dialog& dialog() const {
@@ -569,7 +618,7 @@ public:
         g.time_ms = time_left_ms_;
         g.qualified = qualified();
         g.score = score_;
-        g.day = -1;
+        g.day = wotd() ? scene_day_ : -1;   // 0x429dd0: DAY = +0x1ec
         g.fail_count = misses_;
         for (const auto& v : slots_) if (v.found) g.found_words.push_back(v.word);
         return g;
@@ -582,6 +631,11 @@ public:
     // UI bar texts (0x426360: minutes label "<m>:" and seconds "%02d").
     std::string score_text() const { return std::to_string(score_); }
     std::string round_text() const { return std::to_string(round_number_); }
+    // Whether the UI bar draws "ROUND:" and round_text(). DEVIATION (D6,
+    // user decision): hidden in Word of the Day, where the round is always
+    // 1. The exe shows "ROUND: 1" there: 0x426360 sets LABEL_ROUND from
+    // +0x300 with no mode check (game-scene.md §8.10).
+    bool round_visible() const { return !wotd(); }
     std::string timer_minutes_text() const { return std::to_string(time_left_ms_ / 60000) + ":"; }
     std::string timer_seconds_text() const {
         char buf[8];
@@ -765,7 +819,12 @@ public:
         else if (name == "BUTTON_Clear") clear();
         else if (name == "BUTTON_LastWord") last_word_again();
         else if (name == "BUTTON_Enter") submit();
-        else if (name == "BUTTON_NextRound") { if (phase_ == GamePhase::Playing && qualified()) next_round(); }
+        // BUTTON_WOTD_DONE's command is BUTTON_NextRound (dialogs.xml), and
+        // the dispatcher 0x425b60 matches commands, so DONE runs the NEXT
+        // ROUND path 0x428840(3000) (game-scene.md §8.4).
+        else if (name == "BUTTON_NextRound" || name == "BUTTON_WOTD_DONE") {
+            if (phase_ == GamePhase::Playing && qualified()) next_round();
+        }
         else if (name == "BUTTON_Pass" || name == "BUTTON_Pass_2" || name == "BUTTON_GiveUp") ask_pass(name);
         else if (name == "BUTTON_Menu") open_pause_menu();
     }
@@ -811,6 +870,13 @@ public:
                 if (name == "BUTTON_YES") pass_round();
                 break;
             case GameDialog::NextRound:
+                // Word of the Day: 0x409a70 calls owner slot +0xdc, 0x427b20
+                // (leave; no save once the game is over), not +0xd8 (next
+                // round) (game-scene.md §8.5, W32-W34).
+                close_dialog();
+                if (wotd()) exit_to_menu();
+                else next_round();
+                break;
             case GameDialog::PassRound:   // OK 0x409d10 -> GameScene 0x428aa0 -> 0x425190
                 close_dialog();
                 next_round();
@@ -853,7 +919,7 @@ public:
             if (b.tick(dt_ms)) play(SoundId::LetterLoad);   // 0x43c940(1): 0x43a940 as each flip starts
         // Timer (0x426d59: only CLASSIC_TIMED / WOTD tick).
         // A round started by the queue this frame begins at a full 2:00.
-        if (phase_ == GamePhase::Playing && timed_ && round_number_ == round_before) {
+        if (phase_ == GamePhase::Playing && timed() && round_number_ == round_before) {
             const int before = time_left_ms_;
             time_left_ms_ = std::max(0, time_left_ms_ - dt_ms);
             // 10 s warning: one SOUND_game_clock_countdown per second (0x425f47).
@@ -870,15 +936,31 @@ private:
     // ---- round flow -------------------------------------------------
     tt2::ClassicRound::Config round_config() const {
         tt2::ClassicRound::Config cfg;
-        cfg.timed = timed_;
+        cfg.timed = timed();
+        // Word of the Day skips the target-length loop that reads it
+        // (0x426008-0x426104), so MAX WORD LENGTH does not apply there.
         cfg.max_word_length = static_cast<std::size_t>(profile_.max_word_length);
-        cfg.round_ms = timed_ ? ROUND_MS : 0;
+        cfg.round_ms = timed() ? ROUND_MS : 0;
+        if (wotd()) {
+            cfg.wotd = true;                                 // 0x425fd0 -> 0x4261d4: 0x43d690 picks the rack
+            cfg.wotd_day = word_day_;
+            cfg.board_per_length_cap = WOTD_BOARD_PER_LENGTH;   // 0x4262b0 @0x426193
+        }
         return cfg;
     }
 
     void start_round(int number) {
+        if (wotd()) {
+            // 0x425c50 @0x425cb9-0x425cec: the scene day (+0x1ec) is taken
+            // once per round start; 0x43d690 picks the word from the UTC
+            // word day (game-scene.md §8.1). A game that crosses midnight
+            // keeps both.
+            const tt2::WotdDays days = tt2::wotd_days(services_.now(), services_.wotd_rule);
+            word_day_ = days.word_day;
+            scene_day_ = static_cast<std::int32_t>(days.scene_day);
+        }
         round_ = std::make_unique<tt2::ClassicRound>(common_, full_, round_config());
-        const auto res = round_->start(rng_, bag_, 0);
+        const auto res = round_->start(rng_, bag_, 0);   // the third argument is unused (WOTD: Config::wotd_day)
         profile_.bag = bag_.state();
         if (services_.on_profile_change) services_.on_profile_change();
         setup_round(number, res);
@@ -889,6 +971,16 @@ private:
     // deleted. False (and nothing changed) when the save cannot be used.
     bool resume_game(const tt2::SavedGame& g) {
         if (!g.valid()) return false;
+        if (wotd()) {
+            // 0x42a460: a save from another scene day is deleted and a new
+            // game starts, with no prompt; a same-day save restores its
+            // word (no new pick) and its day (game-scene.md §8.6, W36).
+            if (wotd_save_is_stale(g, services_.now(), services_.wotd_rule)) {
+                if (services_.discard_save) services_.discard_save();
+                return false;
+            }
+            scene_day_ = g.day;
+        }
         auto round = std::make_unique<tt2::ClassicRound>(common_, full_, round_config());
         const auto res = round->start_with_rack(g.word);
         if (res.board_words.empty()) return false;
@@ -906,7 +998,7 @@ private:
         }
         score_ = g.score;
         misses_ = g.fail_count;
-        if (timed_) time_left_ms_ = std::min(ROUND_MS, g.time_ms);
+        if (timed()) time_left_ms_ = std::min(ROUND_MS, g.time_ms);
         round_->restore(0, g.qualified, static_cast<std::uint32_t>(time_left_ms_));
         if (services_.discard_save) services_.discard_save();
         refresh_buttons();
@@ -1055,7 +1147,9 @@ private:
             // 0x424730: every bingo plays the sound; the banner only marks
             // the first one, the one that qualifies the round.
             play(SoundId::WordBingo);
-            if (!was_qualified) queue_popup(PopupKind::Bingo);
+            // Word of the Day queues popup 11 instead of the BINGO banner
+            // (0x424730 @0x424aa1 -> 0x428e20(0xb), game-scene.md §8.5).
+            if (!was_qualified) queue_popup(wotd() ? PopupKind::WordOfTheDay : PopupKind::Bingo);
             else show_definitions_hint_once();
         } else {
             play(SoundId::WordCorrect);
@@ -1072,11 +1166,13 @@ private:
     }
 
     // State 4 (0x426860): the shown skip button asks "PASS?" while a pass is
-    // left (misses + 1 < 3), else "GIVE UP?". Hidden buttons do nothing.
+    // left (misses + 1 < 3), else "GIVE UP?". Word of the Day has no lives
+    // and always asks "Give Up?" (0x426bac -> 0x426c3e, game-scene.md §8.5).
+    // Hidden buttons do nothing.
     void ask_pass(const std::string& name) {
         const MenuButton* b = button(name);
         if (phase_ != GamePhase::Playing || !b || !b->enabled || !b->sprite.visible) return;
-        open_dialog(misses_ + 1 < LIVES ? GameDialog::ConfirmPass : GameDialog::ConfirmGiveUp);
+        open_dialog(!wotd() && misses_ + 1 < LIVES ? GameDialog::ConfirmPass : GameDialog::ConfirmGiveUp);
     }
 
     // 0x425420(0): a pass is a miss. With misses left the words are revealed
@@ -1096,6 +1192,10 @@ private:
     //   third miss / give up (0x425420 else, 0x428c80 -> 0x427d10)
     //                             -> high score, DIALOG_CONGRATS or DIALOG_ENDGAME
     void end_round(RoundEnd why) {
+        if (wotd()) {
+            end_wotd_round(why);
+            return;
+        }
         round_end_ = why;
         return_all_letters();
         enum class After { NextDialog, PassDialog, AutoNext, GameOver } after = After::NextDialog;
@@ -1120,23 +1220,7 @@ private:
         }
         if (services_.on_profile_change) services_.on_profile_change();
         if (after == After::GameOver && services_.discard_save) services_.discard_save();   // 0x461840
-        if (!round_->complete()) {
-            // 0x4333a0: each empty slot shows the first word of its length
-            // not on show yet (tt2::reveal_words), never a found word again.
-            std::vector<std::string> shown;
-            for (const auto& s : slots_) shown.push_back(s.found ? s.word : std::string());
-            shown = tt2::reveal_words(board_words_, std::move(shown));
-            for (std::size_t i = 0; i < slots_.size(); ++i) {
-                SlotView& s = slots_[i];
-                if (s.found) continue;
-                s.word = shown[i];
-                s.revealed = true;
-                s.flip_ms = 0;   // 0x4333a0: +0x174 = 1, then 0x4310f0 staggered
-            }
-        }
-        play(SoundId::WordPassReveal);
-        phase_ = GamePhase::Reveal;
-        refresh_buttons();
+        reveal_missing_words();
         queue_.push_delay(REVEAL_MS);
         queue_.push_method([this, after] {
             switch (after) {
@@ -1156,6 +1240,79 @@ private:
         });
     }
 
+    // Shows the missing words (SOUND_word_pass_reveal) and enters the
+    // reveal phase; the caller queues what follows.
+    void reveal_missing_words() {
+        if (!round_->complete()) {
+            // 0x4333a0: each empty slot shows the first word of its length
+            // not on show yet (tt2::reveal_words), never a found word again.
+            std::vector<std::string> shown;
+            for (const auto& s : slots_) shown.push_back(s.found ? s.word : std::string());
+            shown = tt2::reveal_words(board_words_, std::move(shown));
+            for (std::size_t i = 0; i < slots_.size(); ++i) {
+                SlotView& s = slots_[i];
+                if (s.found) continue;
+                s.word = shown[i];
+                s.revealed = true;
+                s.flip_ms = 0;   // 0x4333a0: +0x174 = 1, then 0x4310f0 staggered
+            }
+        }
+        play(SoundId::WordPassReveal);
+        phase_ = GamePhase::Reveal;
+        refresh_buttons();
+    }
+
+    // Word of the Day is exactly one round (game-scene.md §8.5); nothing
+    // reaches the next-round starter 0x425190.
+    //   DONE (0x425b60 -> 0x428840(3000)), all words (0x424730 ->
+    //   0x428840(1000)), time up after a bingo (0x426860 @0x42701b ->
+    //   0x428840(3000)): reveal, wait, then state 3 (0x426a27 -> 0x426b56):
+    //   count_round(player, 4) with its trophy popup, 0x427cc0 (delete the
+    //   save, WOD), and 0x428c80(.., 0): 3000 ms with no second reveal, then
+    //   game over 0x427d10.
+    //   Time up without a bingo (@0x426ff4-0x427014: 0x427cc0) and GIVE UP
+    //   -> YES (0x4253a0): delete the save and write WOD at once, then
+    //   0x428c80(.., 1): reveal, 3000 ms, game over. No round is counted and
+    //   no life is lost: WOTD never calls the miss path 0x425420.
+    // Leaving during the reveal, before state 3, writes neither a save nor
+    // WOD (INFERRED edge, §8.6): can_save() is false outside Playing.
+    void end_wotd_round(RoundEnd why) {
+        round_end_ = why;
+        return_all_letters();
+        const bool round_won =
+            why == RoundEnd::AllWords || why == RoundEnd::TimeUpQualified || why == RoundEnd::NextRound;
+        // 0x428840: as in Classic, a round finished within 5 s wins Speed Speller.
+        if (why == RoundEnd::AllWords || why == RoundEnd::TimeUpQualified)
+            queue_trophy(tt2::award_speed_speller(profile_, round_elapsed_ms_));
+        if (!round_won) close_wotd_day();
+        reveal_missing_words();
+        if (round_won) {
+            queue_.push_delay(why == RoundEnd::AllWords ? WOTD_ALL_WORDS_REVEAL_MS : REVEAL_MS);
+            queue_.push_method([this] {
+                // State 3 sets the block flag +0x260 first, so the trophy
+                // waits like every popup behind a pending step (trophies.md §1).
+                queue_trophy(tt2::count_round(profile_, mode_));   // mov eax, 4 @0x426b74; call 0x40f2b0
+                close_wotd_day();
+            });
+            queue_.push_delay(WOTD_GAME_OVER_DELAY_MS);
+        } else {
+            queue_.push_delay(REVEAL_MS);
+        }
+        queue_.push_method([this] {
+            finish_game();
+            refresh_buttons();
+        });
+    }
+
+    // 0x427cc0 / 0x4253a0: delete the save (0x461840), then player.WOD = the
+    // scene day taken at round start (+0x1ec), so the menu gate closes
+    // until the next scene day (game-scene.md §8.6).
+    void close_wotd_day() {
+        if (services_.discard_save) services_.discard_save();
+        profile_.wod_day = scene_day_;
+        if (services_.on_profile_change) services_.on_profile_change();
+    }
+
     void next_round() {
         if (phase_ == GamePhase::Playing) {
             // NEXT ROUND pressed while qualified (untimed): ends this round early.
@@ -1168,16 +1325,29 @@ private:
     }
 
     // 0x427d10: a positive score goes to the high-score table; a new
-    // entry shows DIALOG_CONGRATS, anything else DIALOG_ENDGAME.
+    // entry shows DIALOG_CONGRATS, anything else DIALOG_ENDGAME. Word of
+    // the Day (game-scene.md §8.5, §8.7) stores the date at game over
+    // (0x43ff60: GetSystemTime, so the UTC date by default) instead of the
+    // round, and a qualified game that did not rank gets DIALOG_NEXTROUND
+    // as a "back to the menu" card.
     void finish_game() {
         phase_ = GamePhase::GameOver;
         bool high = false;
         if (highscores_ && score_ > 0) {
-            const int rank = highscores_->submit(mode(), profile_.name, score_, std::to_string(round_number_));
+            const std::string extra = wotd() ? tt2::wotd_days(services_.now(), services_.wotd_rule).date
+                                             : std::to_string(round_number_);
+            const int rank = highscores_->submit(mode(), profile_.name, score_, extra);
             if (rank >= 0) { play(SoundId::HighScoreAchieved); high = true; }
             if (services_.on_profile_change) services_.on_profile_change();
         }
-        open_dialog(high ? GameDialog::Congrats : GameDialog::EndGame);
+        if (high) {
+            open_dialog(GameDialog::Congrats);
+        } else if (wotd() && qualified()) {
+            play(SoundId::NextRoundAchieved);
+            open_dialog(GameDialog::NextRound);
+        } else {
+            open_dialog(GameDialog::EndGame);
+        }
     }
 
     // ---- dialogs ----------------------------------------------------
@@ -1221,11 +1391,11 @@ private:
                 help_ = HelpPager{};
                 break;
             case GameDialog::NextRound:
-                dialog_ = build_next_round();
+                dialog_ = build_next_round(wotd());
                 dialog_balls_ = next_round_balls(NEXT_ROUND_LETTERBALLS);
                 dialog_particles_ = next_round_particles(dialog_balls_, particle_rng_);
                 break;
-            case GameDialog::EndGame: dialog_ = build_end_game(); break;
+            case GameDialog::EndGame: dialog_ = build_end_game(wotd()); break;
             case GameDialog::Congrats:
                 dialog_ = build_congrats();
                 dialog_balls_ = congrats_balls(CONGRATS_LETTERBALLS);   // 0x401270 -> 0x401290
@@ -1288,7 +1458,11 @@ private:
         if (services_.on_exit) services_.on_exit();
     }
 
-    tt2::GameMode mode() const { return timed_ ? tt2::GameMode::Timed : tt2::GameMode::Untimed; }
+    // D-1: the modes this scene plays; the others have their own scenes.
+    static tt2::GameMode scene_mode(tt2::GameMode m) {
+        if (m == tt2::GameMode::Timed || m == tt2::GameMode::Untimed || m == tt2::GameMode::WordOfTheDay) return m;
+        throw std::invalid_argument(std::string("GameScene cannot play mode ") + tt2::mode_key(m));
+    }
 
     // ---- letters ----------------------------------------------------
     int first_free_slot(bool played_row) const {
@@ -1458,6 +1632,7 @@ private:
         add("BUTTON_LastWord", "BUTTON_LastWord", 119, 200, 399, 407);
         add("BUTTON_Enter", "BUTTON_Enter", 119, 200, 525, 407);
         add("BUTTON_NextRound", "BUTTON_NextRound", 157, 208, 317, 473);
+        add("BUTTON_WOTD_DONE", "BUTTON_Done", 157, 208, 317, 473);   // button_done.png, rowcount 4
         add("BUTTON_GiveUp", "BUTTON_GiveUp", 157, 208, 317, 473);
         add("BUTTON_Pass", "BUTTON_Pass", 157, 208, 317, 473);
         add("BUTTON_Pass_2", "BUTTON_PASS2", 157, 208, 317, 473);
@@ -1465,6 +1640,9 @@ private:
     // NEXT ROUND, PASS x2, PASS and GIVE UP share one spot (317, 473); the
     // refresh 0x425710 shows one: qualified -> NEXT ROUND, else by misses
     // 0 -> BUTTON_Pass_2, 1 -> BUTTON_Pass, 2 -> GIVE UP (game-scene.md §5).
+    // Word of the Day (§8.4, W6, W7): round start points the "next round"
+    // slot +0x224 at BUTTON_WOTD_DONE, and the refresh hides both PASS
+    // buttons, so the spot shows GIVE UP until the first bingo, then DONE.
     // The same refresh gates the letter buttons on the two rows:
     //   TWIST  more than one ball left in the available row (0x4257c3);
     //   CLEAR  at least one letter played (0x425858);
@@ -1481,10 +1659,12 @@ private:
             const std::string& n = b.sprite.name;
             // 0x425710: NEXT ROUND only for a qualified round, so not behind
             // DIALOG_PASSROUND (AwaitNext after a time-up miss).
-            if (n == "BUTTON_NextRound") { b.sprite.visible = (playing || phase_ == GamePhase::AwaitNext) && q; b.enabled = b.sprite.visible; }
-            else if (n == "BUTTON_Pass_2") { b.sprite.visible = playing && !q && misses_ == 0; b.enabled = b.sprite.visible; }
-            else if (n == "BUTTON_Pass") { b.sprite.visible = playing && !q && misses_ == 1; b.enabled = b.sprite.visible; }
-            else if (n == "BUTTON_GiveUp") { b.sprite.visible = playing && !q && misses_ >= 2; b.enabled = b.sprite.visible; }
+            const bool next_shown = (playing || phase_ == GamePhase::AwaitNext) && q;
+            if (n == "BUTTON_NextRound") { b.sprite.visible = !wotd() && next_shown; b.enabled = b.sprite.visible; }
+            else if (n == "BUTTON_WOTD_DONE") { b.sprite.visible = wotd() && next_shown; b.enabled = b.sprite.visible; }
+            else if (n == "BUTTON_Pass_2") { b.sprite.visible = !wotd() && playing && !q && misses_ == 0; b.enabled = b.sprite.visible; }
+            else if (n == "BUTTON_Pass") { b.sprite.visible = !wotd() && playing && !q && misses_ == 1; b.enabled = b.sprite.visible; }
+            else if (n == "BUTTON_GiveUp") { b.sprite.visible = playing && !q && (wotd() || misses_ >= 2); b.enabled = b.sprite.visible; }
             else if (n == "BUTTON_Menu") { b.enabled = true; }
             else if (n == "BUTTON_Twist") { b.enabled = playing && available > 1; }
             else if (n == "BUTTON_Clear") { b.enabled = playing && played > 0; }
@@ -1498,7 +1678,7 @@ private:
     const tt2::WordTree& full_;
     tt2::PlayerProfile& profile_;
     tt2::HighScoreManager* highscores_;
-    bool timed_;
+    tt2::GameMode mode_;
     Services services_;
     tt2::Random rng_;
     tt2::Bag bag_;
@@ -1537,6 +1717,9 @@ private:
     std::int32_t bingo_streak_ = 0;          // +0x374
     bool twisted_this_round_ = false;        // +0x370
     int round_elapsed_ms_ = 0;               // 120000 - (+0x2fc), counted in every mode
+    // Word of the Day, both taken at round start (game-scene.md §8.1).
+    std::int64_t word_day_ = 0;              // picks the rack (0x43d690)
+    std::int32_t scene_day_ = -1;            // +0x1ec: save DAY and player.WOD
     GameDialog dialog_kind_ = GameDialog::None;
     Dialog dialog_;
 };

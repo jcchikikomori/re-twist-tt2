@@ -33,6 +33,10 @@ enum class PopupKind {
     ExtraTime = 6,       // image_popup_6: Lightning's +8 s (0x4116e0)
     NoneOfLength = 8,    // image_popup_8
     Definitions = 10,    // image_popup_10: click entered words for definitions
+    // image_popup_11: "You found the WORD OF THE DAY!". The first bingo of a
+    // Word of the Day round queues it instead of the BINGO banner (0x424730
+    // @0x424aa1 -> 0x428e20(0xb), game-scene.md §8.5).
+    WordOfTheDay = 11,
 };
 
 constexpr float POPUP_X = 400.0f;          // 0x423a20: +0x34c = [0x59b984]
@@ -59,6 +63,8 @@ inline SheetSpec popup_sheet(PopupKind k) {
         case PopupKind::ExtraTime: return sheet("IMAGE_IMAGE_POPUP_6", 324, 107);
         case PopupKind::NoneOfLength: return sheet("IMAGE_IMAGE_POPUP_8", 301, 102);
         case PopupKind::Definitions: return sheet("IMAGE_IMAGE_POPUP_10", 326, 121);
+        // INFERRED (§8.8): a message, not a banner; only kinds 1 and 2 run frames.
+        case PopupKind::WordOfTheDay: return sheet("IMAGE_IMAGE_POPUP_11", 324, 107);
     }
     return SheetSpec{};
 }

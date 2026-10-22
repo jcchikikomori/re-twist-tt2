@@ -18,6 +18,7 @@
 
 #include "tt2/bag.hpp"
 #include "tt2/random.hpp"
+#include "tt2/wotd_day.hpp"
 
 namespace tt2 {
 
@@ -49,12 +50,13 @@ inline const char* mode_key(GameMode m) noexcept {
 }
 
 // Word-of-the-Day day number as the menu computes it at 0x42f1a0:
-// local time (unix seconds minus the timezone offset) in days, minus
-// the 2008-09-03 epoch (bag.hpp::WOTD_EPOCH_DAY).
+// local standard time (unix seconds minus the timezone offset, minutes
+// west) in days, minus the 2008-09-03 epoch. The scene day of
+// `wotd_days` (wotd_day.hpp) under the original rule.
 inline std::int32_t wotd_day_from_unix(std::int64_t unix_seconds,
                                        std::int32_t tz_offset_minutes = 0) noexcept {
-    const std::int64_t local = unix_seconds - static_cast<std::int64_t>(tz_offset_minutes) * 60;
-    return static_cast<std::int32_t>(local / 86'400 - WOTD_EPOCH_DAY);
+    return static_cast<std::int32_t>(
+        wotd_day_number(unix_seconds - static_cast<std::int64_t>(tz_offset_minutes) * 60));
 }
 
 // Number of UTF-8 code points, the way 0x45fa60 counts a name: every
@@ -99,6 +101,16 @@ struct PlayerProfile {
         return slot < TROPHY_COUNT && trophies[slot] != 0;
     }
 };
+
+// The WORD OF THE DAY menu button is enabled unless the player already
+// finished a WOTD game on today's scene day (0x42f1a0: `player.WOD !=`
+// the local standard-time day; game-scene.md §8.1, §8.6). No save
+// parameter: the exe writes WOD only at game end, after deleting the
+// save, so a same-day save never sits behind a closed gate.
+inline bool wotd_button_enabled(const PlayerProfile& p, WallClock now,
+                                WotdDayRule rule = WotdDayRule::Original) {
+    return static_cast<std::int64_t>(p.wod_day) != wotd_days(now, rule).scene_day;
+}
 
 // ---------------------------------------------------------------------------
 // Player manager

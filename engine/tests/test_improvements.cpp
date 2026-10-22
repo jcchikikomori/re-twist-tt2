@@ -30,7 +30,7 @@ TEST(improvements_text_round_trip_defaults) {
     const std::string text = serialize(Improvements{});
     ASSERT_EQ(text, std::string("format=re-twist-tt2 improvements\nversion=1\nwindow=windowed\nrenderer=auto\nvsync=1\nframe_limit=0\n"
                                   "resolution=800x600\nfullscreen_mode=borderless\nwidescreen_fill=1\n"
-                                  "filter=sharp\nupscaler=off\nresume_prompt=1\n"));
+                                  "filter=sharp\nupscaler=off\nresume_prompt=1\nwotd_day=original\n"));
     Improvements back;
     back.window = WindowMode::Borderless;
     ASSERT_TRUE(parse(text, back));
@@ -294,4 +294,81 @@ TEST(improvements_resume_prompt_rejects_other_values) {
         ASSERT_TRUE(!parse(std::string("format=re-twist-tt2 improvements\nresume_prompt=") + v + "\n", imp));
         ASSERT_TRUE(!imp.resume_prompt);                                 // untouched
     }
+}
+
+// ---- WORD OF THE DAY day rule (deviation UX-12, AC-W11) ---------------------
+
+TEST(improvements_wotd_day_defaults_to_the_original_clocks) {
+    ASSERT_TRUE(Improvements{}.wotd_day == WotdDayRule::Original);
+    ASSERT_TRUE(serialize(Improvements{}).find("\nwotd_day=original\n") != std::string::npos);   // always written
+}
+
+TEST(improvements_wotd_day_round_trips_both_values) {
+    for (WotdDayRule rule : {WotdDayRule::Original, WotdDayRule::Local}) {
+        Improvements imp;
+        imp.wotd_day = rule;
+        Improvements back;
+        back.wotd_day = rule == WotdDayRule::Local ? WotdDayRule::Original : WotdDayRule::Local;
+        ASSERT_TRUE(parse(serialize(imp), back));
+        ASSERT_TRUE(back.wotd_day == rule);
+        ASSERT_TRUE(back == imp);
+    }
+    Improvements local;
+    local.wotd_day = WotdDayRule::Local;
+    ASSERT_TRUE(serialize(local).find("\nwotd_day=local\n") != std::string::npos);
+}
+
+TEST(improvements_wotd_day_is_part_of_equality) {
+    Improvements a, b;
+    b.wotd_day = WotdDayRule::Local;
+    ASSERT_TRUE(a != b);
+    ASSERT_TRUE(!(a == b));
+}
+
+TEST(improvements_wotd_day_missing_key_loads_as_original) {
+    // A 0.5.x file has no wotd_day line.
+    Improvements imp;
+    ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nwindow=borderless\nresume_prompt=0\n", imp));
+    ASSERT_TRUE(imp.wotd_day == WotdDayRule::Original);
+    ASSERT_TRUE(imp.window == WindowMode::Borderless);
+}
+
+TEST(improvements_wotd_day_rejects_other_values) {
+    for (const char* v : {"bogus", "", "Local", "ORIGINAL", "utc", "1", "local "}) {
+        Improvements imp;
+        imp.wotd_day = WotdDayRule::Local;
+        imp.window = WindowMode::Borderless;
+        ASSERT_TRUE(!parse(std::string("format=re-twist-tt2 improvements\nversion=1\nwotd_day=") + v + "\n", imp));
+        ASSERT_TRUE(imp.wotd_day == WotdDayRule::Local);                 // untouched
+        ASSERT_TRUE(imp.window == WindowMode::Borderless);
+    }
+}
+
+TEST(improvements_wotd_day_loads_next_to_keys_from_newer_builds) {
+    Improvements imp;
+    ASSERT_TRUE(parse("format=re-twist-tt2 improvements\nversion=1\nwotd_day=local\nhdr=on\n", imp));
+    ASSERT_TRUE(imp.wotd_day == WotdDayRule::Local);
+}
+
+TEST(improvements_wotd_day_rule_text_round_trips) {
+    ASSERT_EQ(std::string(to_string(WotdDayRule::Original)), std::string("original"));
+    ASSERT_EQ(std::string(to_string(WotdDayRule::Local)), std::string("local"));
+    WotdDayRule r = WotdDayRule::Original;
+    ASSERT_TRUE(parse_wotd_day_rule("local", r) && r == WotdDayRule::Local);
+    ASSERT_TRUE(parse_wotd_day_rule("original", r) && r == WotdDayRule::Original);
+    r = WotdDayRule::Local;
+    ASSERT_TRUE(!parse_wotd_day_rule("bogus", r));
+    ASSERT_TRUE(r == WotdDayRule::Local);                                // untouched
+}
+
+TEST(improvements_wotd_day_unknown_rule_writes_the_original_default) {
+    // A scoped enum holds any int; a value outside the two rules is written
+    // as the default, so the file always parses back.
+    Improvements imp;
+    imp.wotd_day = static_cast<WotdDayRule>(7);
+    ASSERT_EQ(std::string(to_string(imp.wotd_day)), std::string("original"));
+    Improvements back;
+    back.wotd_day = WotdDayRule::Local;
+    ASSERT_TRUE(parse(serialize(imp), back));
+    ASSERT_TRUE(back.wotd_day == WotdDayRule::Original);
 }

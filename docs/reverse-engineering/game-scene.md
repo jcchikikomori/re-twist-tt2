@@ -19,9 +19,9 @@ carry is hard-coded in the exe. The `LETTERS_*` / `ANAGRAM_Height` / `ANAGRAM_Le
 | `UI_BAR` | `IMAGE_UI_BAR` 800×54 | (0, 547) | |
 | `SCORE_LABEL` "SCORE:" | `FONT_UI_LABELS` | x 244, y 574, right-aligned | |
 | `LABEL_Score` | `FONT_UI_NUMBERS` | x 251, y 574, left | |
-| `LABEL_ROUND (copy)` "ROUND:" | `FONT_UI_LABELS` | x 537, right | |
-| `LABEL_ROUND` | `FONT_UI_NUMBERS` | x 541, left | |
-| `TIME_LABEL` "TIME:" | `FONT_UI_LABELS` | x 707, right | |
+| `LABEL_ROUND (copy)` "ROUND:" | `FONT_UI_LABELS` | x 537, right | no code touches it; shown in every mode (§8.10) |
+| `LABEL_ROUND` | `FONT_UI_NUMBERS` | x 541, left | text = round number `+0x300` (0x426360); WOTD shows 1 (§8.10) |
+| `TIME_LABEL` "TIME:" | `FONT_UI_LABELS` | x 707, right | hidden with the clock in Untimed only (0x426360, §8.10) |
 | `LABEL_TimerMinutes` "2:" | `FONT_UI_NUMBERS` | x 749, right | text `"<m>:"` (0x426360) |
 | `LABEL_TimerSeconds` "00" | `FONT_UI_NUMBERS` | x 752, left | text `"%02d"` (0x426360) |
 | `BUTTON_Menu` | `BUTTON_MENU` 119×200 (4 rows) | (10, 554) | |
@@ -563,8 +563,9 @@ All are `autocenter` and `dodarkenbackground="true"`.
 
 Same binary, Ghidra 12.1.4 through REA, one session. Word of the Day (WOTD) is `TextTwist2Scene` with the mode
 string `scene+0x30c == "WORD_OF_THE_DAY"` (`0x5906c8`; the menu global `0x5fdea8 == 4`, `0x4242a0`). Every check
-below is a string compare on that field through `0x4972a0`. Evidence ids W1-W43 are listed at the end of the
-section. Tags as at the top of this file; **UNCONFIRMED** = searched for and not found, with the search trail.
+below is a string compare on that field through `0x4972a0`. Evidence ids W1-W54 are listed in §8.9 (W44-W54
+belong to the UI bar addendum, §8.10). Tags as at the top of this file; **UNCONFIRMED** = searched for and not
+found, with the search trail.
 
 ### 8.1 Three clocks, three day numbers (CONFIRMED)
 
@@ -785,6 +786,47 @@ below 5 in the port but not in the exe. Phase 2 (W2) fixes the order.
 | W41 | pseudo `0x4262b0` | `ev_b20255d271f0d3f487d5013980aaf9c5b14bc70b29db3225f8c64bbf7460c5cc` |
 | W42 | pseudo `0x411ef0` | `ev_c791c69f18e9efee08fdef54deb62fe4ff8ab9fee5699062aa866b69c0f6aed5` |
 | W43 | pseudo `0x43d950` | `ev_dc616f0f7776793550c6e1690a5476af0d4df870615de763181d4d443ce798ce` |
+| W44 | strings `LABEL_ROUND` (`0x5905d8`) | `ev_e176c32ce8e97baae46e720a037d1eb02ddaf3797f22716638fd0b0af282ac2e` |
+| W45 | xrefs `0x5905d8` (only `0x423d65`) | `ev_54b77a5c7fe3275ad03b0d06333d846e6d13557f6abb44f1f6740e49f72850ed` |
+| W46 | asm `0x423a20` (ctor lookups) | `ev_79be952146c636bd4321e15aa343e208c6b3be945c4d64b9e56d243ba488c1ca` |
+| W47 | bytes `0x5905a0` (UI bar names) | `ev_5c0aeb5a9561cbd6a7a56b78547211861880eacdb139726dbc99c5da37b891a2` |
+| W48 | strings `(copy)` (no hit) | `ev_5e9b49c98c07bf6b95e4aa9e5e76d6b88fe8c03ce08c59a053b77f85abf6f9c5` |
+| W49 | strings `UIBAR` (no hit) | `ev_6dd2b4f2e786271648bbbfd9ddfb8a8baad1c2c20b148840d3bb3b330ec4bb5c` |
+| W50 | asm `0x426360` | `ev_cbe57e77ac9223065ba14826217f260de9df12e42c8d196967c1acd592ceb5f4` |
+| W51 | pseudo `0x426360` | `ev_40e4facb171c6f6f6966ab1dc35c17995a24203c131882ebb5729cc94efc48a5` |
+| W52 | bytes `0x58fde0` (`CLASSIC_UNTIMED`) | `ev_c09ec63baef2bc25ccabc6ec9f6052f38c82273d23e622c746199b5875e1c4b6` |
+| W53 | xrefs `0x426360` (2 callers) | `ev_2de80fc408d0102b1fc593418b875145ad3c53f9949f6b8b0bf0d2c24cd6d657` |
+| W54 | pseudo `0x425190` (next round) | `ev_c9a84041b977f1cb3e1b5d9769cd007d4b57f6074088f0feaba43b0eeb96e70f` |
+
+### 8.10 UI bar: ROUND and TIME in WOTD (CONFIRMED; REA addendum, 2026-10-22)
+
+Question from a play test: the port shows "ROUND: 1" in the bottom bar during WOTD. Does the exe hide, empty or
+replace the round label there? **No.** The exe shows "ROUND: 1" in WOTD; the port hides it on purpose (D6, below).
+
+- **The "ROUND:" caption is never touched by code.** The exe holds no `LABEL_ROUND (copy)` string (no `(copy)`
+  string at all, W48; the name table at `0x5905a0` has `LABEL_ROUND` but no copy, W47) and no `TEXT_UIBAR_*`
+  string (W49). So the caption is drawn as `dialogs.xml` sets it: `textid="TEXT_UIBAR_ROUND"` ("ROUND:" in
+  `text.xml`), no `visible` attribute, in every mode. `text.xml` has no WOTD-specific UI bar text either.
+- **The round number label.** `LABEL_ROUND` (`0x5905d8`) has one xref, the ctor lookup at `0x423d65` (W44, W45),
+  which stores it in `+0x240` next to `LABEL_Score` `+0x23c`, the timer labels `+0x234` / `+0x238` and
+  `TIME_LABEL` `+0x244` (W46). The only code that uses `+0x240` is `0x426360` (searched: `0x4242a0`, `0x425c50`,
+  `0x425190`, `0x425710`, `0x426860`, `0x424730`, `0x42a460`, `0x428840`, `0x428c80`; W5, W7, W14, W17, W36-W38,
+  W40, W54). There, `@0x4263ee`-`0x426417`, it sets the text to `to_string(+0x300)` through the label vtable
+  `+0xc4` (setText) with **no mode check** (W50, W51). Its callers are round start (`0x42626c`) and load
+  (`0x42aa84`) (W53).
+- **The value is 1 in WOTD.** `+0x300` is the first argument of round start `0x425c50` (W5). WOTD starts with
+  `0x425c50(1, 0)` (`0x4242a0`, W38; also the stale-save path of `0x42a460`, W36), a resume restores the saved
+  `ROUND` (W36), and the only path to round n+1, `0x425190` = `0x425c50(+0x300 + 1, 0)` (W54), is never reached in
+  WOTD (§8.5). So the label reads "1" for the whole game.
+- **Only Untimed hides anything.** `@0x426535` compares the mode with `0x58fe00` = `"CLASSIC_UNTIMED"` (W52):
+  true → `setVisible(0)` (vtable `+0x5c`) on `+0x234`, `+0x238` and `+0x244`; false → `setVisible(1)` (W50). WOTD
+  is not Untimed, so the clock and "TIME:" show, as in Timed.
+
+Worked example, a fresh WOTD game: `SCORE: 0`, `ROUND: 1`, `TIME: 2:00`. Untimed round 3: `ROUND: 3`, no clock.
+
+Port check: `ui/src/main.cpp` `draw_game` draws the clock when `timed()`, which `game_scene.hpp` makes true for
+Timed and WOTD, and "ROUND:" with `round_text()` when `round_visible()`.
+The port hides "ROUND:" and its number in WOTD, deviation D6 (user decision 2026-10-22, `wotd-crossword.md`).
 
 ## 9. Address index
 
@@ -793,7 +835,8 @@ below 5 in the port but not in the exe. Phase 2 (W2) fixes the order.
 | `0x423a20` | `TextTwist2Scene` ctor: looks up the components, loads both `.tree` files |
 | `0x43e070` | Recursive `.tree` node reader (letters, `0`/`1`, children); anchor check 2026-10-14 `ev_b0fd200dbf3523b14f18941871fe88b17c0aed2eac8ed5f6991650daf2055e70` |
 | `0x425c50` | Round start: timer / round / score reset, rack pick, `AnagramTable` ctor |
-| `0x426360` | After setup: timer label text, panel pieces fitted to the grid |
+| `0x426360` | After setup: score / round / timer texts, clock hidden in Untimed only, panel pieces fitted (§8.10) |
+| `0x423d65` | Ctor: the only `LABEL_ROUND` (`0x5905d8`) lookup, kept in `+0x240`; "ROUND:" is never looked up (§8.10) |
 | `0x424730` | ENTER: guess, sounds, score, popup kind per result |
 | `0x428e20` / `0x428e60` | Popup queue push / pop (`+0x334`) |
 | `0x428ec0` | Popup: sprite by kind at (400, 150), fade / scale / hold / fade chain |

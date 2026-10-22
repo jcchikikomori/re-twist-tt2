@@ -102,7 +102,9 @@ inline const char* tooltip_text(TooltipSurface surface, std::string_view name) {
             if (name == "BUTTON_LastWord") return s::LAST_WORD;
             // Lightning's word arrows reuse CTOOLTIP_Clear (sic, dialogs.xml SCENE_BLITZ).
             if (name == "BUTTON_Clear" || name == "BUTTON_PREVWORD" || name == "BUTTON_NEXTWORD") return s::CLEAR;
-            if (name == "BUTTON_NextRound") return s::NEXT_ROUND;
+            // BUTTON_WOTD_DONE keeps NEXT ROUND's CTOOLTIP_NextRound, a leftover
+            // the original never changed (game-scene.md §8.4).
+            if (name == "BUTTON_NextRound" || name == "BUTTON_WOTD_DONE") return s::NEXT_ROUND;
             if (name == "BUTTON_Pass" || name == "BUTTON_Pass_2" || name == "BUTTON_GiveUp") return s::GIVE_UP;
             if (name == "BUTTON_Menu") return s::INGAME_MENU;
             break;

@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -530,6 +531,16 @@ public:
         if (services_.menu_action) services_.menu_action(name);
     }
 
+    // The front end's switch for one menu button; every button starts
+    // enabled. 0x42f1a0 disables the Word of the Day button once the
+    // current player has played today (profiles.md §3.3); a disabled button
+    // shows frame 3 and only plays its disabled sound. The choice is kept,
+    // so it also holds for a menu built later. Unknown names change nothing.
+    void set_button_enabled(const std::string& name, bool enabled) {
+        button_enabled_[name] = enabled;
+        if (selection_) apply_button_states();
+    }
+
 private:
     void update_current(int dt_ms) {
         switch (current_) {
@@ -549,8 +560,13 @@ private:
             case SceneId::Selection:
                 load_.reset();
                 selection_ = std::make_unique<SelectionScene>(*this, rng_);
+                apply_button_states();
                 break;
         }
+    }
+    void apply_button_states() {
+        for (const auto& [name, enabled] : button_enabled_)
+            if (MenuButton* b = selection_->button(name)) b->enabled = enabled;
     }
 
     Services services_;
@@ -564,6 +580,7 @@ private:
     std::unique_ptr<SplashScene> splash_;
     std::unique_ptr<LoadScene> load_;
     std::unique_ptr<SelectionScene> selection_;
+    std::map<std::string, bool> button_enabled_;   // set_button_enabled; missing = enabled
 };
 
 }  // namespace tt2ui

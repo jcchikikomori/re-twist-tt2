@@ -286,3 +286,51 @@ TEST(reveal_words_falls_back_to_the_slots_own_word) {
     // A short `shown` is padded to the board: every slot gets its answer.
     ASSERT_TRUE(tt2::reveal_words({"abs", "bad"}, {}) == (std::vector<std::string>{"abs", "bad"}));
 }
+
+namespace {
+// A rack with 106 common sub-anagrams: the first 100 three-letter
+// combinations of "abcdefghij" and six four-letter words. The 48-slot
+// quota gives length 4 only trunc(6 * 48 / 106) = 2 slots.
+WordTree crowded_dict() {
+    std::vector<std::string> words;
+    const std::string letters = "abcdefghij";
+    for (std::size_t i = 0; i < letters.size() && words.size() < 100; ++i)
+        for (std::size_t j = i + 1; j < letters.size() && words.size() < 100; ++j)
+            for (std::size_t k = j + 1; k < letters.size() && words.size() < 100; ++k)
+                words.push_back({letters[i], letters[j], letters[k]});
+    for (const char* w : {"abcd", "abce", "abcf", "abcg", "abch", "abci"}) words.push_back(w);
+    return WordTree::from_words(words);
+}
+}  // namespace
+
+// AC-W2 (D-13): 0x4262b0 caps 5 per length before the 0x432330 quota.
+TEST(board_per_length_cap_runs_before_the_quota) {
+    auto t = crowded_dict();
+    Board b = Board::build("abcdefghij", t, 5);
+    // Quota first would have left 2 four-letter slots; the exe keeps 5.
+    ASSERT_TRUE(b.slots(4) == (std::vector<std::string>{"abcd", "abce", "abcf", "abcg", "abch"}));
+    ASSERT_TRUE(b.slots(3) == (std::vector<std::string>{"abc", "abd", "abe", "abf", "abg"}));
+    ASSERT_EQ(b.slot_count(), std::size_t(10));
+    // The enumeration itself is not capped (guesses still check it).
+    ASSERT_EQ(b.all().size(), std::size_t(106));
+}
+
+TEST(board_without_per_length_cap_keeps_the_quota_board) {
+    // Negative: Classic (cap 0) is unchanged: 45 three-letter slots
+    // (trunc(100 * 48 / 106)) and 2 four-letter slots.
+    auto t = crowded_dict();
+    Board b = Board::build("abcdefghij", t, 0);
+    ASSERT_TRUE(b.slots(4) == (std::vector<std::string>{"abcd", "abce"}));
+    ASSERT_EQ(b.slots(3).size(), std::size_t(45));
+    ASSERT_EQ(b.slots(3).front(), std::string("abc"));
+    ASSERT_EQ(b.slots(3).back(), std::string("bdf"));
+    ASSERT_EQ(b.slot_count(), std::size_t(47));
+}
+
+TEST(board_per_length_cap_keeps_short_buckets_whole) {
+    // A bucket already under the cap is not padded or trimmed.
+    auto t = tiny_dict();
+    Board capped = Board::build("abcde", t, 5);
+    Board plain  = Board::build("abcde", t, 0);
+    for (std::size_t l = 3; l <= 8; ++l) ASSERT_TRUE(capped.slots(l) == plain.slots(l));
+}

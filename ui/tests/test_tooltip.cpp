@@ -76,6 +76,14 @@ TEST(tooltip_place_flips_at_the_right_edge) {
     ASSERT_TRUE(q.x == 625.0f && q.y == 577.0f);
 }
 
+// Word of the Day's DONE keeps CTOOLTIP_NextRound, a leftover the original
+// never changed (game-scene.md §8.4); it is a game-scene button only.
+TEST(wotd_done_tooltip_is_next_rounds) {
+    ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Game, "BUTTON_WOTD_DONE")),
+              std::string("Advance to the next round"));
+    ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Selection, "BUTTON_WOTD_DONE")), std::string());
+}
+
 TEST(tooltip_text_follows_dialogs_xml) {
     ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Game, "BUTTON_Twist")), std::string("Scramble the letters"));
     ASSERT_EQ(std::string(tooltip_text(TooltipSurface::Game, "BUTTON_Pass_2")), std::string("End this game"));

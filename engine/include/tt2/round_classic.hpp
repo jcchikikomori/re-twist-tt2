@@ -9,7 +9,8 @@
 //   - `time_left_ms`: round timer, only meaningful when `timed`
 //
 // Word of the Day uses the same board-builder as Classic but caps
-// the board at 5 slots per length (CONFIRMED at 0x4262b0).
+// the board at 5 slots per length before the 48-slot quota (CONFIRMED
+// at 0x4262b0), and takes its rack from `Config::wotd_day`.
 
 #include <cstddef>
 #include <cstdint>
@@ -31,6 +32,10 @@ public:
         std::size_t max_word_length = 8;
         std::uint32_t round_ms     = 0;       // 0 = untimed
         std::size_t board_per_length_cap = 0; // WOTD uses 5
+        // WOTD only: the word day that picks the rack
+        // (`wotd_days(now, rule).word_day`, wotd_day.hpp). Ignored when
+        // `wotd` is false.
+        std::int64_t wotd_day      = 0;
     };
 
     struct Result {
@@ -43,10 +48,12 @@ public:
     ClassicRound(const WordTree& common, const WordTree& full, Config cfg)
         : cfg_(cfg), common_(&common), full_(&full) {}
 
-    Result start(Random& rng, Bag& bag, std::int64_t seed) {
+    // The third argument is not read: the WOTD rack comes from
+    // `Config::wotd_day`, a Classic rack from the bag.
+    Result start(Random& rng, Bag& bag, std::int64_t /*seed*/) {
         std::string rack;
         if (cfg_.wotd) {
-            rack = Bag::word_of_the_day(*common_, seed);
+            rack = Bag::word_of_the_day_for_day(*common_, cfg_.wotd_day);
         } else {
             const std::size_t L = Bag::classic_target_length(rng, cfg_.max_word_length);
             rack = bag.pick_classic(L, rng);

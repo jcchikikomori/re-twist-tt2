@@ -38,10 +38,12 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -149,6 +151,7 @@ const std::map<std::string, std::string> kImageFiles = {
     // Game scene (resources.xml section "gamescene").
     {"gamescene/BACKGROUND", "images/gamescene/background.png"},
     {"gamescene/BACKGROUND_TIMED", "images/gamescene/background_timed.png"},
+    {"gamescene/BACKGROUND_WOTD", "images/gamescene/background_wotd.png"},
     {"IMAGE_UI_BAR", "images/gamescene/ui_bar.png"},
     {"BUTTON_MENU", "images/gamescene/button_menu.png"},
     {"BUTTON_Twist", "images/gamescene/button_twist.png"},
@@ -157,6 +160,7 @@ const std::map<std::string, std::string> kImageFiles = {
     {"BUTTON_Clear", "images/gamescene/button_clear.png"},
     {"BUTTON_NextRound", "images/gamescene/button_nextround.png"},
     {"BUTTON_GiveUp", "images/gamescene/button_giveup.png"},
+    {"BUTTON_Done", "images/gamescene/button_done.png"},
     {"BUTTON_Pass", "images/gamescene/button_pass.png"},
     {"BUTTON_PASS2", "images/gamescene/button_pass2.png"},
     {"IMAGE_IMAGE_POPUP_0", "images/gamescene/image_popup_0.png"},
@@ -164,6 +168,7 @@ const std::map<std::string, std::string> kImageFiles = {
     {"IMAGE_IMAGE_POPUP_5", "images/gamescene/image_popup_5.png"},
     {"IMAGE_IMAGE_POPUP_8", "images/gamescene/image_popup_8.png"},
     {"IMAGE_IMAGE_POPUP_10", "images/gamescene/image_popup_10.png"},
+    {"IMAGE_IMAGE_POPUP_11", "images/gamescene/image_popup_11.png"},
     {"IMAGE_POPUP_BINGO", "images/gamescene/popup_bingo.png"},
     {"IMAGE_POPUP_ALLWORDS", "images/gamescene/popup_allwords.png"},
     {"ANAGRAM_TILE", "images/gamescene/anagramTile.png"},
@@ -1449,6 +1454,7 @@ const char* popup_placeholder_text(PopupKind k) {
         case PopupKind::ExtraTime: return "+8 SECONDS";
         case PopupKind::NoneOfLength: return "NO WORDS OF\nTHAT LENGTH";
         case PopupKind::Definitions: return "CLICK A FOUND\nWORD TO LOOK\nIT UP";
+        case PopupKind::WordOfTheDay: return "YOU FOUND THE\nWORD OF THE DAY!";
     }
     return "";
 }
@@ -1606,9 +1612,11 @@ void draw_game(SDL_Renderer* ren, Assets& assets, const GameScene& g) {
     draw_sprite(ren, assets, sprite("UI_BAR", sheet("IMAGE_UI_BAR", 800, 54), 0, 547));
     draw_text(ren, assets, "FONT_UI_LABELS", "SCORE:", 244, 574, TextAlign::Right, Anchor::Center, -1);
     draw_text(ren, assets, "FONT_UI_NUMBERS", g.score_text(), 251, 574, TextAlign::Left, Anchor::Center, -1);
-    draw_text(ren, assets, "FONT_UI_LABELS", "ROUND:", 537, 574, TextAlign::Right, Anchor::Center, -1);
-    draw_text(ren, assets, "FONT_UI_NUMBERS", g.round_text(), 541, 574, TextAlign::Left, Anchor::Center, -1);
-    if (g.timed()) {   // INFERRED: the clock is hidden in Untimed
+    if (g.round_visible()) {   // DEVIATION (D6): hidden in WOTD; the exe shows "ROUND: 1"
+        draw_text(ren, assets, "FONT_UI_LABELS", "ROUND:", 537, 574, TextAlign::Right, Anchor::Center, -1);
+        draw_text(ren, assets, "FONT_UI_NUMBERS", g.round_text(), 541, 574, TextAlign::Left, Anchor::Center, -1);
+    }
+    if (g.timed()) {   // 0x426360 @0x426535: only Untimed hides the clock
         draw_text(ren, assets, "FONT_UI_LABELS", "TIME:", 707, 574, TextAlign::Right, Anchor::Center, -1);
         draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_minutes_text(), 749, 574, TextAlign::Right, Anchor::Center, -1);
         draw_text(ren, assets, "FONT_UI_NUMBERS", g.timer_seconds_text(), 752, 574, TextAlign::Left, Anchor::Center, -1);
@@ -1769,6 +1777,33 @@ bool load_tree(const std::string& dir, const char* original, const char* open, t
         }
     }
     return false;
+}
+
+// The OS wall clock for Word of the Day (D-3). The menu gate and the game
+// scene both read it, so they can never disagree. The standard offset comes
+// from `_get_timezone` on Windows and the POSIX / bionic `timezone` after
+// `tzset()` elsewhere, in seconds west, as the exe's `_ftime64_s` sees it
+// (game-scene.md §8.1); the offset with DST is localtime minus gmtime of
+// the same second (tt2::wall_clock_from). Worked example: Manila,
+// `timezone` = -28800 s -> tz_minutes_west -480, utc_offset_minutes +480.
+tt2::WallClock wall_clock() {
+    const auto since_epoch = std::chrono::system_clock::now().time_since_epoch();
+    const std::int64_t unix_ms = std::chrono::duration_cast<std::chrono::milliseconds>(since_epoch).count();
+    const std::time_t t = static_cast<std::time_t>(tt2::floor_div(unix_ms, 1000));
+    long tz_seconds_west = 0;
+    std::tm local{}, utc{};
+#ifdef _WIN32
+    _tzset();
+    _get_timezone(&tz_seconds_west);
+    localtime_s(&local, &t);
+    gmtime_s(&utc, &t);
+#else
+    tzset();
+    tz_seconds_west = timezone;
+    localtime_r(&t, &local);
+    gmtime_r(&t, &utc);
+#endif
+    return tt2::wall_clock_from(unix_ms, tz_seconds_west, local, utc);
 }
 
 // CTEXT_HIGHSCORE_NAMES (commontext.xml): the default-table fill names.
@@ -1990,7 +2025,7 @@ int main(int argc, char** argv) {
     std::string debug_player;
     std::string data_dir = TT2_DATA_DIR;
     bool data_dir_given = false;
-    std::string auto_play;     // --play untimed|timed|lightning: start a game as soon as the menu is up
+    std::string auto_play;     // --play untimed|timed|lightning|wotd: start a game as soon as the menu is up
     bool hover_set = false;    // --hover X,Y: the cursor parked on one point (smoke tests)
     float hover_x = 0, hover_y = 0;
     std::string auto_type;     // --type "word|word": feed keystrokes into the game (smoke tests);
@@ -1999,7 +2034,7 @@ int main(int argc, char** argv) {
                                // '#' SETTINGS, '@' its INFO (credits), '6'..'8' max length,
                                // '=' the main menu's IMPROVEMENTS (then '<' / '>' its display mode,
                                //     '(' / ')' its resolution, '[' / ']' its texture filter, '*' its upscaler,
-                               //     '{' its renderer),
+                               //     '{' its renderer, '%' its WORD OF THE DAY),
                                // '!' fullscreen switch, '^' Alt+Enter,
                                // '%' the shown PASS / GIVE UP button, '}' NEXT ROUND;
                                // the missing-assets prompt comes first: '|' YES / OK, '~' NO / OK;
@@ -2033,7 +2068,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--renderer") && i + 1 < argc) renderer_flag = argv[++i];
         else if (!std::strcmp(argv[i], "--help")) {
             std::printf("usage: tt2 [--assets DIR] [--data-dir DIR] [--save-dir DIR] [--player NAME]\n"
-                        "           [--play untimed|timed|lightning] [--speed N] [--exit-after MS]\n"
+                        "           [--play untimed|timed|lightning|wotd] [--speed N] [--exit-after MS]\n"
                         "           [--import DIR] [--asset-dir DIR] [--asset-manifest FILE]\n"
                         "           [--renderer auto|vulkan|opengl|software]\n"
                         "\n"
@@ -2371,7 +2406,16 @@ int main(int argc, char** argv) {
     pservices.wrap = [&assets](const std::string& text, int max_width) {
         return wrap_text(assets.font("FONT_SETTINGSTEXT").font, text, max_width);
     };
-    ProfileFlow profile(players, pservices);
+    // 0x42f1a0 refreshes the menu's name label and its Word of the Day button
+    // together, so a player change (select, add, remove) reopens or closes
+    // the gate for the new player. Set once the menu flow exists.
+    std::function<void()> refresh_wotd_gate;
+    ProfileFlow::Services profile_services = pservices;
+    profile_services.on_change = [&] {
+        pservices.on_change();
+        if (refresh_wotd_gate) refresh_wotd_gate();
+    };
+    ProfileFlow profile(players, profile_services);
 
     bool running = true;
     WelcomeFlow::Services services;
@@ -2473,10 +2517,12 @@ int main(int argc, char** argv) {
         if (imp.window != improvements.window || imp.resolution != improvements.resolution) apply_window(imp);
         if (imp.vsync != improvements.vsync) apply_vsync(imp.vsync);
         if (imp.filter != improvements.filter || imp.upscaler != improvements.upscaler) apply_render_options(imp);
+        const bool wotd_rule_changed = imp.wotd_day != improvements.wotd_day;
         improvements = imp;
-        std::printf("improvements: window %s, resolution %s, vsync %s, frame limit %d\n",
+        if (wotd_rule_changed && refresh_wotd_gate) refresh_wotd_gate();   // another rule, another "today"
+        std::printf("improvements: window %s, resolution %s, vsync %s, frame limit %d, word of the day %s\n",
                     tt2::to_string(improvements.window), tt2::to_string(improvements.resolution).c_str(),
-                    improvements.vsync ? "on" : "off", improvements.frame_limit);
+                    improvements.vsync ? "on" : "off", improvements.frame_limit, tt2::to_string(improvements.wotd_day));
         if (!save_dir.empty() && !store.save(improvements))
             std::fprintf(stderr, "warning: could not write %s\n", store.improvements_path().string().c_str());
         settings_host.commit(settings);   // settings.txt's fullscreen follows (UX-4)
@@ -2512,9 +2558,36 @@ int main(int argc, char** argv) {
         if (store.load_saved_game(player, mode_name(m), *g)) pending_resume = std::move(g);
         else std::fprintf(stderr, "warning: saved game for %s is unreadable; starting again\n", player.c_str());
     };
+    // 0x42f1a0 (AC-W4): the Word of the Day button is enabled only while the
+    // current player has not finished today's game. One result serves the
+    // button and request_game; refresh_wotd_gate recomputes it on every menu
+    // entry, after a player change and after IMPROVEMENTS changes the rule.
+    bool wotd_open = true;
+    // 0x42a460's day check, run before "Continue the game?" (AC-W7): another
+    // day's Word of the Day save is deleted, and the new day's game starts
+    // with no prompt. An unreadable save goes on to the prompt as before.
+    auto discard_stale_save = [&](tt2::GameMode m) {
+        const std::string player = players.current()->name;
+        tt2::SavedGame g;
+        if (!store.load_saved_game(player, mode_name(m), g)) return false;
+        if (!menu_discards_saved_game(m, g, wall_clock(), improvements.wotd_day)) return false;
+        store.remove_saved_game(player, mode_name(m));
+        std::printf("menu: the word of the day save is from another day (%d); starting today's game\n", g.day);
+        return true;
+    };
     auto request_game = [&](tt2::GameMode m) {
         if (!players.current()) { profile.open_player_select(); return; }
+        if (m == tt2::GameMode::WordOfTheDay && !wotd_open) {
+            // A closed gate does what a click on the disabled button does.
+            assets.play_sound(SoundId::ButtonWordOfTheDay);
+            std::printf("menu: word of the day already played today\n");
+            return;
+        }
         if (!save_dir.empty() && store.has_saved_game(players.current()->name, mode_name(m))) {
+            if (discard_stale_save(m)) {
+                begin_game(m);
+                return;
+            }
             if (!improvements.resume_prompt) {   // the original: resume without asking
                 load_resume(m);
                 begin_game(m);
@@ -2531,8 +2604,10 @@ int main(int argc, char** argv) {
     // Entering the menu: the profile check (0x42d9b0), then --play.
     auto menu_entered = [&] {
         profile.on_menu_entered();
+        if (refresh_wotd_gate) refresh_wotd_gate();
         if (auto_play == "timed") request_game(tt2::GameMode::Timed);
         else if (auto_play == "lightning") request_game(tt2::GameMode::Blitz);
+        else if (auto_play == "wotd") request_game(tt2::GameMode::WordOfTheDay);
         else if (!auto_play.empty()) request_game(tt2::GameMode::Untimed);
     };
 
@@ -2613,6 +2688,9 @@ int main(int argc, char** argv) {
         if (name.empty() || !menu_dialog_open) return;
         assets.play_sound(SoundId::Button);
         menu_dialog_open = false;
+        // The start-failed notice has only OK: Return and --type's '|' / '~'
+        // (sent as YES / NO) close it like a click on OK.
+        if (menu_dialog.kind == DialogKind::Message) return;
         const std::string player = players.current() ? players.current()->name : std::string();
         const char* mode = mode_name(menu_dialog_mode);
         if (name == "BUTTON_YES") {
@@ -2630,6 +2708,7 @@ int main(int argc, char** argv) {
         else if (name == "BUTTON_PLAY_UNTIMED") request_game(tt2::GameMode::Untimed);
         else if (name == "BUTTON_PLAY") request_game(tt2::GameMode::Timed);
         else if (name == "BUTTON_BLITZ") request_game(tt2::GameMode::Blitz);
+        else if (name == "BUTTON_PLAY_WOD") request_game(tt2::GameMode::WordOfTheDay);
         else if (name == "BUTTON_HOWTOPLAY") menu_help.emplace();
         else if (name == "BUTTON_HIGHSCORES")
             menu_highscores.emplace(highscores, HighScoreDialog::Opener::Menu, last_mode,
@@ -2649,6 +2728,12 @@ int main(int argc, char** argv) {
         else std::printf("menu: %s (not implemented yet)\n", name.c_str());
     };
     WelcomeFlow flow(services, seed_ticks() + 1);
+    refresh_wotd_gate = [&] {
+        // No player yet: the click opens the player select, as for every mode.
+        wotd_open = !players.current() ||
+                    tt2::wotd_button_enabled(*players.current(), wall_clock(), improvements.wotd_day);
+        flow.set_button_enabled("BUTTON_PLAY_WOD", wotd_open);
+    };
     if (asset_choice.prompt) {
 #ifdef __ANDROID__
         open_android_import(true);
@@ -2678,6 +2763,8 @@ int main(int argc, char** argv) {
         gs.wrap_text = wrap_message;
         gs.settings = settings_host;
         gs.on_exit = [&] { pending_exit = true; game_fade_out = GAME_FADE_HALF_MS; };
+        gs.now = wall_clock;                    // the same clock as the menu gate (D-3)
+        gs.wotd_rule = improvements.wotd_day;   // IMPROVEMENTS -> WORD OF THE DAY (UX-12)
         const std::string player = players.current()->name;
         const std::string mode = mode_name(pending_mode);
         gs.save_game = [&store, player, mode, &save_dir](const tt2::SavedGame& g) {
@@ -2689,19 +2776,36 @@ int main(int argc, char** argv) {
         gs.discard_save = [&store, player, mode, &save_dir] {
             if (!save_dir.empty()) store.remove_saved_game(player, mode);
         };
-        if (pending_mode == tt2::GameMode::Blitz) {
-            // 0x415a70: MUSIC_in-game_1 (at 0.7; the port has no per-stream gain).
-            blitz = std::make_unique<BlitzScene>(common_tree, full_tree, *players.current(), &highscores, gs,
-                                                 static_cast<std::int64_t>(seed_ticks()), pending_resume.get());
-            std::string racks;
-            for (const auto& w : blitz->words()) racks += (racks.empty() ? "" : " ") + w.answer;
-            std::printf("game: lightning round %d, words %s\n", blitz->round_number(), racks.c_str());
-        } else {
-            const bool timed = pending_mode == tt2::GameMode::Timed;
-            game = std::make_unique<GameScene>(common_tree, full_tree, *players.current(), &highscores, timed,
-                                               gs, static_cast<std::int64_t>(seed_ticks()), pending_resume.get());
-            std::printf("game: %s, rack %s, %zu slots\n", timed ? "timed" : "untimed", game->rack().c_str(),
-                        game->slots().size());
+        // Error handling (design wotd-crossword.md): a scene that cannot start
+        // (tt2::NoRackError: no Word of the Day rack in the dictionary;
+        // std::invalid_argument: a mode GameScene does not play) would escape
+        // the frame loop. The details go to stderr; the player gets one generic
+        // message on the menu and stays there.
+        try {
+            if (pending_mode == tt2::GameMode::Blitz) {
+                // 0x415a70: MUSIC_in-game_1 (at 0.7; the port has no per-stream gain).
+                blitz = std::make_unique<BlitzScene>(common_tree, full_tree, *players.current(), &highscores, gs,
+                                                     static_cast<std::int64_t>(seed_ticks()), pending_resume.get());
+                std::string racks;
+                for (const auto& w : blitz->words()) racks += (racks.empty() ? "" : " ") + w.answer;
+                std::printf("game: lightning round %d, words %s\n", blitz->round_number(), racks.c_str());
+            } else {
+                game = std::make_unique<GameScene>(common_tree, full_tree, *players.current(), &highscores,
+                                                   pending_mode, gs, static_cast<std::int64_t>(seed_ticks()),
+                                                   pending_resume.get());
+                std::printf("game: %s, rack %s, %zu slots\n", tt2::mode_key(pending_mode), game->rack().c_str(),
+                            game->slots().size());
+            }
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "game: %s could not start: %s\n", tt2::mode_key(pending_mode), e.what());
+            game.reset();
+            blitz.reset();
+            pending_resume.reset();
+            menu_dialog = build_yes_no(game_strings::START_FAILED_HEADER, game_strings::START_FAILED_BODY, true,
+                                       wrap_message);
+            menu_dialog.kind = DialogKind::Message;
+            menu_dialog_open = true;
+            return;
         }
         if (pending_resume) std::printf("game: resumed round %d\n", pending_resume->round);
         pending_resume.reset();
@@ -3098,6 +3202,7 @@ int main(int argc, char** argv) {
                 else if (pending_trophy_exit) {
                     pending_trophy_exit = false;
                     trophy_room.reset();
+                    refresh_wotd_gate();   // a menu entry (0x42f1a0)
                     assets.play_stream(SoundId::MusicMenu);
                     std::printf("t=%ld ms: back to the menu\n", simulated_ms);
                 }
@@ -3105,6 +3210,7 @@ int main(int argc, char** argv) {
                     pending_exit = false;
                     game.reset();
                     blitz.reset();
+                    refresh_wotd_gate();   // a menu entry: a finished WOTD game closes the gate
                     assets.play_stream(SoundId::MusicMenu);
                     std::printf("t=%ld ms: back to the menu\n", simulated_ms);
                 }
@@ -3153,7 +3259,8 @@ int main(int argc, char** argv) {
         // '"' CHANGE NAME (player select);
         // '#' SETTINGS, '6'..'8' max length, '!' fullscreen, '@' credits, '|' OK, '^' Alt+Enter;
         // '=' IMPROVEMENTS, then '<' / '>' its display mode, '(' / ')' its resolution, '[' / ']' its filter,
-        // '*' its upscaler, '{' its renderer, '|' OK (then OK on "Restart needed"), '~' CANCEL.
+        // '*' its upscaler, '{' its renderer, '%' its WORD OF THE DAY, '|' OK (then OK on "Restart needed"),
+        // '~' CANCEL.
         if (!game && !blitz && auto_play.empty() && !import_prompt && !menu_dialog_open && !profile.open() && !auto_type.empty() &&
             flow.current() == SceneId::Selection && game_fade_out == 0) {
             auto_type_ms += dt;
@@ -3173,6 +3280,7 @@ int main(int argc, char** argv) {
                     menu_improvements->press(c == '[' ? "BUTTON_FILTER_PREV" : "BUTTON_FILTER_NEXT");
                 else if (menu_improvements && c == '*') menu_improvements->press("BUTTON_UPSCALER_NEXT");
                 else if (menu_improvements && c == '{') menu_improvements->press("BUTTON_RENDERER_NEXT");
+                else if (menu_improvements && c == '%') menu_improvements->press("BUTTON_WOTD_DAY_NEXT");
                 else if (menu_improvements && c == '|') menu_improvements_result(menu_improvements->press("BUTTON_OK"));
                 else if (menu_improvements && c == '~')
                     menu_improvements_result(menu_improvements->press("BUTTON_CANCEL"));
