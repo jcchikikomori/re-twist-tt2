@@ -165,7 +165,8 @@ In scope:
 
 The implicit rows need the user's confirmation before Phase 2 starts (OI-9). Every design choice below follows them
 with one deviation: `CrosswordScene`'s constructor is the `BlitzScene` shape **plus a `CrtRandom&`** (D-11), because
-the original's CRT `rand()` state outlives a scene. OI-9 lists it for confirmation.
+the original's CRT `rand()` state outlives a scene. OI-9 lists it for confirmation. T9.3b later gave `GameScene` and
+`BlitzScene` the same argument, because the original deals every rack from that CRT too.
 
 ## Quality assurance mechanisms
 
@@ -340,7 +341,7 @@ facts this design relies on are listed in the two tables above with file and lin
 | D-7 | `draw_crossword` goes in `main.cpp` next to `draw_blitz` | `Assets` lives in `main.cpp`; moving it is a refactor of its own. OI-8 asks whether to do it after 0.6.0 | A new `ui/src/draw_crossword.cpp` now (needs an `assets.hpp` first) |
 | D-8 | Crossword saves stay in `SavedGame` as new optional keys (the `blitz_words` precedent); the grid is stored as its placements, not re-generated | The grid uses CRT `rand()`, which cannot be replayed from a seed the port controls; storing placements is exact | Storing a seed and rebuilding (breaks if `CrtRandom` state differs); a new save struct (second parser) |
 | D-9 | Save format stays `version=1`; new keys only appear in `CROSSWORD` saves | Old saves have none of the keys, so they parse as before | `version=2` (forces a migration path for no gain) |
-| D-11 | One `CrtRandom` per process, owned by `main.cpp` and passed to `CrosswordScene` by reference (non-owning; it outlives every scene, like the trees). Tests pass their own | The original's CRT `rand()` state is process-global: a second Crossword game in the same run continues the sequence; the exe seeds it once from the clock at start-up (`crossword.md` §9). See OI-3 | One `CrtRandom` per scene (restarts the sequence every game, which the exe never does) |
+| D-11 | One `CrtRandom` per process, owned by `main.cpp` and passed by reference to `CrosswordScene` and, since T9.3b, to `GameScene` and `BlitzScene` for the rack deal and TWIST (`tt2::deal_order`; non-owning; it outlives every scene, like the trees). Tests pass their own | The original's CRT `rand()` state is process-global: a second Crossword game in the same run continues the sequence; the exe seeds it once from the clock at start-up (`crossword.md` §9). See OI-3 | One `CrtRandom` per scene (restarts the sequence every game, which the exe never does) |
 | D-10 | The original's on-disk save keys for Crossword are recorded by C1 for the RE doc (`crossword.md` §5.5), but the port's file stays our own text format. The save tag (mode name and file name) is `CROSSWORD`, like the exe (`0x590254`; OI-11, user T4.4) | Same as every other mode (`saved_game.hpp:16`) | Byte-compatible saves (no need: saves never move between the two games) |
 | D-12 | IMPROVEMENTS gets a **DAILY WORD CLOCK** row, deviation **UX-12**: `Original` (default, D-4) or `Local time`, where the word, the menu gate, the save `DAY`, `player.WOD` and the high-score date all use the player's **local calendar day, with DST** | User decision OI-1a: faithful by default, a sane calendar on request | A settings.txt key (that file mirrors the original's settings only); no option (players in UTC+8 see the word change at 08:00) |
 | D-13 | `Board::build` applies `per_length_cap` **before** the 48-slot quota (`0x4262b0` runs before `0x432330`) | W1 found the port's order can drop a WOTD length below 5 for racks with more than 48 common sub-anagrams | Leaving the order (a silent mismatch with the exe) |
@@ -1008,9 +1009,10 @@ Each AC names its test. "Scene test" means a headless test in `ui/tests/`; "engi
 
 1. **AC-P1** `game-scene.md` has §9 "Animation inventory": one row per animation with target, modifier, duration,
    address, port status and evidence id; every INFERRED animation constant is CONFIRMED or has an `UNCONFIRMED` row.
-1. **AC-P2** The rack deal order at round start is CONFIRMED in `game-scene.md` §4; `scrambled()` either matches it
-   (literal expected order for a fixed seed) or stays as a documented deviation the user approved (F10 in
-   `untimed-polish.md`).
+1. **AC-P2** The rack deal order at round start is CONFIRMED in `game-scene.md` §4; the port's deal either matches
+   it (literal expected order for a fixed seed) or stays as a documented deviation the user approved (F10 in
+   `untimed-polish.md`). Met by T9.3b: `tt2::deal_order` in `random.hpp` replaced `scrambled()` and matches the
+   exe's `0x43c370`, pinned by fixed-seed tests.
 1. **AC-P3** `ROADMAP.md` says SDL3, lists no Bingo mode, shows all five modes and the Android port, and carries
    the refresh date.
 
@@ -1181,3 +1183,5 @@ drawing.
 - 2026-10-22: Zoom trace (Claude Opus 5.5) after the user's play-test screenshots: a fresh round and a resumed game
   both open in the 0.5 overview with the root selected (`0x41d920`); `+0x3c9` is a scene-lifetime zoom-in flag. AC-C6
   refined.
+- 2026-10-22: T9.3b applied (Claude Opus 5.5): D-11 now covers `GameScene` and `BlitzScene`, which take the same
+  `CrtRandom&` for the rack deal; AC-P2 met by `tt2::deal_order`.
