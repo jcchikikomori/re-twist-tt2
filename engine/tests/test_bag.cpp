@@ -194,6 +194,52 @@ TEST(next_word_walks_the_shuffled_deck) {
     ASSERT_TRUE(seq != expected);
 }
 
+namespace {
+// Five 5-letter anagrams of "caret" and their 3-4 letter sub-anagrams:
+// every pool word has 28 common sub-anagrams, so next_word() takes the
+// first word it reads and the index moves by exactly one.
+WordTree caret_dict() {
+    return WordTree::from_words({
+        "caret", "crate", "trace", "react", "cater",
+        "ace", "act", "arc", "are", "art", "ate", "car", "cat", "ear", "eat",
+        "era", "eta", "rat", "tar", "tea", "tae",
+        "acre", "care", "race", "rate", "tare", "tear", "cart",
+    });
+}
+}  // namespace
+
+// A profile's SEED / INDEX were saved against the common list of that
+// day. When the list shrinks (the open pool went from 19,256 to 19,181
+// words with data-src/blocklist.words), INDEX can sit at or past the end
+// of today's pool: the bag reseeds and deals a new deck from its start,
+// as when the index walks off the end in play.
+TEST(next_word_reseeds_when_a_saved_index_is_past_a_shrunk_pool) {
+    auto t = caret_dict();
+    const auto n = static_cast<std::uint32_t>(Bag::make_pool(t).size());
+    ASSERT_EQ(n, std::uint32_t(5));
+    for (const std::uint32_t index : {n, n + 74, std::uint32_t(0xFFFFFFFFu)}) {
+        Bag b(t, BagState{42, index});
+        ASSERT_TRUE(b.is_playable("caret"));
+        const std::string word = b.next_word();
+        std::vector<std::string> deck = b.pool();
+        Random(static_cast<std::int64_t>(b.state().seed)).shuffle(deck);
+        ASSERT_EQ(word, deck[0]);                        // the new deck's first word
+        ASSERT_EQ(b.state().index, std::uint32_t(1));    // not index + 1
+    }
+}
+
+TEST(next_word_keeps_the_saved_deck_for_an_index_inside_the_pool) {
+    // The last entry of the saved deck is still read with the saved seed;
+    // only the next call reseeds.
+    auto t = caret_dict();
+    Bag b(t, BagState{42, 4});
+    std::vector<std::string> deck = b.pool();
+    Random(42).shuffle(deck);
+    ASSERT_EQ(b.next_word(), deck[4]);
+    ASSERT_EQ(b.state().seed, std::uint32_t(42));
+    ASSERT_EQ(b.state().index, std::uint32_t(5));
+}
+
 TEST(pick_classic_longer_words_do_not_use_up_attempts) {
     // ~98% of this deck is 8 letters, so a 5 sits behind long runs of
     // longer words; the free skip still reaches it every time.

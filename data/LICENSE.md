@@ -35,7 +35,8 @@ derived word list is distributed under the same license.
 - **License:** [Creative Commons Attribution-ShareAlike 4.0 International](https://creativecommons.org/licenses/by-sa/4.0/)
   ([legal code](https://creativecommons.org/licenses/by-sa/4.0/legalcode)).
 - **Changes:** filtered to words that are in ENABLE2k, are 3–8 letters long,
-  and appear in `en_50k.txt`; lowercased, deduplicated, sorted, and encoded
+  and appear in `en_50k.txt`; minus the slurs and vulgar words in
+  `../data-src/blocklist.words`; lowercased, deduplicated, sorted, and encoded
   in the `.tree` format (`../docs/reverse-engineering/`).
 - **Share-alike:** if you modify and redistribute this file, you must release
   your version under CC BY-SA 4.0 (or a compatible license).

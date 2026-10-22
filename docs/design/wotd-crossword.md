@@ -344,7 +344,7 @@ facts this design relies on are listed in the two tables above with file and lin
 | D-10 | The original's on-disk save keys for Crossword are recorded by C1 for the RE doc (`crossword.md` §5.5), but the port's file stays our own text format. The save tag (mode name and file name) is `CROSSWORD`, like the exe (`0x590254`; OI-11, user T4.4) | Same as every other mode (`saved_game.hpp:16`) | Byte-compatible saves (no need: saves never move between the two games) |
 | D-12 | IMPROVEMENTS gets a **DAILY WORD CLOCK** row, deviation **UX-12**: `Original` (default, D-4) or `Local time`, where the word, the menu gate, the save `DAY`, `player.WOD` and the high-score date all use the player's **local calendar day, with DST** | User decision OI-1a: faithful by default, a sane calendar on request | A settings.txt key (that file mirrors the original's settings only); no option (players in UTC+8 see the word change at 08:00) |
 | D-13 | `Board::build` applies `per_length_cap` **before** the 48-slot quota (`0x4262b0` runs before `0x432330`) | W1 found the port's order can drop a WOTD length below 5 for racks with more than 48 common sub-anagrams | Leaving the order (a silent mismatch with the exe) |
-| D-14 | `Bag::word_of_the_day` takes `pool[day mod n]` directly: **no** walk past words with fewer than 15 sub-anagrams (the exe has none), but the **modulo stays** (the exe has none either and reads out of range) | User decision OI-1b: EV-1 must match every day with the user's `common.tree`; the modulo keeps the open pool (19,256) and dates past 2069-01-14 / before 2008-09-03 safe | Keeping the walk-forward (differs from the exe on about one day in four); copying the out-of-range read (undefined behaviour) |
+| D-14 | `Bag::word_of_the_day` takes `pool[day mod n]` directly: **no** walk past words with fewer than 15 sub-anagrams (the exe has none), but the **modulo stays** (the exe has none either and reads out of range) | User decision OI-1b: EV-1 must match every day with the user's `common.tree`; the modulo keeps the open pool (19,181) and dates past 2069-01-14 / before 2008-09-03 safe | Keeping the walk-forward (differs from the exe on about one day in four); copying the out-of-range read (undefined behaviour) |
 | D-15 | The day math lives in a new pure header `engine/include/tt2/wotd_day.hpp` (`WallClock`, `WotdDayRule`, `wotd_days()`, civil date) included by `bag.hpp`, `profile.hpp` and `improvements.hpp` | One place for three clocks and two rules; `improvements.hpp` must not include `profile.hpp` | Putting it in `profile.hpp` (pulls the whole profile into the improvements file) |
 | D-16 | Crossword animates like the exe: the grid turns ±90° per selected word, pans (500 ms) and zooms (1000 ms) in Phase 6b; the INFERRED readings (popups 4 / 7 / 9, the 1000 / 500 / 1500 ms durations, Up / Down = zoom) are working assumptions until the T7.1 audit (user, T4.4) | Fidelity is the project's goal; the rotation is how the exe keeps the selected word next to its rack | Snap without animation now and animate in Phase 9 (rejected by the user) |
 
@@ -429,7 +429,7 @@ including DST: `local_s = unix_s + utc_offset_min * 60`, `day = floor(local_s / 
 civil date at game over.
 
 Worked example (original rule): on 2026-10-22 UTC, `unix_day = 20748`, word day `20748 - 14125 = 6623`. The open
-pool (`open-common.tree`, 5-8 letters) holds **19,256** words and the original pool **22,048**; the port takes
+pool (`open-common.tree`, 5-8 letters) holds **19,181** words and the original pool **22,048**; the port takes
 `pool[6623 % n]`, the same index as the exe until day `n`. The modulo is a deviation (D4): the exe reads past the end
 from day 22,048 (2069-01-14) and before 2008-09-03; the port wraps.
 
@@ -777,7 +777,7 @@ stateDiagram-v2
 
 | Id | Deviation | Reason |
 | --- | --- | --- |
-| D1 | The WOTD word for a date differs from the 2008 game's with the shipped dictionary | The pool comes from `open-common.tree` (19,256 words of 5-8 letters), not GameHouse's list (22,048); with the user's own `common.tree` it matches **every day** (EV-1) |
+| D1 | The WOTD word for a date differs from the 2008 game's with the shipped dictionary | The pool comes from `open-common.tree` (19,181 words of 5-8 letters), not GameHouse's list (22,048); with the user's own `common.tree` it matches **every day** (EV-1) |
 | D2 | Crossword grids differ from the original's for the same root | The exe seeds the CRT from the clock (OI-3, `crossword.md` §9), so its own grids differ run to run and no seed can match them; the rules are the same |
 | D3 | `DialogPause` on `p` | Kept from before (A7) |
 | D4 | WOTD word index wraps (`day mod n`) | The exe has no bounds check (out-of-range read from 2069-01-14 and before 2008-09-03) and the open pool is shorter; identical to the exe for every day in range |

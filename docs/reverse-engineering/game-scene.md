@@ -733,7 +733,7 @@ belong to the UI bar addendum, §8.10; W55-W78 to the W5 audit, §8.11). Tags as
 - Consequences, with the original `TextTwist2Words.tree` (pool = **22,048** words of 5-8 letters, counted with
   `docs/reverse-engineering/tree_decode.py`): day 0 is 2008-09-03; from day 22,048 (**2069-01-14**) the read goes
   past the end of the vector; before 2008-09-03 the index is negative. About **26 %** of the pool has fewer than
-  15 common sub-anagrams (5,775 of 22,048; same count with the open list: 3,964 of 19,256 = 21 %), so on about
+  15 common sub-anagrams (5,775 of 22,048; same count with the open list: 3,948 of 19,181 = 21 %), so on about
   one day in four the exe hands out a word the Classic bag would refuse. INFERRED (estimate, assumes the day
   indices hit the pool evenly).
 - CONFIRMED (W5 audit): the reseed changes **no gameplay draw**. The global LCG `0x5fde90` has four readers in
@@ -746,7 +746,7 @@ belong to the UI bar addendum, §8.10; W55-W78 to the W5 audit, §8.11). Tags as
   a WOTD round their positions follow the reseeded state. The port draws those from its own generator; no change.
 - A resumed game does not call `0x43d690`: `0x42a460` passes the saved `WORD` to `0x425c50` (W36).
 - Port deviation **D1** (`Bag::word_of_the_day_for_day`, `docs/design/wotd-crossword.md`): the pool is built from
-  whichever common list the game loaded. With the shipped `open-common.tree` (19,256 words of 5-8 letters) the word
+  whichever common list the game loaded. With the shipped `open-common.tree` (19,181 words of 5-8 letters) the word
   for a date differs from the 2008 game's; with the player's own `common.tree` it is the same every day. Worked
   example, 2026-10-22 (word day 6623): `analogue` with the open list, `airport` with the original (§8.11).
 
