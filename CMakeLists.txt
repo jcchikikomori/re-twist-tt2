@@ -250,10 +250,16 @@ if(TT2_BUILD_TESTS)
         engine/tests/test_sha256.cpp
         engine/tests/test_asset_manifest.cpp
         engine/tests/test_utf8_path.cpp
+        engine/tests/test_wotd_day.cpp
+        engine/tests/test_open_dictionary.cpp
     )
     target_link_libraries(tt2_tests PRIVATE tt2_engine tt2_platform)
-    # The committed data/ files the tests check (original-assets.sha256).
-    target_compile_definitions(tt2_tests PRIVATE TT2_SOURCE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+    # The committed data/ files the tests check (original-assets.sha256, the
+    # open-*.tree dictionaries against data-src/ via data/../data-src), and
+    # ui/tests/import-contract/import-roots.txt, the IMPORT_ROOTS list the
+    # Kotlin importer's tests read too.
+    target_compile_definitions(tt2_tests PRIVATE TT2_SOURCE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+                                                 TT2_IMPORT_CONTRACT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/ui/tests/import-contract")
 
     include(CTest)
     add_test(NAME tt2_unit_tests COMMAND tt2_tests)
@@ -274,7 +280,9 @@ if(TT2_BUILD_TESTS)
         ui/tests/test_tooltip.cpp
         ui/tests/test_trophy_room.cpp
         ui/tests/test_highscore_dialog.cpp
+        ui/tests/test_quit_dialog.cpp
         ui/tests/test_blitz_scene.cpp
+        ui/tests/test_crossword_scene.cpp
         ui/tests/test_asset_import.cpp
         ui/tests/test_folder_picker.cpp
         ui/tests/test_import_prompt.cpp

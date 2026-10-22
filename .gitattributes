@@ -3,3 +3,6 @@
 *.sha256 text eol=lf
 # The import contract's golden stamp is compared byte for byte (T3.4).
 ui/tests/import-contract/* text eol=lf
+# The word lists the open dictionaries are built from, read line by line by
+# scripts/build-open-dictionary.sh and engine/tests/test_open_dictionary.cpp.
+data-src/*.words text eol=lf

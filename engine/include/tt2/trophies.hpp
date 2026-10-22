@@ -75,6 +75,12 @@ inline int tiers(PlayerProfile& p, std::int32_t count, int first, std::int32_t a
     if (count == c) return award_trophy(p, first + 2);
     return -1;
 }
+
+// One check of a round-end award: win `id` when `ok`, and list it in `won`.
+inline void award_if(PlayerProfile& p, std::vector<int>& won, bool ok, int id) {
+    const int r = ok ? award_trophy(p, id) : -1;
+    if (r >= 0) won.push_back(r);
+}
 }  // namespace trophy_detail
 
 // 0x40f120: accepted words in a row without a twist (scene +0x36c).
@@ -141,14 +147,26 @@ struct LightningRoundFlags {
 };
 inline std::vector<int> award_lightning_round(PlayerProfile& p, const LightningRoundFlags& f) {
     std::vector<int> won;
-    auto check = [&](bool ok, int id) {
-        const int r = ok ? award_trophy(p, id) : -1;
-        if (r >= 0) won.push_back(r);
-    };
-    check(!f.twisted, TROPHY_BRAINSTORM);
-    check(!f.passed, TROPHY_ROLLING_THUNDER);
-    check(!f.hinted, TROPHY_LIGHTNING_REFLEXES);
-    check(f.time_ms <= NICK_OF_TIME_MS, TROPHY_NICK_OF_TIME);
+    trophy_detail::award_if(p, won, !f.twisted, TROPHY_BRAINSTORM);
+    trophy_detail::award_if(p, won, !f.passed, TROPHY_ROLLING_THUNDER);
+    trophy_detail::award_if(p, won, !f.hinted, TROPHY_LIGHTNING_REFLEXES);
+    trophy_detail::award_if(p, won, f.time_ms <= NICK_OF_TIME_MS, TROPHY_NICK_OF_TIME);
+    return won;
+}
+
+// 0x41e930, the Crossword puzzle solved (every slot filled): one check per
+// trophy, in id order, with the round's flags (crossword.md §5.1, §6;
+// trophies.md ids 8 and 9). Rejected guesses (popups 0 and 3) set
+// neither flag. Well Rounded's TRACKER/3 is counted later, when
+// DIALOG_NEXTROUND closes (0x41b000): count_round(p, GameMode::Crossword).
+struct CrosswordRoundFlags {
+    bool twisted = false;   // +0x370: TWIST pressed this round (0x41b060)
+    bool mistake = false;   // +0x371: a solved word taken back this round (0x41eaf0)
+};
+inline std::vector<int> award_crossword_round(PlayerProfile& p, const CrosswordRoundFlags& f) {
+    std::vector<int> won;
+    trophy_detail::award_if(p, won, !f.twisted, TROPHY_PUZZLE_PRO);
+    trophy_detail::award_if(p, won, !f.mistake, TROPHY_PERFECT_PUZZLER);
     return won;
 }
 

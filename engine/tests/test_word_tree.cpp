@@ -98,6 +98,33 @@ TEST(tree_is_tree_word_validation) {
     ASSERT_TRUE(!WordTree::is_tree_word("héllo"));   // accent
 }
 
+TEST(spellable_from_uses_each_letter_once) {
+    ASSERT_TRUE(tt2::spellable_from("ace", "abcde"));
+    ASSERT_TRUE(tt2::spellable_from("edcba", "abcde"));    // every letter, any order
+    ASSERT_TRUE(tt2::spellable_from("ppp", "pepper"));     // all three p's
+    ASSERT_TRUE(!tt2::spellable_from("pppp", "pepper"));   // a fourth p
+    ASSERT_TRUE(!tt2::spellable_from("aa", "abc"));        // one a, used twice
+    ASSERT_TRUE(!tt2::spellable_from("abz", "abc"));       // z is not there
+    ASSERT_TRUE(!tt2::spellable_from("abcd", "abc"));      // longer than the letters
+}
+
+TEST(spellable_from_edge_cases) {
+    // Empty word: spellable from anything, even no letters.
+    ASSERT_TRUE(tt2::spellable_from("", "abc"));
+    ASSERT_TRUE(tt2::spellable_from("", ""));
+    ASSERT_TRUE(!tt2::spellable_from("a", ""));
+    // The word must be a..z: uppercase, punctuation, digits and
+    // non-ASCII bytes are never spellable, even from the same text.
+    ASSERT_TRUE(!tt2::spellable_from("Abc", "abc"));
+    ASSERT_TRUE(!tt2::spellable_from("ABC", "ABC"));
+    ASSERT_TRUE(!tt2::spellable_from("a-b", "a-b"));
+    ASSERT_TRUE(!tt2::spellable_from("a1", "a1"));
+    ASSERT_TRUE(!tt2::spellable_from("h\xc3\xa9", "h\xc3\xa9"));   // "hé" in UTF-8
+    // Letters outside a..z are skipped, not counted as a..z.
+    ASSERT_TRUE(tt2::spellable_from("ab", "a-B b"));
+    ASSERT_TRUE(!tt2::spellable_from("abb", "aBb"));       // only one lowercase b
+}
+
 TEST(tree_from_words_rejects_invalid) {
     std::vector<std::string> bad = {"hello", "World"};
     ASSERT_THROWS(WordTree::from_words(bad));

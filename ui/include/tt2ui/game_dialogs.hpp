@@ -33,8 +33,12 @@ inline constexpr const char* SAVEGAME_HEADER = "Continue the game?";          //
 inline constexpr const char* SAVEGAME_BODY =
     "Do you want to continue your last played game?\n(Select 'No' to start again.)";   // CTEXT_START_SAVEGAME
 inline constexpr const char* NEXT_ROUND_BODY = "Click to continue\nto the next round!";   // TEXT_NEXT_ROUND_BODY
+// Word of the Day end cards (0x4099c0 / 0x404540, game-scene.md §8.5).
+inline constexpr const char* NEXT_ROUND_BODY_WOTD = "Click to return\nto the main menu!";   // TEXT_NEXT_ROUND_BODY_WOTD
 inline constexpr const char* GAME_OVER_HEADER = "GAME OVER";
 inline constexpr const char* ENDGAME_BODY = "Sorry, you didn't qualify\nfor the next round.";   // TEXT_ENDGAME_BODY
+inline constexpr const char* END_ROUND_BODY_WOTD =
+    "Sorry, you didn't find the\nWord of The Day.";                           // TEXT_END_ROUND_BODY_WOTD
 inline constexpr const char* CONGRATS_BODY = "Congratulations!\nYou earned a\nnew high score!";  // TEXT_CONGRATS_BODY
 // TEXT_TUTORIAL_TITLE_n / TEXT_TUTORIAL_BODY_n, n = the mode index
 // (0x40e040 reads the global 0x5fdea8): Timed, Untimed, Lightning,
@@ -53,6 +57,11 @@ inline constexpr const char* TUTORIAL_BODIES[] = {
 inline constexpr const char* PASS_ROUND_TITLE = "Round Passed";              // TEXT_PASS_ROUND_TITLE
 inline constexpr const char* PASS_ROUND_BODY =
     "One of your passes will\nbe used to progress to\nthe next round.";      // TEXT_PASS_ROUND_BODY
+// Port text, not in the original: a game that cannot start (no Word of the
+// Day rack in the dictionary, say) shows this on the menu with one OK. It
+// names no cause; the front end logs the details to stderr.
+inline constexpr const char* START_FAILED_HEADER = "Sorry";
+inline constexpr const char* START_FAILED_BODY = "This game could not be started.\nPlease try again.";
 }  // namespace game_strings
 
 // Kinds used by the game scene (the profile kinds stay in DialogKind).
@@ -92,13 +101,16 @@ inline SpriteState sparkle(float x, float y, int first_frame) {
 
 // DIALOG_NEXTROUND 380x320. Its eight letterballs ("Great Job") are
 // LetterBalls owned by the scene (next_round_balls() in game_scene.hpp).
-inline Dialog build_next_round() {
+// `wotd`: the Word of the Day end card; 0x4099c0 sets the dialog's WOTD
+// flag (+0x1f4) and swaps the body for TEXT_NEXT_ROUND_BODY_WOTD.
+inline Dialog build_next_round(bool wotd = false) {
     Dialog d;
     d.w = 380;
     d.h = 320;
     d.sprites.push_back(sparkle(191, 154, 8));
-    TextLabel body{"BODY_TEXT", "FONT_NEXTROUND02", game_strings::NEXT_ROUND_BODY, 192, 133, TextAlign::Center,
-                   Anchor::Top, 2};
+    TextLabel body{"BODY_TEXT", "FONT_NEXTROUND02",
+                   wotd ? game_strings::NEXT_ROUND_BODY_WOTD : game_strings::NEXT_ROUND_BODY, 192, 133,
+                   TextAlign::Center, Anchor::Top, 2};
     body.line_height = 36;
     d.labels.push_back(body);
     d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_OK", 190, 239, Anchor::Top));
@@ -106,19 +118,31 @@ inline Dialog build_next_round() {
 }
 
 // DIALOG_ENDGAME 380x260: MENU (BUTTON_OK) and PLAY AGAIN (BUTTON_REPLAY),
-// 157x208 sheets.
-inline Dialog build_end_game() {
+// 157x208 sheets. `wotd`: the Word of the Day card (0x404540): body
+// TEXT_END_ROUND_BODY_WOTD, REPLAY hidden and disabled (a WOTD game is
+// one per day), and MENU moved to x = 192.0 (`0x43400000` through vtable
+// +0x28; INFERRED to be setX).
+constexpr float END_GAME_WOTD_MENU_X = 192.0f;
+
+inline Dialog build_end_game(bool wotd = false) {
     Dialog d;
     d.w = 380;
     d.h = 260;
     d.labels.push_back(TextLabel{"HEADER", "FONT_DIALOG_HEADERS2", game_strings::GAME_OVER_HEADER, 190, 14,
                                  TextAlign::Center, Anchor::Top, 0});
-    TextLabel body{"BODY_TEXT", "FONT_NEXTROUND02", game_strings::ENDGAME_BODY, 192, 88, TextAlign::Center,
-                   Anchor::Top, 1};
+    TextLabel body{"BODY_TEXT", "FONT_NEXTROUND02",
+                   wotd ? game_strings::END_ROUND_BODY_WOTD : game_strings::ENDGAME_BODY, 192, 88,
+                   TextAlign::Center, Anchor::Top, 1};
     body.line_height = 38;
     d.labels.push_back(body);
     d.buttons.push_back(make_dialog_button("BUTTON_REPLAY", "BUTTON_END_PLAYAGAIN", 271, 173, Anchor::Top, 157, 208));
     d.buttons.push_back(make_dialog_button("BUTTON_OK", "BUTTON_END_MENU", 109, 173, Anchor::Top, 157, 208));
+    if (wotd) {
+        MenuButton& replay = d.buttons[0];
+        replay.sprite.visible = false;
+        replay.enabled = false;
+        d.buttons[1].sprite.x = END_GAME_WOTD_MENU_X;
+    }
     return d;
 }
 

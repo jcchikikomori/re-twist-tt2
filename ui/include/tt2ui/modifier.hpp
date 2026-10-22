@@ -69,8 +69,11 @@ inline float ease(Easing e, float t) {
     return t;
 }
 
-// ModifierScale (vtable 0x59700c, ctor 0x47ece0): scale from -> to over
-// `ms` with an easing.
+// ModifierScale (vtable 0x59700c): scale from -> to over `ms` with an
+// easing. It has no ctor of its own: each site calls 0x47ece0, the shared
+// ModifierFraction base ctor (duration in ESI, easing in EDX, 0 = linear
+// 0x4307e0; ModifierClipRect's 0x478390 calls it too), then stores the
+// vtable inline (game-scene.md §9.1, AN1, AN14).
 class ScaleModifier : public Modifier {
 public:
     ScaleModifier(SpriteState* target, float from, float to, int ms, Easing easing)

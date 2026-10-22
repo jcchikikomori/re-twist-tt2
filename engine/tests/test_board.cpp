@@ -243,6 +243,67 @@ TEST(guess_not_a_word) {
               static_cast<int>(GuessStatus::NotAWord));
 }
 
+// 0x432330 rebuilds the AnagramTable list at +0x180 (count +0x184, the
+// slot count) from the board's words; Board::on_board reads the same list.
+TEST(board_on_board_reads_the_slot_list) {
+    auto t = tiny_dict();
+    Board b = Board::build("abcde", t, 1);   // WOTD-style cap: 1 per length
+    ASSERT_EQ(b.slots(3).size(), std::size_t(1));
+    const std::string kept = b.slots(3)[0];
+    ASSERT_TRUE(b.on_board(kept));
+    ASSERT_TRUE(b.on_board("abcd"));
+    ASSERT_TRUE(b.on_board("abcde"));
+    int cut = 0;
+    for (const char* w : {"abc", "ace", "bad"}) {
+        if (kept == w) continue;
+        ASSERT_TRUE(!b.on_board(w));          // common, but left off the board
+        ++cut;
+    }
+    ASSERT_EQ(cut, 2);
+    ASSERT_TRUE(!b.on_board("ab"));           // 2 letters: no slot list
+    ASSERT_TRUE(!b.on_board(""));
+    ASSERT_TRUE(!b.on_board("abcdefghi"));    // longer than any slot
+}
+
+// 0x432850: the out-flag "uncommon" is set when the guess is not in the
+// board's list, so a common word the cap left off the board is uncommon
+// and still fills the first free slot of its length.
+TEST(guess_common_word_cut_from_the_board_is_uncommon) {
+    auto t = tiny_dict();
+    auto full = full_with({});
+    Board b = Board::build("abcde", t, 1);
+    const std::string kept = b.slots(3)[0];
+    std::string cut;
+    for (const char* w : {"abc", "ace", "bad"}) {
+        if (kept != w) { cut = w; break; }
+    }
+    ASSERT_TRUE(t.contains(cut));
+    FilledBoard fb(std::move(b));
+    GuessProcessor p(fb, t, full);
+    const auto o = p.apply(cut);
+    ASSERT_EQ(static_cast<int>(o.status),
+              static_cast<int>(GuessStatus::Uncommon));
+    ASSERT_TRUE(o.newly_uncommon);
+    ASSERT_EQ(o.slot_index, std::size_t(0));
+    ASSERT_EQ(o.placed_word, cut);
+    ASSERT_EQ(o.points, 90);
+}
+
+// Negative: under the same cap, the board's own word is accepted, not
+// uncommon.
+TEST(guess_board_word_under_a_cap_is_accepted) {
+    auto t = tiny_dict();
+    auto full = full_with({});
+    Board b = Board::build("abcde", t, 1);
+    const std::string kept = b.slots(3)[0];
+    FilledBoard fb(std::move(b));
+    GuessProcessor p(fb, t, full);
+    const auto o = p.apply(kept);
+    ASSERT_EQ(static_cast<int>(o.status),
+              static_cast<int>(GuessStatus::Accepted));
+    ASSERT_TRUE(!o.newly_uncommon);
+}
+
 TEST(bingo_uses_every_letter) {
     auto t = tiny_dict();
     Board b = Board::build("abcde", t);
@@ -250,6 +311,18 @@ TEST(bingo_uses_every_letter) {
     ASSERT_TRUE(b.is_bingo("edcba"));
     ASSERT_TRUE(!b.is_bingo("abcd"));
     ASSERT_TRUE(!b.is_bingo("abcdef"));  // longer than rack
+}
+
+// The rack check is tt2::spellable_from over the rack's letters.
+TEST(board_is_anagram_of_rack_counts_rack_letters) {
+    auto t = tiny_dict();
+    Board b = Board::build("abcde", t);
+    ASSERT_TRUE(b.is_anagram_of_rack("bad"));
+    ASSERT_TRUE(b.is_anagram_of_rack("edcba"));
+    ASSERT_TRUE(!b.is_anagram_of_rack("dad"));      // one d on the rack
+    ASSERT_TRUE(!b.is_anagram_of_rack("abcdea"));   // longer than the rack
+    ASSERT_TRUE(!b.is_anagram_of_rack("BAD"));      // uppercase is not a..z
+    ASSERT_TRUE(!b.is_bingo("EDCBA"));
 }
 
 // 0x4333a0 / 0x433320 / 0x433180: the round-end reveal.
@@ -285,4 +358,52 @@ TEST(reveal_words_falls_back_to_the_slots_own_word) {
     ASSERT_EQ(out[2], std::string("abs"));
     // A short `shown` is padded to the board: every slot gets its answer.
     ASSERT_TRUE(tt2::reveal_words({"abs", "bad"}, {}) == (std::vector<std::string>{"abs", "bad"}));
+}
+
+namespace {
+// A rack with 106 common sub-anagrams: the first 100 three-letter
+// combinations of "abcdefghij" and six four-letter words. The 48-slot
+// quota gives length 4 only trunc(6 * 48 / 106) = 2 slots.
+WordTree crowded_dict() {
+    std::vector<std::string> words;
+    const std::string letters = "abcdefghij";
+    for (std::size_t i = 0; i < letters.size() && words.size() < 100; ++i)
+        for (std::size_t j = i + 1; j < letters.size() && words.size() < 100; ++j)
+            for (std::size_t k = j + 1; k < letters.size() && words.size() < 100; ++k)
+                words.push_back({letters[i], letters[j], letters[k]});
+    for (const char* w : {"abcd", "abce", "abcf", "abcg", "abch", "abci"}) words.push_back(w);
+    return WordTree::from_words(words);
+}
+}  // namespace
+
+// AC-W2 (D-13): 0x4262b0 caps 5 per length before the 0x432330 quota.
+TEST(board_per_length_cap_runs_before_the_quota) {
+    auto t = crowded_dict();
+    Board b = Board::build("abcdefghij", t, 5);
+    // Quota first would have left 2 four-letter slots; the exe keeps 5.
+    ASSERT_TRUE(b.slots(4) == (std::vector<std::string>{"abcd", "abce", "abcf", "abcg", "abch"}));
+    ASSERT_TRUE(b.slots(3) == (std::vector<std::string>{"abc", "abd", "abe", "abf", "abg"}));
+    ASSERT_EQ(b.slot_count(), std::size_t(10));
+    // The enumeration itself is not capped (guesses still check it).
+    ASSERT_EQ(b.all().size(), std::size_t(106));
+}
+
+TEST(board_without_per_length_cap_keeps_the_quota_board) {
+    // Negative: Classic (cap 0) is unchanged: 45 three-letter slots
+    // (trunc(100 * 48 / 106)) and 2 four-letter slots.
+    auto t = crowded_dict();
+    Board b = Board::build("abcdefghij", t, 0);
+    ASSERT_TRUE(b.slots(4) == (std::vector<std::string>{"abcd", "abce"}));
+    ASSERT_EQ(b.slots(3).size(), std::size_t(45));
+    ASSERT_EQ(b.slots(3).front(), std::string("abc"));
+    ASSERT_EQ(b.slots(3).back(), std::string("bdf"));
+    ASSERT_EQ(b.slot_count(), std::size_t(47));
+}
+
+TEST(board_per_length_cap_keeps_short_buckets_whole) {
+    // A bucket already under the cap is not padded or trimmed.
+    auto t = tiny_dict();
+    Board capped = Board::build("abcde", t, 5);
+    Board plain  = Board::build("abcde", t, 0);
+    for (std::size_t l = 3; l <= 8; ++l) ASSERT_TRUE(capped.slots(l) == plain.slots(l));
 }

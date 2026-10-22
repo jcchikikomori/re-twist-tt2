@@ -2,7 +2,7 @@
 
 Decompiled with Ghidra 12.1.4 through REA on 2026-10-16, binary `TextTwist2.exe`
 (sha256 `0c6e962c…a9e801`). The port is `engine/include/tt2/round_lightning.hpp` (rules) and
-`ui/include/tt2ui/blitz_scene.hpp` (scene); §9 lists where it differs.
+`ui/include/tt2ui/blitz_scene.hpp` (scene); §8 lists where it differs.
 Tags: **CONFIRMED** (read in code or shipped XML), **INFERRED** (strong reading, not proven),
 **UNKNOWN** (not found). Constants marked "file read" were read from the exe's data sections with
 `/usr/bin/python3` (same bytes Ghidra decodes), not through an REA call.
@@ -187,7 +187,8 @@ All positions are from the shipped XML (**CONFIRMED**). Images are named by id o
 1. Not the last word: timer `+= 8000`, capped at **80300**; `+0x304 = min(t,10000) − min(t,10000)%1000`;
    popup kind **6** ("extra time"); `SOUND_lightning_time_added`; SPRITE_TIMER frame 1 and a
    `ModifierClipRect` (`0x478390`) that grows the clip to `321 · t/80300` over **`(L + 4) · 100` ms**
-   (`EDI` @`0x411af4`; L = 6 → 1000 ms; easing UNKNOWN, `EDX` is clobbered before `0x47ece0`;
+   (`EDI` @`0x411af4`, passed as `ESI` @`0x411b6d`; L = 6 → 1000 ms; easing **linear**, CONFIRMED in
+   batch O4: `0x478390` starts with `XOR EDX, EDX`, so `0x47ece0` stores `0x4307e0`, `game-scene.md` §9.1;
    `ev_3e8a19be…`, `ev_7f4fa7b7…`); input/timer lock `+0x2f9 = 1`; when the animation ends `0x411520` clears the lock and
    moves to the **next unsolved word** (forward, wrapping). This auto-advance does **not** set the pass flag.
 1. Last word: §4.1.
@@ -293,9 +294,11 @@ Click dispatcher `0x4135e0` (by command name), only while `+0x264 == 0` (except 
 - `0x411e10`: `+0x264 = 2`, `+0x260 = 1`; if the entry row has letters → Clear (`SOUND_letter_clear`)
   and a 300 ms delay; then `0x411ef0` (same reveal, 400 ms + 100 ms stagger, 2000 ms delay).
 - There are **no lives** in Blitz: one time-out ends the game. No time-up sound (only the warning beeps).
-- `0x411ef0` with `+0x264 == 2`: deletes the saved game (`0x461840`), then (UNKNOWN purpose) copies
-  `scene+0x1ec` into player `+0x38` when a 15-char string at `scene+0x320` compares equal; then
-  `0x416440`.
+- `0x411ef0` with `+0x264 == 2`: deletes the saved game (`0x461840`), then copies `scene+0x1ec` into player
+  `+0x38` when a 15-char string at `scene+0x320` compares equal; then `0x416440`. Player `+0x38` is `WOD`, the
+  day of the last Word of the Day played, and the compare is a Word of the Day mode test, so this is a leftover
+  `WOD` write from the code Blitz shares with Word of the Day. Blitz's mode string never matches, so the copy is
+  dead in Blitz. **CONFIRMED** ([game-scene.md](game-scene.md) §8.6, W42).
 - `0x416440` game over: `+0x2f9 = 0`; opens table **`"blitz"`**; if `score > 0`: entry
   `0x4108a0(score, 2, t, "%d" of round)` (INFERRED arg meaning; extra = round number per `profiles.md`),
   `insert 0x457cd0`; index ≠ −1 → **`SOUND_game_high_score_achieved`** + **`DIALOG_CONGRATS`**; else
@@ -365,12 +368,12 @@ time added (the +8 s branch is skipped). Player block `p = *(DAT_005fde98 + 0x70
 - Mode id 2 (`g_gameMode`, tutorial flag index, high-score tab BLITZ), tracker index 2, table `blitz`.
 - Dialogs reused from Classic: DIALOG_MENU, DIALOG_TUTORIAL, DIALOG_NEXTROUND, DIALOG_ENDGAME,
   DIALOG_CONGRATS, the yes/no confirm (`0x40b310`). DIALOG_PASSROUND is not used.
-- UNKNOWN: the easing of the time-bar clip grow (§2.3); the purpose of `+0x3bf`, `LABEL_HINTNUMBER`,
-  `+0x2fb`, and the `player+0x38` copy.
+- UNKNOWN: the purpose of `+0x3bf`, `LABEL_HINTNUMBER` and `+0x2fb`. The `player+0x38` copy is a dead Word of
+  the Day `WOD` write (§4.2, [game-scene.md](game-scene.md) §8.6).
 
-## 9. The port (deviations and choices)
+## 8. The port (deviations and choices)
 
-- **Time-bar grow easing** (UNKNOWN): the clip grows linearly over `(L + 4) · 100` ms
+- **Time-bar grow easing** (linear, CONFIRMED in batch O4, §2.3): the clip grows linearly over `(L + 4) · 100` ms
   (`blitz_time_added_ms`); input waits for it, as `+0x2f9` does.
 - **Panel ids**: the `blitzscene` panel images share their ids with `gamescene`'s, so the port names
   them `blitzscene/IMAGE_PANEL_*`. The arrow x is floored (`0x419900`, INFERRED floor).
@@ -379,17 +382,19 @@ time added (the +8 s branch is skipped). Player block `p = *(DAT_005fde98 + 0x70
   blitz dots are not drawn; the 60 px placeholder pearls stand in.
 - **The round-start flip**: the original flips every word's balls, but a list word's 24 px child covers
   its flip, so the port flips only the current word, which looks the same.
-- **Rack order**: the racks are shuffled like Classic's (`GameScene::scrambled`); the deal order was
-  not traced.
+- **Rack order**: each word is dealt like Classic's, through `tt2::deal_order` on the shared CRT
+  (`0x414340` -> `0x43c370`, `game-scene.md` §4.2), and so is its TWIST (`0x413090`).
 - **Twist sound**: as in Classic, only when the rack moves (a held Space does not stack clicks).
 - **Resumed solved words** show their tiles in the entry row like a word solved in play; the original's
   `0x4174c0` rebuild of a `COMPLETED` word was not traced in that detail.
-- **`+0x3bf`, `LABEL_HINTNUMBER`, the `player+0x38` copy**: not ported (no reader found).
+- **`+0x3bf`, `LABEL_HINTNUMBER`**: not ported (no reader found).
+- **The `player+0x38` copy**: not ported. It is a Word of the Day `WOD` write that never runs in Blitz (§4.2,
+  [game-scene.md](game-scene.md) §8.6).
 - **Music**: `MUSIC_in-game_1` plays at the music volume; the port has no per-stream gain for 0.7.
 - **Placeholders**: without the imported art the scene draws outlines and the popup text
   "+8 SECONDS"; the hint letters fall back to placeholder letters.
 
-## 8. Address index
+## 9. Address index
 
 | Address | What |
 | --- | --- |

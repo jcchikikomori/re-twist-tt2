@@ -20,6 +20,7 @@
 
 #include "tt2/random.hpp"
 #include "tt2/word_tree.hpp"
+#include "tt2/wotd_day.hpp"
 
 namespace tt2 {
 
@@ -36,11 +37,8 @@ inline constexpr std::size_t POOL_MAX_LENGTH = 8;
 inline constexpr int CLASSIC_ATTEMPTS = 5;
 
 // Word of the Day bag seed (CONFIRMED at 0x43d6c8, `xor ecx, 0x539`).
+// The day-0 epoch (WOTD_EPOCH_DAY) lives in wotd_day.hpp.
 inline constexpr std::int64_t WOTD_SEED = 1337;
-
-// Day 0 of Word of the Day: 2008-09-03 (unix day 14125, CONFIRMED
-// at 0x43d71e: `sub edx, 0x372d` = -14125).
-inline constexpr std::int64_t WOTD_EPOCH_DAY = 14125;
 
 class NoRackError : public std::runtime_error {
 public:
@@ -121,25 +119,35 @@ public:
         return next_word();
     }
 
-    // Word of the Day: bag shuffled with fixed seed 1337, indexed by
-    // the day count. CONFIRMED at 0x43d690..0x43d71e.
-    static std::string word_of_the_day(const WordTree& common,
-                                       std::int64_t time_ms) {
+    // Word of the Day for a word day (wotd_day.hpp): the 5..8 letter pool
+    // shuffled with seed 1337, read at `day` (0x43d690, game-scene.md
+    // §8.2). There is no playability check: the exe builds the
+    // sub-anagram list but never compares its size, so a word with fewer
+    // than MIN_SUB_ANAGRAMS sub-anagrams is handed out as it is.
+    // Throws `NoRackError` when the pool is empty.
+    static std::string word_of_the_day_for_day(const WordTree& common, std::int64_t day) {
+        // DEVIATION (D1): the pool is whatever common list the game loaded.
+        // With the shipped open-common.tree (19,181 words of 5-8 letters)
+        // the word for a date differs from the 2008 game's; with the
+        // player's own common.tree (22,048) it is the same word every day
+        // (game-scene.md §8.2, W5 frame dump: 2026-10-22 -> "airport").
         auto pool = make_pool(common);
         if (pool.empty()) throw NoRackError();
-        const std::int64_t day_idx = (time_ms / 86'400'000LL) - WOTD_EPOCH_DAY;
-        const std::size_t start = static_cast<std::size_t>(
-            ((day_idx % static_cast<std::int64_t>(pool.size()))
-              + static_cast<std::int64_t>(pool.size()))
-            % static_cast<std::int64_t>(pool.size()));
         Random rng(WOTD_SEED);
         rng.shuffle(pool);
-        Bag tmp(common, BagState{static_cast<std::uint32_t>(WOTD_SEED), 0});
-        for (std::size_t i = 0; i < pool.size(); ++i) {
-            const std::string& w = pool[(start + i) % pool.size()];
-            if (tmp.is_playable(w)) return w;
-        }
-        throw NoRackError();
+        // DEVIATION (D4): the exe has no modulo and no bounds check at
+        // 0x43d690 (`base + day * 0x1c`), so it reads past the pool from
+        // day n (2069-01-14 with the original list) and before day 0. The
+        // port wraps into the pool instead of reading out of range.
+        const auto n = static_cast<std::int64_t>(pool.size());
+        return pool[static_cast<std::size_t>(((day % n) + n) % n)];
+    }
+
+    // Word of the Day at a UTC instant: the word day is
+    // `floor(time_ms / 86400000) - WOTD_EPOCH_DAY` (the exe's `time()`
+    // clock, game-scene.md §8.1).
+    static std::string word_of_the_day(const WordTree& common, std::int64_t time_ms) {
+        return word_of_the_day_for_day(common, wotd_days(WallClock{time_ms, 0, 0}).word_day);
     }
 
     // Classic target length L = min(rand(5, 9), max_word_length).

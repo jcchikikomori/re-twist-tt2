@@ -1,0 +1,11 @@
+images/splash
+images/loadscene
+images/selectionscene
+images/gui
+images/gamescene
+images/trophyscene
+images/blitzscene
+images/crosswordscene
+fonts
+music
+sound

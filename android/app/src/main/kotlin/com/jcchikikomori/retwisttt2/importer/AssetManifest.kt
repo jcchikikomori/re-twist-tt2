@@ -13,10 +13,11 @@ object AssetManifest {
     const val TITLE = "# re-twist-tt2 original-asset manifest"
     const val VERSION = "# version=1"
 
-    // tt2::IMPORT_ROOTS: the only folders an entry may sit in.
+    // tt2::IMPORT_ROOTS: the only folders an entry may sit in. Both test
+    // suites compare their list with ui/tests/import-contract/import-roots.txt.
     val IMPORT_ROOTS = listOf(
         "images/splash", "images/loadscene", "images/selectionscene", "images/gui", "images/gamescene",
-        "images/trophyscene", "images/blitzscene", "fonts", "music", "sound",
+        "images/trophyscene", "images/blitzscene", "images/crosswordscene", "fonts", "music", "sound",
     )
 
     // tt2::INSTALL_PROBE: "is this an install?"

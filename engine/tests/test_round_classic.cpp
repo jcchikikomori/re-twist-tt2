@@ -234,6 +234,52 @@ TEST(classic_wotd_caps_per_length_at_5) {
     }
 }
 
+// Config::wotd_day (D-14): the WOTD rack is pool[wotd_day mod n]; the
+// clock argument of start() plays no part in it.
+TEST(classic_wotd_rack_follows_config_wotd_day) {
+    auto com = common();
+    auto ful = full();
+    Random rng(0);
+    Bag bag(com);
+    ClassicRound::Config cfg;
+    cfg.timed = true;
+    cfg.wotd = true;
+    cfg.round_ms = 120000;
+    cfg.board_per_length_cap = 5;
+    cfg.wotd_day = 6623;
+    ClassicRound r(com, ful, cfg);
+    const auto res = r.start(rng, bag, 0);
+    ASSERT_EQ(res.rack, Bag::word_of_the_day_for_day(com, 6623));
+    // Another clock value, same configured day: same rack.
+    ClassicRound again(com, ful, cfg);
+    ASSERT_EQ(again.start(rng, bag, 1'792'711'800'000LL).rack, res.rack);
+    // The next day is the next pool entry, a different word.
+    cfg.wotd_day = 6624;
+    ClassicRound next(com, ful, cfg);
+    const auto next_res = next.start(rng, bag, 0);
+    ASSERT_EQ(next_res.rack, Bag::word_of_the_day_for_day(com, 6624));
+    ASSERT_NE(next_res.rack, res.rack);
+    // The WOTD pick leaves the player's bag alone.
+    ASSERT_EQ(bag.state().index, std::uint32_t(0));
+}
+
+TEST(classic_non_wotd_round_ignores_wotd_day) {
+    // Negative: a Classic round draws from the bag whatever wotd_day says.
+    auto com = common();
+    auto ful = full();
+    ClassicRound::Config plain;
+    ClassicRound::Config with_day;
+    with_day.wotd_day = 6623;
+    Random rng_a(7);
+    Random rng_b(7);
+    Bag bag_a(com, tt2::BagState{5, 0});
+    Bag bag_b(com, tt2::BagState{5, 0});
+    ClassicRound a(com, ful, plain);
+    ClassicRound b(com, ful, with_day);
+    ASSERT_EQ(a.start(rng_a, bag_a, 0).rack, b.start(rng_b, bag_b, 0).rack);
+    ASSERT_EQ(bag_a.state().index, bag_b.state().index);
+}
+
 // ---- saved-game restore (0x42a460) ---------------------------------------
 
 TEST(classic_round_starts_from_a_given_rack) {

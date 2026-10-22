@@ -610,3 +610,85 @@ TEST(flow_menu_action_reaches_services) {
     ASSERT_EQ(actions.size(), std::size_t{1});
     ASSERT_EQ(actions[0], std::string("BUTTON_PLAY"));
 }
+
+namespace {
+
+// Runs a fresh flow from the splash to the menu (as in the test above).
+void run_to_menu(WelcomeFlow& flow) {
+    flow.update(2101);
+    flow.update(250);
+    flow.update(250);
+    for (int t = 0; t < 3600; t += 100) flow.update(100);
+    flow.update(500);
+}
+
+void click(SelectionScene& menu, const MenuButton& b) {
+    const float cx = b.sprite.x + 5, cy = b.sprite.y + 5;
+    menu.mouse_down(cx, cy, rect_only);
+    menu.mouse_up(cx, cy, rect_only);
+}
+
+}  // namespace
+
+// AC-W4 (game-scene.md §8.6, profiles.md §3.3): 0x42f1a0 disables the Word of
+// the Day button once it has been played today. The front end decides before
+// the menu exists; the flow keeps the choice for the menu it builds.
+TEST(flow_disabled_wotd_shows_frame_3_and_starts_nothing) {
+    std::vector<std::string> actions;
+    std::vector<SoundId> sounds;
+    WelcomeFlow::Services s;
+    s.menu_action = [&](const std::string& n) { actions.push_back(n); };
+    s.play_sound = [&](SoundId id) { sounds.push_back(id); };
+    WelcomeFlow flow(s, 1);
+    flow.set_button_enabled("BUTTON_PLAY_WOD", false);
+    run_to_menu(flow);
+    ASSERT_TRUE(flow.current() == SceneId::Selection);
+    flow.update(0);
+    SelectionScene& menu = *flow.selection();
+    const MenuButton& wotd = *menu.button("BUTTON_PLAY_WOD");
+    ASSERT_TRUE(!wotd.enabled);
+    ASSERT_EQ(wotd.sprite.frame, 3);
+    sounds.clear();
+    click(menu, wotd);
+    ASSERT_EQ(actions.size(), std::size_t{0});
+    ASSERT_EQ(count(sounds, SoundId::ButtonWordOfTheDay), 1);
+    ASSERT_EQ(count(sounds, SoundId::Button), 0);
+    // The other buttons keep the default.
+    ASSERT_TRUE(menu.button("BUTTON_PLAY")->enabled);
+    ASSERT_TRUE(menu.button("BUTTON_CRISSCROSS")->enabled);
+}
+
+// The next day (or another player) opens the gate again: the click now
+// reaches menu_action with the normal button sound.
+TEST(flow_reenabled_wotd_reaches_menu_action) {
+    std::vector<std::string> actions;
+    std::vector<SoundId> sounds;
+    WelcomeFlow::Services s;
+    s.menu_action = [&](const std::string& n) { actions.push_back(n); };
+    s.play_sound = [&](SoundId id) { sounds.push_back(id); };
+    WelcomeFlow flow(s, 1);
+    run_to_menu(flow);
+    SelectionScene& menu = *flow.selection();
+    flow.set_button_enabled("BUTTON_PLAY_WOD", false);     // the menu is up: applies at once
+    ASSERT_TRUE(!menu.button("BUTTON_PLAY_WOD")->enabled);
+    flow.set_button_enabled("BUTTON_PLAY_WOD", true);
+    flow.update(0);
+    const MenuButton& wotd = *menu.button("BUTTON_PLAY_WOD");
+    ASSERT_TRUE(wotd.enabled);
+    ASSERT_EQ(wotd.sprite.frame, 0);
+    sounds.clear();
+    click(menu, wotd);
+    ASSERT_EQ(actions.size(), std::size_t{1});
+    ASSERT_EQ(actions[0], std::string("BUTTON_PLAY_WOD"));
+    ASSERT_EQ(count(sounds, SoundId::Button), 1);
+    ASSERT_EQ(count(sounds, SoundId::ButtonWordOfTheDay), 0);
+}
+
+// Negative: a name the menu does not have changes nothing.
+TEST(flow_set_button_enabled_ignores_unknown_names) {
+    WelcomeFlow::Services s;
+    WelcomeFlow flow(s, 1);
+    run_to_menu(flow);
+    flow.set_button_enabled("BUTTON_NOPE", false);
+    for (const auto& b : flow.selection()->buttons()) ASSERT_TRUE(b.enabled);
+}

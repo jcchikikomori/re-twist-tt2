@@ -50,14 +50,15 @@ scripts/ci-apk-check.sh android/app/build/outputs/apk/debug/app-debug.apk data/o
 
 | Path | Owner / purpose |
 | --- | --- |
-| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp` (Lightning rules; spec in `docs/reverse-engineering/lightning.md`), `round_crossword.hpp`, `profile.hpp` (players, progression, high scores; spec in `docs/reverse-engineering/profiles.md`), `trophies.hpp` (when each trophy is won; spec in `docs/reverse-engineering/trophies.md`), `profile_store.hpp` (plain-text save files), `settings.hpp` (volumes and window mode, `settings.txt`), `improvements.hpp` (the port's display options, `improvements.txt`; unknown keys are skipped), `saved_game.hpp` (the resumable Classic and Lightning games), `sha256.hpp`, `asset_manifest.hpp` (which original files the importer copies, and their hashes), `utf8_path.hpp` (UTF-8 paths under C++17 and C++20). |
-| `engine/tests/` | Unit tests, one file per header plus `test_main.cpp` (the in-tree test harness). |
+| `engine/include/tt2/` | The engine (header-only). `random.hpp`, `word_tree.hpp`, `bag.hpp`, `board.hpp`, `scoring.hpp`, `round_classic.hpp`, `round_lightning.hpp` (Lightning rules; spec in `docs/reverse-engineering/lightning.md`), `round_crossword.hpp` (Crossword rules; spec in `docs/reverse-engineering/crossword.md`), `wotd_day.hpp` (the Word of the Day day numbers from the original's three clocks; spec in `docs/reverse-engineering/game-scene.md` §8), `profile.hpp` (players, progression, high scores; spec in `docs/reverse-engineering/profiles.md`), `trophies.hpp` (when each trophy is won; spec in `docs/reverse-engineering/trophies.md`), `profile_store.hpp` (plain-text save files), `settings.hpp` (volumes and window mode, `settings.txt`), `improvements.hpp` (the port's display options, `improvements.txt`; unknown keys are skipped), `saved_game.hpp` (the resumable Classic, Word of the Day, Lightning and Crossword games), `sha256.hpp`, `asset_manifest.hpp` (which original files the importer copies, and their hashes), `utf8_path.hpp` (UTF-8 paths under C++17 and C++20). |
+| `engine/tests/` | Unit tests, one file per header plus `test_main.cpp` (the in-tree test harness) and `test_open_dictionary.cpp` (the committed `open-*.tree` against `data-src/` and the blocklist). |
+| `ui/` | The SDL3 front end and its headless scene model (see "UI work" under Working rules). One scene per mode: `game_scene.hpp` (Classic Untimed / Timed and Word of the Day; spec in `docs/reverse-engineering/game-scene.md`), `blitz_scene.hpp` (Lightning; `lightning.md`), `crossword_scene.hpp` (Crossword; `crossword.md`). `ui/tests/import-contract/` holds the fixtures the C++ and Kotlin importer tests share, including `import-roots.txt`: the install folders that `tt2::IMPORT_ROOTS` and Kotlin's `AssetManifest.IMPORT_ROOTS` must both equal. |
 | `src/main.cpp` | The driver / smoke test for the engine. |
 | `tools/tree_cli.cpp` | Dictionary tool: `decode`, `encode`, `merge`, `diff`, `verify`. Replaces the old `tools/tree-cli.ts`. |
 | `tools/assets_cli.cpp` | `tt2-assets`: `manifest <install>` writes the original-asset manifest (paths + SHA-256 only), `verify <dir> <manifest>` checks a folder. |
 | `android/` | The Android app. `app/build.gradle.kts` (version from `CMakeLists.txt`, `versionCode` MAJOR\*10000+MINOR\*100+PATCH; SDL Java glue and licence texts from the pinned tarballs; `data/` packaged by an allow-list; release signing from `TT2_KEYSTORE*`, see `docs/android-signing.md`; debug builds are `….retwisttt2.debug`). `MainActivity.kt` (holds the splash until `onFirstFrame()`, opens the importer), `importer/` (`AssetManifest.kt`, `ZipImporter.kt`: the Kotlin twin of `asset_import.hpp`; `ImportDialog.kt`; `ImportBridge.kt`: JNI to C++ for every message). Tests in `app/src/test/`. |
 | `tools/gen_android_icon.py` | Writes the adaptive launcher icon (`res/drawable/ic_launcher_*.xml`, `res/mipmap-anydpi-v26/`) from `packaging/linux/tt2.svg`'s geometry. Standard library only, deterministic; re-run and commit the output after changing it. |
-| `scripts/` | `ci-import-smoke.sh` (synthetic desktop import), `ci-apk-check.sh` (what an APK may carry: required libs and licences, an `assets/` allow-list, no file whose SHA-256 is in the manifest) and `ci-apk-check-test.sh` (proves the check catches each case), `import-original.sh`. |
+| `scripts/` | `ci-import-smoke.sh` (synthetic desktop import), `ci-apk-check.sh` (what an APK may carry: required libs and licences, an `assets/` allow-list, no file whose SHA-256 is in the manifest) and `ci-apk-check-test.sh` (proves the check catches each case), `import-original.sh`, `build-open-dictionary.sh` (writes `data/open-common.tree` from `data-src/`, checks `open-full.tree`; see `docs/dictionary-sources.md`). |
 | `tools/gen_placeholders.py` | Writes the open placeholder art into `data/placeholder/` (bitmap fonts from `third_party/fonts/`, dialog frame, buttons; palette sampled from the original), plus a copy drawn at twice the size in `data/placeholder/2x/` for GPU renderers. Run it with `/usr/bin/python3` (Pillow 9.0.1 reproduces the committed bytes); re-run and commit the output after changing it. |
 | `third_party/fonts/` | Luckiest Guy (Apache 2.0) and Arimo (OFL), unaltered; read only by the generator. |
 | `third_party/tinyfiledialogs/` | Vendored, unaltered (zlib): the native folder picker for the importer. Its own C target, outside `-Werror`. |
@@ -65,7 +66,7 @@ scripts/ci-apk-check.sh android/app/build/outputs/apk/debug/app-debug.apk data/o
 | `third_party/super-xbr/` | `LICENSE` (Hyllian's MIT notice, verbatim) and `VERSION` (upstream commit, shader hashes) for the Super-xBR port in `ui/include/tt2ui/upscale.hpp`; a test keeps the header's copy of the notice identical. |
 | `packaging/linux/` | The desktop file, icon, and the AppImage runtime's licence (`packages.yml` installs it). Every package ships the third-party notices in `licenses/` (`TT2_LICENSE_INSTALL_DIR`). |
 | `data/` | Runtime dictionaries. The open-license `open-common.tree` + `open-full.tree` are committed; the original GameHouse `common.tree` + `full.tree` are gitignored. |
-| `data-src/` | Raw word lists for rebuilding `open-*.tree` (ENABLE2k, frequency lists). |
+| `data-src/` | Raw word lists for rebuilding `open-*.tree` (ENABLE2k, frequency lists), and `blocklist.words`: the slurs and vulgar words left out of `open-common.tree` (never a rack, slot or root) but kept in `open-full.tree`, so typing one still counts. |
 | `docs/reverse-engineering/` | Evidence from the original game: binary fingerprint, gameplay notes, `.tree` format spec, reference Python decoder/encoder. |
 | `docs/dictionary-sources.md` | Sources, licenses, access dates for the open dictionaries. |
 | `CMakeLists.txt` | The build. |
@@ -145,9 +146,10 @@ the one that fits the deployer.
      manifest and stamp apply, and the files land in the app's private
      storage. The Kotlin tests use synthetic ZIPs only, and
      `ui/tests/import-contract/` (shared by the C++ and Kotlin tests)
-     holds made-up files. Every APK is checked by `scripts/ci-apk-check.sh`,
-     so a build that picked up the player's `data/common.tree` /
-     `full.tree` or any original file fails.
+     holds made-up files, plus `import-roots.txt` (folder names only).
+     Every APK is checked by `scripts/ci-apk-check.sh`, so a build that
+     picked up the player's `data/common.tree` / `full.tree` or any
+     original file fails.
    - **Import text lives only in `import_prompt.hpp`.** Kotlin gets it
      through JNI (`ImportBridge`), and `ImportTextTest` fails if a
      message is copied into Kotlin or `res/`.
@@ -185,8 +187,9 @@ the address-level walkthrough of the gameplay code is in
   than 48, each length gets the quota `max(1, trunc(count*48/total))`.
 - Guess: must be in the **full** list and spellable from the rack,
   then fills the first empty slot of the same length; the slot shows
-  the guessed word. A guess that isn't in the common list counts as
-  "uncommon".
+  the guessed word. A guess that isn't one of the round's board words
+  counts as "uncommon" (`0x432850`), so a common word cut by the board
+  limits counts too.
 - Scoring: **10 × len²** per word; the **first bingo** (a word using
   every letter) in a round adds **+1000** and qualifies you; **finding
   every word** adds **+100 × slot count** and ends the round. There is
@@ -205,12 +208,36 @@ the address-level walkthrough of the gameplay code is in
 
 ### Word of the Day
 
-- Seed 1337, index = days since 2008-09-03, at most 5 slots per length.
+- Rack: the 5–8 letter common pool shuffled with seed 1337, read at
+  index = UTC days since 2008-09-03. No 15-sub-anagram test, MAX WORD
+  LENGTH ignored, no bounds check (the port wraps, deviation D4).
+- Board: the first 5 common sub-anagrams of each length 3..8, cut
+  before the 48-slot quota (so at most 30 slots).
+- One 120 s round per game, scored as Classic. GIVE UP until the first
+  bingo, then DONE; no Pass, no lives. Only the game's end writes
+  `player.WOD`, which greys the menu button for the rest of the local
+  standard-time day (no DST), so a mid-round save still resumes.
+- The high-score row is dated with the UTC date, `YYYY-MM-DD`. Spec:
+  `docs/reverse-engineering/game-scene.md` §8.
 
 ### Crossword
 
-- 18×11 grid. The root word must have exactly one full-length anagram.
-  10,000 placement attempts.
+- Root: the Classic pick at `min(rand 5..8, maxLen)`, kept only when no
+  other common word is a full-length anagram of it. Words: the first
+  `N = min(10, 4 + rand % floor(4 + 0.2·(round−1)))` common
+  sub-anagrams after a CRT `rand()` shuffle (root skipped), plus the
+  root.
+- 18×11 grid, root centred; up to 10,000 placement attempts per word,
+  and a failed grid restarts the setup. The original seeds the CRT from
+  the clock, so its grids can't be reproduced; the port's differ
+  (deviation D2).
+- No timer, no lives. A guess fills the **selected** slot only: the
+  slot's length (any other is ignored), a full-list sub-anagram of the
+  root, not already in the grid. It may differ from the builder's word.
+  Typing skips the crossing letters locked by solved slots.
+- Scoring: **10 × len²** once per slot, **+1000** for the last one; the
+  score carries across rounds. `DIALOG_NEXTROUND` opens by itself, and
+  only GIVE UP ends the game. Spec: `docs/reverse-engineering/crossword.md`.
 
 ## Working rules
 
@@ -219,9 +246,10 @@ the address-level walkthrough of the gameplay code is in
 - Match the original rules above unless a deviation is deliberate.
   Document any deviation in code comments and in the PR.
 - **Engine ownership.** `WordTree`, `Bag`, `ClassicRound`,
-  `LightningRound` store **non-owning pointers** into the `WordTree`
-  instances they were given. The trees must outlive the round — keep
-  them in local variables or members, never pass temporaries:
+  `LightningRound`, `CrosswordRound` store **non-owning pointers** into
+  the `WordTree` instances they were given. The trees must outlive the
+  round — keep them in local variables or members, never pass
+  temporaries:
 
   ```cpp
   // GOOD: trees outlive the round.
@@ -237,7 +265,10 @@ the address-level walkthrough of the gameplay code is in
   ```
 
   This is enforced by the tests (see `engine/tests/test_round_classic.cpp`)
-  and the CMake build's ASan run.
+  and the CMake build's ASan run. The Classic, Lightning and Crossword
+  scenes hold the front end's one `CrtRandom` (the rack deal and TWIST,
+  `tt2::deal_order`) by reference the same way, so it must outlive them
+  too.
 - UI work (layout, styling, motion, responsiveness) goes through the
   designer lane. The UI lives in `ui/`: `ui/include/tt2ui/` is the
   headless scene model (`sprite.hpp`, `modifier.hpp`,
@@ -245,13 +276,17 @@ the address-level walkthrough of the gameplay code is in
   loading screen preload, taken from the scenes; `Assets::preload` in
   `main.cpp` decodes it on worker threads), `bitmap_font.hpp` for the
   GF2 `fonts/*.xml` format, `profile_dialogs.hpp` for the name-input / player-select
-  dialogs, `game_scene.hpp` for the Classic Untimed / Timed scene,
+  dialogs, `game_scene.hpp` for the Classic Untimed / Timed and Word of
+  the Day scene (WOTD in `docs/reverse-engineering/game-scene.md` §8),
   `blitz_scene.hpp` for the Lightning scene (`docs/reverse-engineering/lightning.md`),
-  `scene_popups.hpp` for the message and trophy popups both scenes share,
+  `crossword_scene.hpp` for the Crossword scene (`docs/reverse-engineering/crossword.md`),
+  `scene_popups.hpp` for the message and trophy popups the scenes share,
   `game_dialogs.hpp` for its pause menu, confirmations and round-end
   dialogs, `help_dialog.hpp` for HOW TO PLAY, `settings_dialog.hpp`
-  for SETTINGS, `highscore_dialog.hpp` for HIGH SCORES, `improvements_dialog.hpp` for the port's IMPROVEMENTS
-  dialog, `upscale.hpp` for the optional Super-xBR 2x texture upscaler (MIT, ported), `render_backend.hpp` for the renderer order (Vulkan, OpenGL,
+  for SETTINGS, `highscore_dialog.hpp` for HIGH SCORES, `quit_dialog.hpp` for the menu's QUIT confirm,
+  `improvements_dialog.hpp` for the port's IMPROVEMENTS
+  dialog, `upscale.hpp` for the optional Super-xBR 2x texture upscaler (MIT, ported),
+  `render_backend.hpp` for the renderer order (Vulkan, OpenGL,
   software; never Direct3D; `--renderer NAME` forces one for a run),
   `frame_clock.hpp` for frame timing (whole-ms steps from a nanosecond
   clock, the optional frame limit), `display.hpp` for window sizes and

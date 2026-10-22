@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -271,5 +272,24 @@ private:
         }
     };
 };
+
+// True when every letter of `word` is in `letters`, each letter of
+// `letters` used at most once (a letter-count check, order ignored).
+// `word` must be a..z only: uppercase or any other byte makes it false.
+// Bytes of `letters` outside a..z are ignored. An empty word is
+// spellable from anything; callers that need a non-empty word check
+// that first. The one copy of this rule: Board's rack check, the
+// Crossword round and the Crossword save check all call it.
+inline bool spellable_from(std::string_view word, std::string_view letters) noexcept {
+    if (word.size() > letters.size()) return false;
+    std::array<int, 26> left{};
+    for (char c : letters) {
+        if (c >= 'a' && c <= 'z') ++left[static_cast<std::size_t>(c - 'a')];
+    }
+    for (char c : word) {
+        if (c < 'a' || c > 'z' || --left[static_cast<std::size_t>(c - 'a')] < 0) return false;
+    }
+    return true;
+}
 
 }  // namespace tt2

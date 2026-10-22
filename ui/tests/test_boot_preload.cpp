@@ -104,6 +104,22 @@ TEST(preload_lists_ignore_what_the_scene_does_not_draw) {
     ASSERT_EQ(set.images[0].image_id, std::string("IMAGE_A"));
 }
 
+// PRELOAD_CROSSWORD takes a scene's art() list: each image id once, the
+// first spec kept (for the size warning); nothing without an id, and no
+// sounds, streams or fonts.
+TEST(preload_scene_art_lists_each_image_once) {
+    const PreloadSet set = preload_scene_art(
+        {sheet("XwordBox", 69, 138, 1, 2, 2), sheet("", 800, 600), sheet("IMAGE_OVERLAY", 800, 600),
+         sheet("XwordBox", 10, 10)});
+    ASSERT_EQ(set.images.size(), 2u);
+    ASSERT_EQ(set.images[0].image_id, std::string("XwordBox"));
+    ASSERT_EQ(set.images[0].frame_h, 69);
+    ASSERT_EQ(set.images[1].image_id, std::string("IMAGE_OVERLAY"));
+    ASSERT_EQ(preload_file_count(set), 2u);
+    ASSERT_TRUE(preload_scene_art({}).images.empty());
+    ASSERT_TRUE(PRELOAD_CROSSWORD != PRELOAD_LOADING && PRELOAD_CROSSWORD != PRELOAD_MENU);
+}
+
 TEST(preload_count_reports_progress_and_the_end) {
     PreloadCount c;
     ASSERT_TRUE(c.finished());                  // nothing queued: never holds the splash
