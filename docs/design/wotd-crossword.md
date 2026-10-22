@@ -835,8 +835,9 @@ User time (review, play-testing, device checks) is extra and listed separately.
 | 10 | **QA + X4 release**: Phase 6 QA of the Android plan, coverage, ASan, `ci-apk-check`, version bump | 1.5-3 h | `chore(release): 0.6.0` |
 
 X1 is what is left of high scores once W3 and C3 submit to their tables: the "Date:" column renders the W1 date
-text without clipping at the dialog's width, and the dialog opened from the menu starts on the last mode played
-(`last_mode`, `main.cpp:2410`) for WOTD and Crossword too. Tests go in `test_highscore_dialog.cpp`.
+text without clipping at the dialog's width, and the dialog opened from the menu opens on TIMED after any game,
+WOTD and Crossword included, as the exe does (user decision 2026-10-22; `profiles.md` §4.4,
+`HighScoreDialog::from_menu`). Tests go in `test_highscore_dialog.cpp`.
 
 Totals: about 19.5-32.75 h agent time (Phase 2 grew by 1-1.75 h after W1). User time: about 5.5-10.5 h (WOTD and
 Crossword play-tests, the T6.1 device checklist, the AppImage / Steam Deck import check O8, re-import on each device,

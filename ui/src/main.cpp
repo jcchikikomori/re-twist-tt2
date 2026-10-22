@@ -2513,11 +2513,7 @@ int main(int argc, char** argv) {
     // Saved game to continue in the next start_game (0x4242a0 / 0x42a460).
     std::unique_ptr<tt2::SavedGame> pending_resume;
     auto mode_name = [](tt2::GameMode m) { return tt2::save_mode_name(m); };
-    // 0x5fdea8: the mode last chosen on the menu, Timed at launch; the high
-    // scores open on its tab (0x4063f0).
-    tt2::GameMode last_mode = tt2::GameMode::Timed;
     auto begin_game = [&](tt2::GameMode m) {
-        last_mode = m;
         pending_start = true;
         pending_mode = m;
         game_fade_out = GAME_FADE_HALF_MS;
@@ -2528,7 +2524,8 @@ int main(int argc, char** argv) {
     };
     // The main menu's HOW TO PLAY (0x42ee90 -> DIALOG_HELP).
     std::optional<HelpDialog> menu_help;
-    // The main menu's HIGH SCORES (0x42f0d0 -> DIALOG_HIGHSCORES, OK only).
+    // The main menu's HIGH SCORES (0x42f0d0 -> DIALOG_HIGHSCORES, OK only),
+    // always on TIMED like the exe (HighScoreDialog::from_menu).
     std::optional<HighScoreDialog> menu_highscores;
     auto menu_highscores_result = [&](HighScoreDialog::Result r) {
         if (r != HighScoreDialog::Result::None) menu_highscores.reset();
@@ -2777,8 +2774,8 @@ int main(int argc, char** argv) {
         else if (name == "BUTTON_CRISSCROSS") request_game(tt2::GameMode::Crossword);
         else if (name == "BUTTON_HOWTOPLAY") menu_help.emplace();
         else if (name == "BUTTON_HIGHSCORES")
-            menu_highscores.emplace(highscores, HighScoreDialog::Opener::Menu, last_mode,
-                                    [&](SoundId id) { assets.play_sound(id); });
+            menu_highscores.emplace(
+                HighScoreDialog::from_menu(highscores, [&](SoundId id) { assets.play_sound(id); }));
         else if (name == "BUTTON_TROPHY" && players.current()) {
             pending_trophies = true;
             game_fade_out = GAME_FADE_HALF_MS;

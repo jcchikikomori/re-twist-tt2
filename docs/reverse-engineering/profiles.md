@@ -269,10 +269,27 @@ Decompiled with Ghidra 12.1.4 through REA on 2026-10-16. The port is
 | `DIALOG_CONGRATS` OK `0x401b50` -> `0x428540`: flag 0 (MAIN MENU shows, OK hidden) | `ev_52bbe3e7cb61463e1a7b36f37faf471914acf2db06b504863e22a785a9674c99` |
 | `DIALOG_CONGRATS` show `0x401270` -> `0x401290`: the `0x409100` letterballs on `TEXT_CONGRATS_LETTERBALLS` | `ev_47633b14bcb68eed81d3e628ddd0ca575a069912cc4fffb91fda2ad6ebac71b6` |
 | Blink `ModifierBlink(0.5, 1.0, 300, 200, 0)` on the newest row | `ev_55489fa4eaa8088102c02461244bae937c43197707bf40457c07ab430e6890f7` |
+| Writes to `0x5fdea8`: menu ctor 0 (@`0x42d1b9`); the menu buttons on the click, `BUTTON_PLAY` `0x42e510` 0 (@`0x42e546`), `BUTTON_PLAY_UNTIMED` `0x42e6a0` 1 (@`0x42e6d6`), `BUTTON_BLITZ` `0x42e9c0` 2 (@`0x42e9fd`), `BUTTON_CRISSCROSS` `0x42eba0` 3 (@`0x42ebdd`), `BUTTON_PLAY_WOD` `0x42e830` 4 (@`0x42e866`), wired at `0x42d4d9`..`0x42d634`; the menu's enter `0x42d9b0` (vtable `0x59116c` slot 44, the slot of Crossword's enter `0x41ef40`) 0 on every entry (@`0x42dc27`, `ebx` zeroed at `0x42d9df`); `BUTTON_PLAY_WOD` then switches to `gamescene` (`0x5917d8`) with no test between | file read of `TextTwist2.exe` (2026-10-22, T8.1); the seven are the only writes in a full `objdump -d` listing of `.text` (T8.1b), no evidence id |
 
 - **Rows.** Ten rows 30 px apart (INFERRED: the panel height), x 216.
   `LABEL_NR` / `SPRITE_NR` are never set, so no rank numbers show.
   Prefilled entries look like real ones.
+- **Extra column.** `LABEL_EXTRA` (panel x 287, so dialog x 503) has no
+  width in `dialogs.xml`: no wrap, no truncate. A `YYYY-MM-DD` date is
+  64 px in `FONT_FONT_HIGHSCORE_TEXT` (7 px digits, 4 px `-`, in the
+  original and the placeholder), so it spans 471..535, inside
+  `TAB_PAGE02` (191..574).
+- **Which tab.** The main menu's copy always opens on **TIMED**; the
+  game's copy, opened from `DIALOG_CONGRATS`, opens on the mode being
+  played. CONFIRMED by the file read in the table: the seven stores are
+  the only writes to `0x5fdea8`. The enter's store is on every path
+  through it (no branch leaves `0x42d9b0` before @`0x42dc27`), and each
+  mode button stores its mode, then leaves the menu. So the global is 0
+  whenever the menu's HIGH SCORES can be clicked, and it keeps the mode
+  being played until the menu comes back. INFERRED only: that the
+  framework runs the enter (slot 44) on each return to the menu; the
+  ctor stores 0 as well, so a re-created menu gives the same tab. The
+  port: `HighScoreDialog::from_menu`.
 - **Tabs.** `TAB_PAGE01` (5 frames of 160 x 333) shows the front tab: untimed
   0, timed 1, wotd 2, blitz 3, crossword 4. `TABS` (153 x 304) is 8 rows of
   38; rows 4..7 are the checked tab. A tab plays `SOUND_BUTTON`.
